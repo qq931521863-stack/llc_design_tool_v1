@@ -12,6 +12,7 @@ from .fra import (
     FRAMeasurement, FRAMeasurementKind, FRASourceFormat,
     load_fra_file, analyze_loop_response, deembed_controller,
     digital_frequency_response, magnitude_phase,
+    scale_digital_controller, firmware_feedback_a_to_denominator,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "analyze_digital_filter", "ControlResponseAnalysis", "export_c99_filter", "verify_c99_filter", "render_c99_single_file", "C99Verification",
     "FRAMeasurement", "FRAMeasurementKind", "FRASourceFormat", "load_fra_file",
     "analyze_loop_response", "deembed_controller", "digital_frequency_response", "magnitude_phase",
+    "scale_digital_controller", "firmware_feedback_a_to_denominator",
 ]
