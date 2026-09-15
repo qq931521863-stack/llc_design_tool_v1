@@ -75,6 +75,30 @@ def test_fra_quick_tune_gui_uses_explicit_firmware_plus_a_convention():
     app.processEvents()
 
 
+def test_fra_advanced_actions_and_dialogs_initialize():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
+    from power_control_tools.gui.fra_advanced import FRAAutoDesignDialog, FRAModelFitDialog, install_advanced_fra_actions
+    from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
+
+    app = _app(qt_widgets)
+    window = FRALoopDesignerWindow()
+    install_advanced_fra_actions(window)
+    actions = [action.text() for toolbar in window.findChildren(qt_widgets.QToolBar) for action in toolbar.actions()]
+    assert "Auto Design" in actions
+    assert "Model ID / Fit" in actions
+
+    auto = FRAAutoDesignDialog(window)
+    model = FRAModelFitDialog(window)
+    assert auto.pm.value() == 60.0
+    assert model.max_order.value() == 5
+
+    auto.close()
+    model.close()
+    window.close()
+    app.processEvents()
+
+
 def test_launcher_exposes_fra_loop_designer_as_top_level_workspace():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     qt_widgets = pytest.importorskip("PySide6.QtWidgets")
