@@ -18,6 +18,7 @@ from power_sim.spice import (
     LLCSpiceConfig,
     NgSpiceClosedLoopConfig,
     find_ngspice_shared_library,
+    ngspice_closed_loop_waveform_bundle,
     run_llc_shared_closed_loop,
 )
 
@@ -51,9 +52,6 @@ def test_shared_ngspice_llc_executes_exact_hz_control_clock_if_library_installed
     spec = LLCDesignSpec()
     tank = design_tank(spec)
     fs_ctrl = 40_000.0
-    # Deliberate zero controller: this first integration test verifies the real
-    # shared circuit, callback clock, gate scheduler and exact H(z) runtime path
-    # without conflating the result with loop-tuning quality.
     controller = DigitalTransferFunction(
         (0.0,),
         (1.0,),
@@ -104,14 +102,7 @@ def test_shared_ngspice_llc_executes_exact_hz_control_clock_if_library_installed
 
 
 def test_shared_ngspice_llc_reference_step_drives_exact_pi_and_fm_in_correct_direction_if_library_installed():
-    """First nonzero-controller smoke on the real switching circuit.
-
-    This is not a final loop-tuning claim.  It verifies the causal chain
-    Vref -> sampled Vout -> exact PI H(z) -> FM -> external gates -> ngspice.
-    For the default LLC operating branch dVo/df is negative, so a positive
-    reference error must create positive PI command and reduce switching
-    frequency.
-    """
+    """Nonzero exact-H(z) controller smoke on the real switching circuit."""
     library = find_ngspice_shared_library()
     if library is None:
         pytest.skip("shared libngspice is not installed")
@@ -165,18 +156,32 @@ def test_shared_ngspice_llc_reference_step_drives_exact_pi_and_fm_in_correct_dir
     pre = before[-1]
     post = after[0]
 
-    # The reference step is exactly +1 V, so sampled loop error must jump by
-    # approximately one volt before plant response can cancel it.
     assert post.error_v - pre.error_v > 0.7
     assert post.controller_output > pre.controller_output + 0.01
     assert post.frequency_actual_hz < pre.frequency_actual_hz - 300.0
 
-    # The circuit itself must remain finite and continue running well beyond the
-    # reference event.  Tight settling/overshoot limits are deliberately left to
-    # a later controller-design validation, not this plumbing smoke test.
     assert samples[-1].time_s >= 1.45e-3
     vout = result.vectors["v(out)"]
     assert vout.size > 1000
     assert np.all(np.isfinite(vout))
     assert result.control.metadata["controller_source"] == "test_exact_pi_hz"
     assert result.control.metadata["shared_senddata_points"] > 1000
+
+    # The same run must enter the existing LLC waveform contract so the GUI can
+    # display power and control traces without a second plotting stack.
+    bundle = ngspice_closed_loop_waveform_bundle(
+        result,
+        bus_voltage_v=spec.vbus_nom_v,
+        samples_per_switching_cycle=80,
+    )
+    assert bundle.model_name == "shared-ngspice digital closed loop"
+    assert np.all(np.diff(bundle.time_s) > 0.0)
+    assert "v_bridge" in bundle.signals
+    assert "i_resonant" in bundle.signals
+    assert "v_output" in bundle.signals
+    assert "control_reference" in bundle.signals
+    assert "control_feedback" in bundle.signals
+    assert "control_output" in bundle.signals
+    assert "switching_frequency" in bundle.signals
+    lengths = {len(signal.values) for signal in bundle.signals.values()}
+    assert lengths == {len(bundle.time_s)}
