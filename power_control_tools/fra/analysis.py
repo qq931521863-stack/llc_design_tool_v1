@@ -205,10 +205,16 @@ def analyze_loop_response(
         status = "FAIL"
     elif len(gain_crossovers) > 1:
         status = "WARNING_MULTIPLE_CROSSOVERS"
-    elif (worst_pm is not None and worst_pm >= pm_pass_deg) and (worst_gm is None or worst_gm >= gm_pass_db):
-        status = "PASS"
+    elif worst_pm is None or worst_pm < pm_pass_deg:
+        status = "REVIEW_PM"
+    elif not phase_crossovers:
+        # GM cannot be claimed from a finite FRA record that never reaches a
+        # -180+360k phase crossing.  Keep the result explicitly unresolved.
+        status = "REVIEW_GM_NOT_OBSERVED"
+    elif worst_gm is None or worst_gm < gm_pass_db:
+        status = "REVIEW_GM"
     else:
-        status = "REVIEW"
+        status = "PASS"
 
     return LoopStabilityResult(
         tuple(gain_crossovers),
