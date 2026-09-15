@@ -1,9 +1,9 @@
 """Install the shared-ngspice closed-loop verifier into an LLC main window.
 
-Kept as a sidecar installer so the first SPICE integration does not entangle the
-large LLC main-window class with simulator-specific code.  The host remains the
-owner of project state and worker-thread execution; this module only bridges the
-existing design/controller state into ``power_sim.spice``.
+The host owns project state and worker-thread execution.  This bridge reuses the
+exact H(z) already designed by LLC Digital Control / Control Tools and the same
+firmware-style PCMD FM LUT used by the linear loop analysis; it does not create
+a second controller implementation.
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from llc_design.control.analysis import build_small_signal_analysis
 from llc_design.control.digital_loop import (
     DelayEnvelope,
     DigitalLoopAnalysis,
+    FMLUTMode,
     FrequencyModulatorLUT,
     build_digital_loop_analysis,
 )
@@ -25,7 +26,12 @@ from llc_design.core.tank import design_tank
 from llc_design.models.system import LLCSystemAnalyzer
 from power_control_tools.models import DigitalTransferFunction as PublicDigitalTransferFunction
 from power_sim.closed_loop import ClosedLoopScenario, StepProfile
-from power_sim.digital_control import ControllerLimitConfig, LLCFMConfig, LLCFMMode, PWMCountMode, SamplerConfig
+from power_sim.digital_control import (
+    ControllerLimitConfig,
+    LLCFMLUTConfig,
+    PWMCountMode,
+    SamplerConfig,
+)
 from power_sim.spice import (
     LLCSpiceConfig,
     NgSpiceClosedLoopConfig,
@@ -64,14 +70,25 @@ def _public_controller(external, analysis: DigitalLoopAnalysis | None) -> tuple[
     return _public_controller_from_native(analysis.controller, analysis.controller_source), analysis.controller_source
 
 
+def _same_coefficients(native, controller: PublicDigitalTransferFunction) -> bool:
+    b0 = np.asarray(native.numerator, dtype=float).reshape(-1)
+    a0 = np.asarray(native.denominator, dtype=float).reshape(-1)
+    b1 = np.asarray(controller.b, dtype=float).reshape(-1)
+    a1 = np.asarray(controller.a, dtype=float).reshape(-1)
+    return (
+        b0.shape == b1.shape
+        and a0.shape == a1.shape
+        and np.allclose(b0, b1, rtol=1e-10, atol=1e-12)
+        and np.allclose(a0, a1, rtol=1e-10, atol=1e-12)
+    )
+
+
 def _loop_analysis_for_controller(host, spec, controller: PublicDigitalTransferFunction, source: str) -> DigitalLoopAnalysis:
     existing = getattr(host, "digital_loop_analysis", None)
     if existing is not None:
         c = existing.controller
         same_fs = math.isclose(1.0 / c.sample_time_s, controller.sample_rate_hz, rel_tol=0.0, abs_tol=1e-6)
-        same_b = np.allclose(np.asarray(c.numerator), np.asarray(controller.b), rtol=1e-10, atol=1e-12)
-        same_a = np.allclose(np.asarray(c.denominator), np.asarray(controller.a), rtol=1e-10, atol=1e-12)
-        if same_fs and same_b and same_a:
+        if same_fs and _same_coefficients(c, controller):
             return existing
 
     system = getattr(host, "system_analysis", None)
@@ -90,6 +107,38 @@ def _loop_analysis_for_controller(host, spec, controller: PublicDigitalTransferF
     )
 
 
+def _fm_runtime_config(loop: DigitalLoopAnalysis, spec) -> tuple[LLCFMLUTConfig, ControllerLimitConfig]:
+    lut = loop.fm_lut
+    op = loop.fm_operating_point
+    count_mode = PWMCountMode.UP_DOWN if lut.count_mode.value == "up_down" else PWMCountMode.UP
+    config = LLCFMLUTConfig(
+        pcmd=tuple(float(v) for v in np.asarray(lut.pcmd, dtype=float)),
+        values=tuple(float(v) for v in np.asarray(lut.values, dtype=float)),
+        command_bias_pu=float(op.command_pu),
+        values_are_tbprd=lut.mode == FMLUTMode.PCMD_TO_TBPRD,
+        tbclk_hz=float(lut.timer_clock_hz),
+        count_mode=count_mode,
+        quantize_tbprd=True,
+    )
+    config.validate()
+
+    # Restrict controller perturbation to both LUT endpoints and the active LLC
+    # design's Fmin/Fmax.  The default firmware table may cover a wider range
+    # than one particular power-stage design and must not silently overdrive it.
+    cmd_for_fmax = float(lut.command_for_frequency(spec.maximum_frequency_hz))
+    cmd_for_fmin = float(lut.command_for_frequency(spec.minimum_frequency_hz))
+    allowed_low_abs = min(cmd_for_fmax, cmd_for_fmin)
+    allowed_high_abs = max(cmd_for_fmax, cmd_for_fmin)
+    allowed_low_abs = max(0.0, allowed_low_abs)
+    allowed_high_abs = min(1.0, allowed_high_abs)
+    bias = float(op.command_pu)
+    minimum_delta = max(-float(op.command_headroom_low), allowed_low_abs - bias)
+    maximum_delta = min(float(op.command_headroom_high), allowed_high_abs - bias)
+    if maximum_delta <= minimum_delta + 1e-9:
+        raise ValueError("当前 FM LUT 工作点在 LLC Fmin/Fmax 内没有可用控制余量。")
+    return config, ControllerLimitConfig(minimum=minimum_delta, maximum=maximum_delta)
+
+
 def install_closed_loop_verification(host) -> ClosedLoopVerificationView:
     """Add one closed-loop tab and its worker-backed execution bridge."""
     if hasattr(host, "closed_loop_verification_view"):
@@ -99,12 +148,22 @@ def install_closed_loop_verification(host) -> ClosedLoopVerificationView:
     host.closed_loop_verification_view = view
     host.tabs.addTab(view, "Closed-Loop Verification")
 
-    library = find_ngspice_shared_library()
+    initial_library = find_ngspice_shared_library()
     view.set_engine_available(
-        library is not None,
-        library or "shared library not found on this machine",
+        initial_library is not None,
+        initial_library or "shared library not found on this machine",
     )
     view.set_nominal_spec(host.spec)
+
+    # Extend the host's normal busy state so the shared-ngspice singleton cannot
+    # be launched twice from the GUI while one run is active.
+    original_set_busy = host._set_busy
+
+    def set_busy_with_closed_loop(self, busy: bool, message: str = "") -> None:
+        original_set_busy(busy, message)
+        view.set_busy(busy)
+
+    host._set_busy = MethodType(set_busy_with_closed_loop, host)
 
     def refresh_controller(self) -> None:
         try:
@@ -130,42 +189,17 @@ def install_closed_loop_verification(host) -> ClosedLoopVerificationView:
             getattr(self, "digital_loop_analysis", None),
         )
         loop = _loop_analysis_for_controller(self, spec, controller, source)
-        op = loop.fm_operating_point
-        nominal_f = float(op.frequency_hz)
+        modulator, limits = _fm_runtime_config(loop, spec)
+        nominal_f = float(modulator.nominal_frequency_hz)
         if not (spec.minimum_frequency_hz <= nominal_f <= spec.maximum_frequency_hz):
-            nominal_f = float(np.clip(nominal_f, spec.minimum_frequency_hz, spec.maximum_frequency_hz))
+            raise ValueError(
+                f"FM operating point {nominal_f/1e3:.3f} kHz is outside LLC design limits "
+                f"[{spec.minimum_frequency_hz/1e3:.3f}, {spec.maximum_frequency_hz/1e3:.3f}] kHz"
+            )
 
-        # Exact H(z) produces a small-signal PCMD perturbation about the FM LUT
-        # operating point.  Limits therefore use available command headroom,
-        # while the nonlinear SPICE runtime applies the local LUT slope around
-        # that operating point.  Replacing this local FM with the full firmware
-        # LUT is a later fidelity layer and is reported explicitly in the GUI.
-        limits = ControllerLimitConfig(
-            minimum=-max(float(op.command_headroom_low), 1e-6),
-            maximum=max(float(op.command_headroom_high), 1e-6),
-        )
-        modulator = LLCFMConfig(
-            mode=LLCFMMode.LINEAR_FM,
-            nominal_frequency_hz=nominal_f,
-            kfm_hz_per_unit=float(op.gain_hz_per_pu),
-            minimum_frequency_hz=spec.minimum_frequency_hz,
-            maximum_frequency_hz=spec.maximum_frequency_hz,
-            tbclk_hz=float(loop.fm_lut.timer_clock_hz),
-            count_mode=(
-                PWMCountMode.UP_DOWN
-                if loop.fm_lut.count_mode.value == "up_down"
-                else PWMCountMode.UP
-            ),
-            quantize_tbprd=True,
-        )
         sampler = SamplerConfig(sample_rate_hz=controller.sample_rate_hz)
-
-        # Preserve the nominal timing budget of the already-designed digital
-        # loop: ADC EOC + firmware computation + average wait to PWM zero.
         computation_delay = float(loop.adc_sampling.eoc_delay_s + loop.command_timing.computation_delay_s)
-        pwm_delay = float(
-            loop.command_timing.pwm_zero_wait_s(nominal_f, DelayEnvelope.NOMINAL)
-        )
+        pwm_delay = float(loop.command_timing.pwm_zero_wait_s(nominal_f, DelayEnvelope.NOMINAL))
 
         bus = float(options["vbus_v"])
         load = float(options["load_fraction"])
@@ -196,7 +230,7 @@ def install_closed_loop_verification(host) -> ClosedLoopVerificationView:
         tank = design_tank(spec)
         return spec, tank, spice_cfg, controller, limits, sampler, modulator, scenario, sim_cfg, loop
 
-    def run_worker_payload(self, options: dict[str, float]):
+    def run_worker_payload(options: dict[str, float], library_path: str):
         (
             spec,
             tank,
@@ -219,7 +253,7 @@ def install_closed_loop_verification(host) -> ClosedLoopVerificationView:
             modulator=modulator,
             scenario=scenario,
             simulation=sim_cfg,
-            library=library,
+            library=library_path,
         )
         bundle = ngspice_closed_loop_waveform_bundle(
             result,
@@ -229,7 +263,8 @@ def install_closed_loop_verification(host) -> ClosedLoopVerificationView:
         return result, bundle, loop, spice_cfg
 
     def run_requested(options: dict[str, float]) -> None:
-        if library is None:
+        library_path = find_ngspice_shared_library()
+        if library_path is None:
             QMessageBox.warning(
                 host,
                 "ngspice unavailable",
@@ -237,10 +272,13 @@ def install_closed_loop_verification(host) -> ClosedLoopVerificationView:
             )
             return
         try:
-            # Validate all design/controller contracts in the GUI thread so
-            # user input errors are returned immediately.  The SPICE solve
-            # itself remains in the worker thread.
-            prepare_run(host, options)
+            spec = host._spec_from_widgets()
+            if PrimaryTopology(spec.primary_topology) != PrimaryTopology.FULL_BRIDGE:
+                raise NotImplementedError("ngspice Closed-Loop Verification V1 只支持 FULL_BRIDGE LLC。")
+            _public_controller(
+                getattr(host, "external_control_design", None),
+                getattr(host, "digital_loop_analysis", None),
+            )
         except Exception as exc:
             QMessageBox.warning(host, "Closed-Loop Verification", str(exc))
             return
@@ -256,7 +294,7 @@ def install_closed_loop_verification(host) -> ClosedLoopVerificationView:
             )
             host.tabs.setCurrentWidget(view)
             host._append_log(
-                "shared-ngspice closed loop ready: "
+                "shared-ngspice exact-H(z)/FM-LUT closed loop ready: "
                 f"samples={len(result.control.samples)}, "
                 f"points={result.control.metadata.get('shared_senddata_points')}, "
                 f"Vbus={spice_cfg.bus_voltage_v:.3f} V, "
@@ -264,15 +302,13 @@ def install_closed_loop_verification(host) -> ClosedLoopVerificationView:
             )
 
         host._run_worker(
-            "正在运行 shared-ngspice 数字闭环验证…",
-            lambda: run_worker_payload(host_options := dict(options)),
+            "正在运行 shared-ngspice Exact H(z) + FM LUT 数字闭环验证…",
+            lambda: run_worker_payload(dict(options), library_path),
             ready,
         )
 
     view.analysis_requested.connect(run_requested)
 
-    # Expose tiny hooks on the host rather than modifying LLCMainWindow's large
-    # class body.  They are useful to the launcher/controller bridge and tests.
     host.refresh_closed_loop_controller = MethodType(refresh_controller, host)
     host.refresh_closed_loop_controller()
 
