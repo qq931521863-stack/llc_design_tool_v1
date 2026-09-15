@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QLabel, QMessageBox, QToolButton
 
 from llc_design import __version__
 from llc_design.gui import theme
+from llc_design.i18n import t
 
 APP_VERSION = __version__
 
@@ -196,16 +197,16 @@ def add_toolbar_right_side(toolbar, main_window) -> None:
         f'text-decoration:none;font-size:12px;">maileyang@qq.com</a>'
     )
     email_label.setToolTip(
-        "点击发送邮件：maileyang@qq.com\n"
-        "有不懂的地方、或结果与实测不符，欢迎直接发邮件讨论（帮助 F1 → 联系方式与支持）"
+        t("点击发送邮件：maileyang@qq.com\n")
+        + t("有不懂的地方、或结果与实测不符，欢迎直接发邮件讨论（帮助 F1 → 联系方式与支持）")
     )
     email_label.setOpenExternalLinks(True)
     toolbar.addWidget(email_label)
 
-    wechat_label = QLabel("微信: maileyang")
+    wechat_label = QLabel(t("微信: maileyang"))
     wechat_label.setToolTip(
-        "微信号: maileyang\n"
-        "公众号 / 技术博客: 开关电源仿真与实用设计（帮助 F1 → 联系方式与支持 内有二维码）"
+        t("微信号: maileyang\n")
+        + t("公众号 / 技术博客: 开关电源仿真与实用设计（帮助 F1 → 联系方式与支持 内有二维码）")
     )
     wechat_label.setStyleSheet(
         f"color:{muted};font-size:12px;padding:0 6px;background:transparent;")
@@ -223,11 +224,11 @@ def _on_check_result(parent: QObject, info: ReleaseInfo, notify_up_to_date: bool
     if info.is_newer:
         if not notify_up_to_date and _dismissed_release() == info.tag_name:
             return
-        body_preview = (info.body.strip() or "(该版本未附带发布说明)")
+        body_preview = (info.body.strip() or t("(该版本未附带发布说明)"))
         if len(body_preview) > 1200:
             body_preview = body_preview[:1200] + "…"
         box = QMessageBox(parent)
-        box.setWindowTitle("发现新版本")
+        box.setWindowTitle(t("发现新版本"))
         box.setIcon(QMessageBox.Icon.Information)
         box.setText(
             f"<h3>发现新版本 {info.tag_name}</h3>"
@@ -235,8 +236,8 @@ def _on_check_result(parent: QObject, info: ReleaseInfo, notify_up_to_date: bool
             f"发布时间: {info.published_at}</p>"
         )
         box.setInformativeText(body_preview)
-        open_button = box.addButton("打开下载页", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("知道了", QMessageBox.ButtonRole.RejectRole)
+        open_button = box.addButton(t("打开下载页"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(t("知道了"), QMessageBox.ButtonRole.RejectRole)
         box.exec()
         _remember_release(info.tag_name)
         if box.clickedButton() is open_button:
@@ -245,15 +246,15 @@ def _on_check_result(parent: QObject, info: ReleaseInfo, notify_up_to_date: bool
 
     if notify_up_to_date:
         QMessageBox.information(
-            parent, "检查更新", f"当前已是最新版本 {APP_VERSION}。")
+            parent, t("检查更新"), t("当前已是最新版本 {APP_VERSION}。", APP_VERSION=APP_VERSION))
 
 
 def _on_check_error(parent: QObject, message: str, notify_up_to_date: bool) -> None:
     if notify_up_to_date:
         QMessageBox.warning(
-            parent, "检查更新失败",
-            "无法连接到 GitHub,请检查网络后重试。\n"
-            f"<small>{message}</small>",
+            parent, t("检查更新失败"),
+            t("无法连接到 GitHub,请检查网络后重试。\n")
+            + f"<small>{message}</small>",
         )
     # 自动检查不可打断工程工作；网络失败时不显示任何 UI。
 

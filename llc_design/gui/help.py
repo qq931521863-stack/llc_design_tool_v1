@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
 )
 
 from llc_design import __version__
+from llc_design.i18n import catalogue, current_language, t
 
 REPO_SLUG = "yangshuai2022-star/llc_design_tool_v1"
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -63,6 +64,9 @@ CONTACT_QR_FILE = Path(__file__).resolve().parents[1] / "data" / "wechat_officia
 class HelpSection:
     title: str
     body: str
+    # Stable identifier for the body, so a translation catalogue can key on
+    # ``helpbody.<key>`` instead of duplicating the whole source text.
+    key: str = ""
 
 
 @dataclass(frozen=True)
@@ -99,7 +103,9 @@ _LLC = HelpTopic(
 
 工具栏：F4 设计参数，F8 运行日志，F9 专注模式，Ctrl+R 运行当前页面。
 """,
+            key="llc.quick_start",
         ),
+
         HelpSection(
             "页面说明",
             """设计总览        规格 → 工作点、增益需求、初级/次级电流与电容应力的第一屏汇总。
@@ -115,7 +121,9 @@ SR Timing/Loss  同步整流 Qrr、第三象限导通、Timing、LUT 与损耗�
 数字控制        控制器 + 采样/ADC + 调制器 + PWM 延时的完整闭环，输出 Bode、
                 PM/GM、闭环极点与单文件 C99 控制器。
 """,
+            key="llc.pages",
         ),
+
         HelpSection(
             "实现说明 — FHA / HB / TD 三种模型怎么算的",
             """FHA（基波近似）
@@ -143,7 +151,9 @@ TD（分段时域）
   动态相量模型：对基波包络线性化得到 Gvf，再离散化得到 Gvf(z)，
   供数字环页面使用。
 """,
+            key="llc.impl_models",
         ),
+
         HelpSection(
             "实现说明 — 数字环与延时怎么建模的",
             """频率域是**混合域**求值（control/digital_loop.py）：
@@ -162,7 +172,9 @@ TD（分段时域）
 饱和、burst、软启动、限流选择与保护状态机是非线性的，
 因此它们作为「有效条件」列出，不进入线性 Bode 模型。
 """,
+            key="llc.impl_digital_loop",
         ),
+
         HelpSection(
             "模型边界与已知限制",
             """* FHA 只保留基波，不能用来宣称 ZVS 裕度。
@@ -175,7 +187,9 @@ TD（分段时域）
 * 导出的 C99 只包含控制器系数与文档描述的时序约定；实际固件的采样时刻、
   更新时刻与饱和/抗积分饱和仍需在项目侧对齐。
 """,
+            key="llc.limits",
         ),
+
     ),
     docs=(
         ("README", "README.md"),
@@ -203,7 +217,9 @@ _PFC = HelpTopic(
 TTPL 结果页：电流环 Bode、电压环 Bode、采样链 Bode、电感设计、分析摘要。
 Vienna 结果页：Current Bode、Vdc Bode、Balance Bode、Sampling Bode、电感设计、Summary。
 """,
+            key="pfc.quick_start",
         ),
+
         HelpSection(
             "实现说明 — 采样链与延迟拆分（最容易出错的地方）",
             """每个环路的采样链都是显式建模的，包含：
@@ -225,7 +241,9 @@ Vienna 结果页：Current Bode、Vdc Bode、Balance Bode、Sampling Bode、电�
   voltage_computation_delay_s。采样块里的 multi_soc_recursive 平均同时出现在
   电流与电压 Bode 中，所以改动采样链参数会同时影响所有环路。
 """,
+            key="pfc.impl_sampling_chain",
         ),
+
         HelpSection(
             "实现说明 — 控制结构与求解器",
             """TTPL（单相）
@@ -243,7 +261,9 @@ Vienna（三相）
   三电平调制支持共模 / 三次谐波注入。每相独立电流环与采样链，
   Balance 环单独给出 Bode 与中点电压响应。
 """,
+            key="pfc.impl_control_structure",
         ),
+
         HelpSection(
             "电感设计",
             """* 磁芯数据来自 Magnetics High Flux Core Data 254，包含直流偏置下的磁导率跌落
@@ -252,7 +272,9 @@ Vienna（三相）
 * 「一键回填」把电感量与匝数写回功率级参数，回填后请重新运行分析确认
   电流纹波、环路增益与 THD 仍在设计目标内。
 """,
+            key="pfc.inductor",
         ),
+
         HelpSection(
             "模型边界与已知限制",
             """* 控制模型为平均模型：不含开关纹波、死区、器件非线性与数字量化噪声。
@@ -262,7 +284,9 @@ Vienna（三相）
 * PF/THD 为模型结果，不能替代 EMI 预合规与实测功率计数据。
 * 中点平衡环与三电平调制的死区/最小脉宽约束不在平均模型内。
 """,
+            key="pfc.limits",
         ),
+
     ),
     docs=(
         ("README", "README.md"),
@@ -289,7 +313,9 @@ _CONTROL = HelpTopic(
    Coefficients·SOS / Transfer Function / C99 单文件。
 5. 导出：填 Symbol Prefix → 工具栏「导出单文件 C99」。
 """,
+            key="control.quick_start",
         ),
+
         HelpSection(
             "控制器类型一览",
             """Integrator            gain
@@ -310,7 +336,9 @@ FIR 窗函数、滑动平均与 DC Blocker。
 注意：2P2Z / 3P3Z 在手动入口是等阶有限零极点形式；FRA 的 Auto Design 使用
 含积分极点的电源补偿器模板，两者语义不同，所以自动设计结果按精确 H(z) 回写。
 """,
+            key="control.controller_catalogue",
         ),
+
         HelpSection(
             "实现说明 — 系数约定与离散化",
             """系数约定（全工具统一）：
@@ -333,7 +361,9 @@ FIR 窗函数、滑动平均与 DC Blocker。
   cont2discrete 会拒绝，而逐项二项式映射可以直接得到因果 z 形式。
   预畸变频率必须落在 0..Nyquist 之间，否则报错。
 """,
+            key="control.impl_discretization",
         ),
+
         HelpSection(
             "实现说明 — C99 导出结构",
             """单文件 header-only，typedef float float32_t；二阶节级联（SOS）+ DF2T
@@ -351,7 +381,9 @@ FIR 窗函数、滑动平均与 DC Blocker。
     阶跃响应。若 PATH 中没有 C 编译器，校验报告 `C compiler not found`
     —— 这是环境限制，不代表生成的代码有问题，也不假装通过。
 """,
+            key="control.impl_c99_export",
         ),
+
         HelpSection(
             "实现说明 — 稳定性判定",
             """极点按半径分类（power_control_tools/models.py）：
@@ -367,7 +399,9 @@ FIR 窗函数、滑动平均与 DC Blocker。
       极点半径 > 0.995       float32 实现与瞬态鲁棒性需要复核
       临界频率 > 0.2·Fs      频率畸变值得关注，考虑预畸变 Tustin
 """,
+            key="control.impl_stability",
         ),
+
         HelpSection(
             "模型边界与已知限制",
             """* 导出的是控制器**数学**本身；采样时刻、更新时刻、饱和与抗积分饱和、
@@ -376,7 +410,9 @@ FIR 窗函数、滑动平均与 DC Blocker。
 * Bode 是离散系统响应；模拟 H(s) 曲线只作对照，二者在接近 Nyquist 时必然分离。
 * Group Delay 以采样点为单位计算，页面换算为秒。
 """,
+            key="control.limits",
         ),
+
     ),
     docs=(
         ("README", "README.md"),
@@ -406,7 +442,9 @@ _FRA = HelpTopic(
    需要被控对象模型用「Model ID / Fit」辨识，再回传为 Plant Source。
 5. 导出最终 H(z)：第 5 节填 Symbol Prefix → 「导出最终 H(z) — C99 float32_t」。
 """,
+            key="fra.quick_start",
         ),
+
         HelpSection(
             "测量语义：TS 类型不能猜",
             """Plant TS           数据已是被控对象，不含控制器：L_new = G_plant · C_new
@@ -422,7 +460,9 @@ Complete Loop 模式下 PWM、ADC、采样/滤波与真实延时不会重复添�
 若导入的是普通闭环参考→输出传递 T 而不是回路增益，不能直接做剥离；
 需先按 L = T/(1−T) 转成回路增益（单位反馈情形）。
 """,
+            key="fra.ts_semantics",
         ),
+
         HelpSection(
             "控制器输入与整定",
             """* 当前控制器可用精确 B/A 系数（推荐），支持规范约定
@@ -434,7 +474,9 @@ Complete Loop 模式下 PWM、ADC、采样/滤波与真实延时不会重复添�
 * New Structure 可用与 Control Tools 完全一致的控制器库（14 种结构，
   含 Type-II/III 的 R/C 输入）以及 Custom H(z) 精确系数入口。
 """,
+            key="fra.controller_tuning",
         ),
+
         HelpSection(
             "实现说明 — 频响求值与裕度判据",
             """H(z) 在任意频点直接按 z^-1 定义代入（不插值、不拟合）：
@@ -458,7 +500,9 @@ Complete Loop 模式下 PWM、ADC、采样/滤波与真实延时不会重复添�
   有限窗口内从未出现奇数倍 180° 相位穿越时，GM 标记为「未证实」，
   而不是静默判为满足。
 """,
+            key="fra.impl_frequency_margins",
         ),
+
         HelpSection(
             "实现说明 — 剥离、重建与辨识算法",
             """剥离与重建（analysis.py）
@@ -483,7 +527,9 @@ Complete Loop 模式下 PWM、ADC、采样/滤波与真实延时不会重复添�
     极点/零点是对实测复响应的工程近似，不是物理元件辨识。
     拟合器把极点约束在稳定半平面，因此无法辨识真正不稳定的开环被控对象。
 """,
+            key="fra.impl_deembed_fitting",
         ),
+
         HelpSection(
             "实现说明 — 辨识模型 × 控制器与 Step",
             """频域：L(jω) = G_fit(jω)·H_ctrl(e^{jωT})，与原始 FRA 共用同一套裕度引擎。
@@ -511,7 +557,9 @@ Complete Loop 模式下 PWM、ADC、采样/滤波与真实延时不会重复添�
   Step 被扣留时 Fc/PM 仍然照常给出：窄带局部拟合可以解释环路形状，
   但不足以授权时域预测。
 """,
+            key="fra.impl_plant_link_step",
         ),
+
         HelpSection(
             "实现说明 — Auto Design 怎么综合的",
             """1. 在当前试探频率 Fc 上，由目标相位裕度反推控制器需要的相位：
@@ -533,7 +581,9 @@ Complete Loop 模式下 PWM、ADC、采样/滤波与真实延时不会重复添�
       K·(s+wz1)(s+wz2)/[s(s+wp1)] 与 K·(s+wz1)(s+wz2)(s+wz3)/[s(s+wp1)(s+wp2)]
   这与手动入口的等阶有限零极点语义不同，因此这类结果以精确 H(z) 系数回写。
 """,
+            key="fra.impl_auto_design",
         ),
+
         HelpSection(
             "假设与已知限制",
             """1. 实测文件本身不含固件控制器参数；没有真实 C_old 时，Complete Loop 数据
@@ -547,7 +597,9 @@ Complete Loop 模式下 PWM、ADC、采样/滤波与真实延时不会重复添�
 5. Auto Design 的自动综合当前覆盖 PI / PIF / PID / Power 2P2Z / Power 3P3Z；
    其余结构支持手动设计与精确 H(z) 入口。
 """,
+            key="fra.assumptions",
         ),
+
     ),
     docs=(
         ("FRA Loop Designer V1 契约", "DC/FRA_LOOP_DESIGNER_V1.md"),
@@ -574,7 +626,9 @@ Control Tools       单独的数字控制器/滤波器设计：选结构、看 H
 FRA Loop Designer   基于实测频响（Bode100/SIMPLIS/通用）做控制器整定、目标 Fc/PM
                     自动设计、低阶模型辨识，以及辨识模型 × 控制器的闭环分析。
 """,
+            key="selector.workspaces",
         ),
+
         HelpSection(
             "怎么选",
             """* 手上只有规格、要从零设计 → LLC Design 或 PFC Design。
@@ -584,7 +638,9 @@ FRA Loop Designer   基于实测频响（Bode100/SIMPLIS/通用）做控制器�
 * 从 FRA 得到控制器后，可在 Control Tools 复核系数与导出格式，
   或直接在 FRA 工作区导出 C99。
 """,
+            key="selector.how_to_choose",
         ),
+
         HelpSection(
             "每个工作区的帮助里有什么",
             """每个工作区的帮助都包含：快速上手、页面与参数说明、
@@ -594,7 +650,9 @@ FRA Loop Designer   基于实测频响（Bode100/SIMPLIS/通用）做控制器�
 如果某一步看不明白，或结果与实测/理论不符，建议直接看「实现说明」，
 再对照「模型边界」确认该结论在不在模型能力范围内。
 """,
+            key="selector.what_help_contains",
         ),
+
         HelpSection(
             "通用提示",
             """* 每个工作区工具栏右侧有「帮助」（F1）、联系方式与「检查更新」。
@@ -602,7 +660,9 @@ FRA Loop Designer   基于实测频响（Bode100/SIMPLIS/通用）做控制器�
 * 「功能选择」可随时回到本页；各工作区窗口不会因切换而丢失状态。
 * 工程问题欢迎直接发邮件讨论（见「联系方式与支持」）。
 """,
+            key="selector.general_tips",
         ),
+
     ),
     docs=(("README", "README.md"),),
 )
@@ -620,7 +680,26 @@ F9            LLC：专注模式（隐藏参数与日志）
 Ctrl+R        LLC：运行当前页面对应的分析
 工具栏        各工作区顶部：切换工作区、运行/重算、导出、帮助、联系方式、更新检查
 """,
+    key="common.shortcuts",
 )
+
+_LANGUAGE = HelpSection(
+    "语言 / Language",
+    """界面语言      简体中文 / English / 日本語 / 한국어
+切换位置      任意工作区工具栏最右侧「语言 / Language」；选择后立即生效并记住，下次启动沿用。
+
+说明
+* 界面中原本就是英文的部分（Bode、H(z)、C99、Kp、PM、FRA、Summary 之类）按项目约定
+  保持原样，不做翻译；术语一致性比逐字翻译更重要。
+* 帮助正文按章节翻译。某些章节尚未提供当前语言的正文译文时，会显示原文，
+  并在正文上方明确提示「此章节暂无当前语言的正文译文」。
+* 切换语言只改变界面文字，不改变任何计算结果、系数或导出内容。
+* 字体栈随语言切换（日文 Meiryo / Yu Gothic，韩文 Malgun Gothic，中文微软雅黑 / 思源），
+  避免共用汉字被渲染成中文字形。
+""",
+    key="common.language",
+)
+
 
 _CONTACT = HelpSection(
     "联系方式与支持",
@@ -643,6 +722,7 @@ _CONTACT = HelpSection(
 采样 Ms/Mt 落在扫描点之间、Complete Loop 没填真实 C_old；
 这些在对应工作区的「模型边界与已知限制」里都有说明。
 """,
+    key="common.contact",
 )
 
 _ABOUT = HelpSection(
@@ -660,6 +740,7 @@ LLC / PFC / Vienna 设计、数字控制工具与 FRA 环路设计。
 中写明的模型与假设之上；发送到硬件前必须按项目流程完成实测验证。
 有问题欢迎直接发邮件讨论。
 """,
+    key="common.about",
 )
 
 
@@ -671,7 +752,7 @@ def help_topic(key: str) -> HelpTopic:
         topic.key,
         topic.heading,
         topic.intro,
-        topic.sections + (_SHORTCUTS, _CONTACT, _ABOUT),
+        topic.sections + (_SHORTCUTS, _LANGUAGE, _CONTACT, _ABOUT),
         topic.docs,
     )
 
@@ -682,6 +763,15 @@ def topic_titles(key: str) -> list[str]:
 
 def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def section_body(section: HelpSection) -> tuple[str, bool]:
+    """Return ``(body, translated)`` for ``section`` in the active language."""
+    if section.key:
+        entry = catalogue().get(f"helpbody.{section.key}")
+        if entry:
+            return entry, True
+    return section.body, False
 
 
 def _format_body(text: str) -> str:
@@ -705,7 +795,7 @@ class HelpDialog(QDialog):
     def __init__(self, parent=None, topic: str = "selector", section: str | None = None) -> None:
         super().__init__(parent)
         content = help_topic(topic)
-        self.setWindowTitle(content.heading)
+        self.setWindowTitle(t(content.heading))
         self.resize(1040, 740)
 
         root = QVBoxLayout(self)
@@ -725,6 +815,7 @@ class HelpDialog(QDialog):
         root.addLayout(row, 1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.button(QDialogButtonBox.StandardButton.Close).setText(t("关闭"))
         buttons.rejected.connect(self.reject)
         buttons.accepted.connect(self.accept)
         root.addWidget(buttons)
@@ -744,7 +835,17 @@ class HelpDialog(QDialog):
             self.browser.setPlainText("")
             return
         item = self._sections[row]
-        body = _format_body(item.body)
+        translated = t(item.title) != item.title
+        title = t(item.title)
+        body_text, body_translated = section_body(item)
+        note = ""
+        if not body_translated and current_language() != "zh-Hans":
+            note = (
+                "<p style='color:#b26a00;'>"
+                + _escape(t("此章节暂无当前语言的正文译文，以下显示原文。"))
+                + "</p>"
+            )
+        body = _format_body(body_text)
         qr = ""
         if item.title == _CONTACT.title and CONTACT_QR_FILE.exists():
             qr = (
@@ -754,7 +855,8 @@ class HelpDialog(QDialog):
                 "</div>"
             )
         self.browser.setHtml(
-            f"<h2>{item.title}</h2>"
+            f"<h2>{_escape(title)}</h2>"
+            f"{note}"
             "<pre style='font-family:inherit;white-space:pre-wrap;'>"
             f"{body}</pre>"
             f"{qr}"
@@ -780,8 +882,8 @@ def open_document(parent, relative_path: str) -> None:
         QMessageBox.information(
             parent,
             "文档位置",
-            f"本地未包含 {name}（打包版本不携带 Markdown 源文件），"
-            "已尝试在浏览器打开 GitHub 上的同名文档。",
+            t("本地未包含 {name}（打包版本不携带 Markdown 源文件），"
+              "已尝试在浏览器打开 GitHub 上的同名文档。", name=name),
         )
 
 

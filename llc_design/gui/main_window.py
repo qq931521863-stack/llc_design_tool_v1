@@ -69,6 +69,7 @@ from ..report.formula_pdf import build_formula_pdf
 from .workers import FunctionWorker
 from .updater import add_toolbar_right_side, check_for_updates
 from .help import install_help
+from .i18n_ui import about_text, install_language_selector
 from . import theme
 
 from .widgets.model_comparison_view import ModelComparisonView
@@ -184,6 +185,7 @@ class LLCMainWindow(QMainWindow):
 
         install_help(self, "llc")
         add_toolbar_right_side(toolbar, self)
+        install_language_selector(self)
         QTimer.singleShot(2500, self._auto_check_update)
 
     def _auto_check_update(self) -> None:

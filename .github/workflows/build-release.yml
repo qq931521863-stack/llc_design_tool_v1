@@ -113,40 +113,30 @@ jobs:
           files: ${{ matrix.zip-name }}
           generate_release_notes: true
           body: |
-            Power Design Toolkit V9.2.1 双平台安装包（自动构建）
+            Power Design Toolkit V9.2.2 双平台安装包（自动构建）
 
-            ## 本版重点：补齐帮助与实现说明
-            - 四个工作区（LLC / PFC / Control Tools / FRA Loop Designer）工具栏新增 **帮助**，
-              **F1** 随时打开；功能选择页也有「使用说明 / 帮助 (F1)」
-            - 帮助内容随程序分发，每个工作区包含：快速上手、页面与参数说明、
-              **实现说明**、模型边界与已知限制、快捷键、联系方式与支持、打开文档
-            - 新增 **实现说明**：算法与系数约定到底怎么算的 ——
-              FHA/HB/TD 的求解方式、数字环混合域求值与延时拆分、
-              采样链「ADC/SOC 归采样块、计算与 PWM 更新归固件块」不重复计数、
-              Tustin/预畸变/后向欧拉映射公式、C99 DF2T/SOS 递推式与系数符号、
-              极点半径稳定性阈值、FRA 剥离与代数重建、变量投影有理拟合、
-              ZOH 闭环与 z⁻¹/z 系数对齐、Auto Design 先相位后增益的流程
-            - 新增 **联系与支持**（README + 每个工作区帮助）：
-              邮箱 maileyang@qq.com、微信 maileyang、
-              公众号/技术博客「开关电源仿真与实用设计」（帮助内附二维码）；
-              并写明“有不懂的直接发邮件”以及邮件建议附上的信息
+            ## 本版重点：多语言界面
+            - 界面支持 **简体中文 / English / 日本語 / 한국어**
+            - 切换位置：任意工作区工具栏最右侧 **「语言 / Language」**，立即生效并记忆
+            - 界面原有的英文（Bode、H(z)、C99、Kp、PM、FRA…）按约定**保持原样不翻译**，
+              工程术语一致性优先
+            - **帮助按章节翻译**；未提供当前语言正文译文的章节会显示原文并明确提示
+            - **字体栈随语言切换**（日文 Meiryo / Yu Gothic、韩文 Malgun Gothic、
+              中文微软雅黑 / 思源），避免共用汉字被渲染成中文字形；图表字体同步
+            - 切换语言只改变界面文字，不影响任何计算结果、系数或导出内容
 
-            ## V9.2.0 主要功能（本版同样包含）
-            - FRA Loop Designer 独立工作区：Bode100 / SIMPLIS / 通用频响导入，
-              Plant TS 与 Complete Loop TS 两种语义（只剥离当前控制器）
-            - 目标 Fc/PM 的 Auto Design 与低阶有理模型辨识（≤5 极点，可选纯延时）
-            - **辨识被控对象模型 × 控制器打通**：回传为 Plant Source 后可与控制器库
-              任意类型组成开环，输出 Bode、PM/GM、S/T 与闭环 Step
-            - FRA Loop Designer 控制器类型与 Control Tools 完全配齐
-              （14 种结构 + Type-II/III 的 R/C 输入 + Custom H(z) 精确系数入口）
-            - 阶跃门控统一：两条 Step 路径共用带宽覆盖判据
-              (Fc/Fmin ≥ 10、Fmax/Fc ≥ 5)，置信度 LOW / 含 RHP 极点 / 裕度 FAIL /
-              闭环不稳定时一律不给 Step 并说明原因
+            ## V9.2.1 已包含（本版同样包含）
+            - 四个工作区工具栏「帮助」（F1）+ 功能选择页「使用说明 / 帮助 (F1)」
+            - 帮助内的**实现说明**：FHA/HB/TD 求解、数字环混合域与延时拆分、
+              采样链「采样块/固件块」不重复计数、Tustin/预畸变/后向欧拉映射、
+              C99 DF2T/SOS 递推式与系数符号、稳定性阈值、FRA 剥离与重建、
+              变量投影有理拟合、ZOH 闭环与系数对齐、Auto Design 合成流程
+            - **联系与支持**：邮箱 maileyang@qq.com、微信 maileyang、
+              公众号/技术博客「开关电源仿真与实用设计」（帮助内含二维码）
 
             ## 完整说明
-            使用方式、实现说明、Step 授权边界、已声明假设与已知限制：
+            [V9.2.2 发布说明](https://github.com/yangshuai2022-star/llc_design_tool_v1/blob/v9.2.2/DC/release_v9.2.2.md)
             [V9.2.1 发布说明](https://github.com/yangshuai2022-star/llc_design_tool_v1/blob/v9.2.1/DC/release_v9.2.1.md)
-            [V9.2.0 发布说明](https://github.com/yangshuai2022-star/llc_design_tool_v1/blob/v9.2.0/DC/release_v9.2.0.md)
 
             ## 主要功能
             - LLC 谐振腔、Q/ZVS、磁件、损耗、波形、FHA/HB/时域多精度分析与数字电压环设计
@@ -155,7 +145,7 @@ jobs:
             - FRA Loop Designer：实测频响整定、自动设计、模型辨识与辨识模型 × 控制器闭环分析
             - LLC / TTPL / Vienna 平台无关 C99/Float32 控制代码生成
 
-            ## 联系方式
+            ## 联系方式 / Contact
             - 邮箱 maileyang@qq.com（有问题欢迎直接发邮件讨论）
             - 微信 maileyang
             - 公众号 / 技术博客：开关电源仿真与实用设计
@@ -174,6 +164,7 @@ jobs:
             ## 使用
             - 启动后选择 LLC / PFC / Control Tools / FRA Loop Designer 工作区；
               任意工作区按 **F1** 查看帮助（含实现说明与模型边界）
+            - 语言：工具栏最右侧「语言 / Language」
             - 单相 PFC CLI：`pfc-control-lab --output output/ttpl`
             - Vienna CLI：`vienna-control-lab --output output/vienna`
             - C99 代码生成：`python -m power_codegen --help`

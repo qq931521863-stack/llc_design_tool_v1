@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QMainWindow,QMessageBox,QProgressBar,QSizePolicy,Q
 from llc_design.gui.workers import FunctionWorker
 from llc_design.gui.updater import add_toolbar_right_side, check_for_updates
 from llc_design.gui.help import install_help
+from llc_design.gui.i18n_ui import about_text, install_language_selector
 from llc_design.gui import theme
 from pfc_design.control import PFCControlLabConfig,build_pfc_control_lab_analysis,build_pfc_switching_waveforms,simulate_pfc_line_cycle
 from pfc_design.vienna import (
@@ -49,6 +50,7 @@ class PFCMainWindow(QMainWindow):
         a=QAction("关于 PFC",self);a.triggered.connect(self.show_about);tb.addAction(a)
         install_help(self,"pfc")
         add_toolbar_right_side(tb,self)
+        install_language_selector(self)
         QTimer.singleShot(2500,self._auto_check_update)
 
     def _auto_check_update(self):

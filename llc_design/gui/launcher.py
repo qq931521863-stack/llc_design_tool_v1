@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from llc_design.core.spec import LLCDesignSpec
 from llc_design.gui import theme
 from llc_design.gui.help import show_help
+from llc_design.i18n import t
 from llc_design.gui.main_window import LLCMainWindow
 from pfc_design.gui.main_window import PFCMainWindow
 from power_control_tools.gui.fra_advanced import install_advanced_fra_actions
@@ -29,20 +30,20 @@ class WorkspaceSelectionDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.selected_workspace: str | None = None
-        self.setWindowTitle("电源设计工具箱 — 选择设计功能")
+        self.setWindowTitle(t("电源设计工具箱 — 选择设计功能"))
         self.setMinimumSize(1180, 650)
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
         self.setStyleSheet(theme.launcher_stylesheet(theme.active_theme()))
 
         root = QVBoxLayout(self)
-        title = QLabel("请选择进入的设计工作区")
+        title = QLabel(t("请选择进入的设计工作区"))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 25px; font-weight: 650; padding: 18px;")
         root.addWidget(title)
 
         subtitle = QLabel(
-            "LLC、PFC、数字控制工具与 FRA Loop Designer 使用独立工作区；"
-            "FRA 工作区支持控制器剥离、实时整定、目标 Fc/PM 自动设计与低阶模型辨识。"
+            t("LLC、PFC、数字控制工具与 FRA Loop Designer 使用独立工作区；")
+            + t("FRA 工作区支持控制器剥离、实时整定、目标 Fc/PM 自动设计与低阶模型辨识。")
         )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
@@ -53,20 +54,20 @@ class WorkspaceSelectionDialog(QDialog):
         choices.setHorizontalSpacing(24)
         choices.setVerticalSpacing(20)
         llc_button = self._choice_button(
-            "进入 LLC 设计",
-            "谐振腔、磁性器件、损耗、开关波形、小信号与数字电压环",
+            t("进入 LLC 设计"),
+            t("谐振腔、磁性器件、损耗、开关波形、小信号与数字电压环"),
         )
         pfc_button = self._choice_button(
-            "进入 PFC 设计",
-            "单相 TTPL + 三相 Vienna：控制、采样链、Bode、AC 周期、开关波形与 PF/THD",
+            t("进入 PFC 设计"),
+            t("单相 TTPL + 三相 Vienna：控制、采样链、Bode、AC 周期、开关波形与 PF/THD"),
         )
         control_button = self._choice_button(
-            "进入 Control Tools",
-            "S2Z、数字滤波器、Bode、Step/Impulse、P/Z、SOS 与 C99 float32_t 导出",
+            t("进入 Control Tools"),
+            t("S2Z、数字滤波器、Bode、Step/Impulse、P/Z、SOS 与 C99 float32_t 导出"),
         )
         fra_button = self._choice_button(
-            "进入 FRA Loop Designer",
-            "Bode100 / SIMPLIS / Generic：Equivalent Plant、Auto Design、Model ID、稳定性与 C99",
+            t("进入 FRA Loop Designer"),
+            t("Bode100 / SIMPLIS / Generic：Equivalent Plant、Auto Design、Model ID、稳定性与 C99"),
         )
         llc_button.clicked.connect(lambda: self._select("llc"))
         pfc_button.clicked.connect(lambda: self._select("pfc"))
@@ -78,10 +79,10 @@ class WorkspaceSelectionDialog(QDialog):
         choices.addWidget(fra_button, 1, 1)
         root.addLayout(choices, 1)
 
-        cancel = QPushButton("退出")
+        cancel = QPushButton(t("退出"))
         cancel.clicked.connect(self.reject)
-        help_button = QPushButton("使用说明 / 帮助 (F1)")
-        help_button.setToolTip("四个工作区分别做什么、如何选择、通用操作与快捷键")
+        help_button = QPushButton(t("使用说明 / 帮助 (F1)"))
+        help_button.setToolTip(t("四个工作区分别做什么、如何选择、通用操作与快捷键"))
         help_button.clicked.connect(lambda: show_help(self, "selector"))
         footer = QHBoxLayout()
         footer.addStretch(1)

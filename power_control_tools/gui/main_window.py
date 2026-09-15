@@ -23,6 +23,7 @@ from matplotlib.figure import Figure
 
 from llc_design.gui import theme
 from llc_design.gui.help import install_help
+from llc_design.gui.i18n_ui import install_language_selector
 from llc_design.gui.updater import add_toolbar_right_side
 from power_control_tools.analysis import analyze_digital_filter
 from power_control_tools.codegen import export_c99_filter, render_c99_single_file, verify_c99_filter
@@ -101,6 +102,7 @@ class ControlToolsMainWindow(QMainWindow):
         a = QAction("导出单文件 C99", self); a.triggered.connect(self.export_c99); tb.addAction(a)
         install_help(self, "control")
         add_toolbar_right_side(tb, self)
+        install_language_selector(self)
 
     def _hook(self, w):
         if hasattr(w, "valueChanged"): w.valueChanged.connect(lambda *_: self.schedule())

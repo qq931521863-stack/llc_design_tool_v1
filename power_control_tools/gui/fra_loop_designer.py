@@ -42,6 +42,7 @@ from matplotlib.figure import Figure
 
 from llc_design.gui import theme
 from llc_design.gui.help import install_help
+from llc_design.gui.i18n_ui import install_language_selector
 from power_control_tools.codegen import export_c99_filter, render_c99_single_file, verify_c99_filter
 from power_control_tools.controllers import CONTROLLER_LABELS, EXACT_CONTROLLER, controller_parameter_keys, design_controller
 from power_control_tools.discretize import discretize_transfer_function
@@ -134,6 +135,8 @@ class FRALoopDesignerWindow(QMainWindow):
         action.triggered.connect(self.export_c99)
         tb.addAction(action)
         install_help(self, "fra")
+        install_language_selector(self)
+        install_language_selector(self)
 
     def _hook(self, widget) -> None:
         if hasattr(widget, "valueChanged"):

@@ -1,6 +1,6 @@
 [project]
 name = "power-design-toolkit"
-version = "9.2.1"
+version = "9.2.2"
 description = "Integrated power-electronics design toolkit with LLC/PFC engineering, digital control tools and closed-loop stability analysis"
 license = {text = "GPL-3.0-only"}
 requires-python = ">=3.10"
