@@ -26,5 +26,8 @@ def test_real_bode100_rectangular_columns_match_exported_magnitude_and_phase():
         mag_errors.append(reconstructed_mag_db - mag_db)
         phase_errors.append(wrapped_phase_error)
 
-    assert float(np.max(np.abs(mag_errors))) < 1e-10
-    assert float(np.max(np.abs(phase_errors))) < 1e-10
+    # Bode export columns can be rounded independently.  Micro-dB / micro-deg
+    # agreement is much tighter than any measurement uncertainty and still
+    # catches wrong trace-column mapping or unit interpretation.
+    assert float(np.max(np.abs(mag_errors))) < 5e-6
+    assert float(np.max(np.abs(phase_errors))) < 5e-6
