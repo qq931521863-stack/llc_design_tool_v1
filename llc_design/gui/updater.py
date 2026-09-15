@@ -195,12 +195,18 @@ def add_toolbar_right_side(toolbar, main_window) -> None:
         f'<a href="mailto:maileyang@qq.com" style="color:{muted};'
         f'text-decoration:none;font-size:12px;">maileyang@qq.com</a>'
     )
-    email_label.setToolTip("联系邮箱(点击发送邮件)")
+    email_label.setToolTip(
+        "点击发送邮件：maileyang@qq.com\n"
+        "有不懂的地方、或结果与实测不符，欢迎直接发邮件讨论（帮助 F1 → 联系方式与支持）"
+    )
     email_label.setOpenExternalLinks(True)
     toolbar.addWidget(email_label)
 
     wechat_label = QLabel("微信: maileyang")
-    wechat_label.setToolTip("微信号: maileyang")
+    wechat_label.setToolTip(
+        "微信号: maileyang\n"
+        "公众号 / 技术博客: 开关电源仿真与实用设计（帮助 F1 → 联系方式与支持 内有二维码）"
+    )
     wechat_label.setStyleSheet(
         f"color:{muted};font-size:12px;padding:0 6px;background:transparent;")
     toolbar.addWidget(wechat_label)

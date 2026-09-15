@@ -41,7 +41,7 @@ exclude = ["*.output*", "*.__pycache__*"]
 
 [tool.setuptools.package-data]
 "pfc_design.data" = ["*.json"]
-"llc_design.data" = ["*.json"]
+"llc_design.data" = ["*.json", "*.jpg"]
 "webapp" = ["static/*"]
 
 [tool.pytest.ini_options]

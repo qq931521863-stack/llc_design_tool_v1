@@ -131,3 +131,86 @@ def test_every_workspace_installs_a_help_button_and_f1_shortcut():
     for window in windows.values():
         window.close()
     app.processEvents()
+
+
+def test_contact_details_are_present_in_help_and_match_the_readme():
+    from pathlib import Path
+
+    from llc_design.gui.help import CONTACT_BLOG, CONTACT_EMAIL, CONTACT_QR_FILE, CONTACT_WECHAT, help_topic
+
+    assert CONTACT_EMAIL == "maileyang@qq.com"
+    assert CONTACT_WECHAT == "maileyang"
+    assert CONTACT_BLOG == "开关电源仿真与实用设计"
+
+    # Every workspace help must expose the contact block, including the
+    # "just send me an email" invitation that makes it actionable.
+    for key in ("selector", "llc", "pfc", "control", "fra"):
+        body = "\n".join(section.body for section in help_topic(key).sections)
+        assert CONTACT_EMAIL in body, key
+        assert CONTACT_WECHAT in body, key
+        assert CONTACT_BLOG in body, key
+        assert "直接发邮件" in body, key
+        titles = [section.title for section in help_topic(key).sections]
+        assert "联系方式与支持" in titles, key
+
+    # The QR code must exist in the package (and be declared as package data)
+    # or the packaged build would show help without it.
+    assert CONTACT_QR_FILE.exists(), CONTACT_QR_FILE
+    raw = CONTACT_QR_FILE.read_bytes()
+    assert raw[:3] == b"\xff\xd8\xff", "contact QR is not a JPEG"
+    assert len(raw) > 2000
+
+    pyproject = (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"llc_design.data" = ["*.json", "*.jpg"]' in pyproject
+
+    readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
+    assert CONTACT_EMAIL in readme and CONTACT_WECHAT in readme and CONTACT_BLOG in readme
+    assert "wechat_official_account.jpg" in readme
+
+
+def test_help_dialog_embeds_the_contact_qr_code():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
+    from llc_design.gui.help import CONTACT_QR_FILE, HelpDialog
+
+    app = _qapp(qt_widgets)
+    dialog = HelpDialog(None, "llc", "联系方式与支持")
+    html = dialog.browser.toHtml()
+    assert CONTACT_QR_FILE.as_uri() in html
+    assert "mailto:maileyang@qq.com" in html
+    dialog.close()
+    app.processEvents()
+
+
+def test_help_rendering_converts_markup_and_leaves_no_stray_asterisks():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
+    from llc_design.gui.help import HELP_TOPICS, HelpDialog
+
+    app = _qapp(qt_widgets)
+    for key in HELP_TOPICS:
+        dialog = HelpDialog(None, key)
+        for row in range(dialog.section_list.count()):
+            dialog.section_list.setCurrentRow(row)
+            rendered = dialog.browser.toPlainText()
+            assert "**" not in rendered, f"{key}/{dialog.section_list.item(row).text()}"
+        dialog.close()
+    app.processEvents()
+
+
+def test_help_contains_implementation_notes_for_every_workspace():
+    """The algorithm/coefficient notes are the part users asked to keep."""
+    from llc_design.gui.help import help_topic
+
+    required = {
+        "llc": ("实现说明 — FHA / HB / TD", "实现说明 — 数字环", "Thiran"),
+        "pfc": ("实现说明 — 采样链与延迟拆分", "不重复计数", "跨 PWM 周期连续积分"),
+        "control": ("实现说明 — 系数约定与离散化", "实现说明 — C99 导出结构", "DF2T"),
+        "fra": ("实现说明 — 频响求值与裕度判据", "实现说明 — 剥离、重建与辨识算法", "实现说明 — Auto Design"),
+    }
+    for key, needles in required.items():
+        sections = help_topic(key).sections
+        haystack = "\n".join([section.title for section in sections] + [section.body for section in sections])
+        for needle in needles:
+            assert needle in haystack, f"{key}: {needle}"
+        assert any(section.title.startswith("实现说明") for section in sections), key
