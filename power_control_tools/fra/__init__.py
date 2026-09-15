@@ -31,7 +31,15 @@ from .fitting import (
     RationalPlantModel,
     closed_loop_step_from_fitted_loop,
     fit_rational_frequency_response,
+    step_result_from_response,
     validate_fitted_open_loop,
+)
+from .loop_link import (
+    PlantControllerLinkResult,
+    closed_loop_step_from_plant_and_controller,
+    discretize_plant_model,
+    link_plant_model_with_controller,
+    plant_model_polynomials_rad_s,
 )
 
 __all__ = [
@@ -64,5 +72,11 @@ __all__ = [
     "FitClosedLoopStepResult",
     "fit_rational_frequency_response",
     "closed_loop_step_from_fitted_loop",
+    "step_result_from_response",
     "validate_fitted_open_loop",
+    "PlantControllerLinkResult",
+    "plant_model_polynomials_rad_s",
+    "discretize_plant_model",
+    "closed_loop_step_from_plant_and_controller",
+    "link_plant_model_with_controller",
 ]

@@ -402,6 +402,65 @@ def fit_rational_frequency_response(
     return best_result
 
 
+def step_result_from_response(
+    t_s: NDArray[np.float64] | np.ndarray,
+    y: NDArray[np.float64] | np.ndarray,
+    *,
+    poles_rad_s: NDArray[np.complex128] | np.ndarray,
+    final_value: float,
+    note: str,
+    settling_band: float = 0.02,
+) -> FitClosedLoopStepResult:
+    """Build step statistics from an already-simulated response.
+
+    Shared by the fitted-open-loop path and by the plant-model x controller
+    link so both report overshoot/rise/settling with identical definitions.
+    """
+    t = np.asarray(t_s, dtype=float).reshape(-1)
+    values = np.asarray(y, dtype=float).reshape(-1)
+    final = float(final_value)
+    peak = float(np.max(values)) if final >= 0.0 else float(np.min(values))
+    if abs(final) > 1e-12:
+        overshoot = max(0.0, (peak - final) / abs(final) * 100.0) if final >= 0.0 else max(0.0, (final - peak) / abs(final) * 100.0)
+    else:
+        overshoot = 0.0
+
+    rise = None
+    if abs(final) > 1e-12:
+        low, high = 0.10 * final, 0.90 * final
+        if final >= 0.0:
+            i10 = np.flatnonzero(values >= low)
+            i90 = np.flatnonzero(values >= high)
+        else:
+            i10 = np.flatnonzero(values <= low)
+            i90 = np.flatnonzero(values <= high)
+        if i10.size and i90.size and i90[0] >= i10[0]:
+            rise = float(t[i90[0]] - t[i10[0]])
+
+    scale = max(abs(final), 1e-12)
+    outside = np.flatnonzero(np.abs(values - final) > float(settling_band) * scale)
+    settling = None
+    if outside.size:
+        index = int(outside[-1] + 1)
+        if index < len(t):
+            settling = float(t[index])
+    else:
+        settling = 0.0
+
+    return FitClosedLoopStepResult(
+        t,
+        values,
+        True,
+        np.asarray(poles_rad_s, dtype=complex),
+        final,
+        peak,
+        float(overshoot),
+        rise,
+        settling,
+        note,
+    )
+
+
 def closed_loop_step_from_fitted_loop(
     loop_model: RationalPlantModel,
     *,
@@ -452,45 +511,14 @@ def closed_loop_step_from_fitted_loop(
         final = float(closed_num[-1] / closed_den[-1])
     else:
         final = float(y[-1])
-    peak = float(np.max(y)) if final >= 0.0 else float(np.min(y))
-    if abs(final) > 1e-12:
-        overshoot = max(0.0, (peak - final) / abs(final) * 100.0) if final >= 0.0 else max(0.0, (final - peak) / abs(final) * 100.0)
-    else:
-        overshoot = 0.0
 
-    rise = None
-    if abs(final) > 1e-12:
-        low, high = 0.10 * final, 0.90 * final
-        if final >= 0.0:
-            i10 = np.flatnonzero(y >= low)
-            i90 = np.flatnonzero(y >= high)
-        else:
-            i10 = np.flatnonzero(y <= low)
-            i90 = np.flatnonzero(y <= high)
-        if i10.size and i90.size and i90[0] >= i10[0]:
-            rise = float(t_s[i90[0]] - t_s[i10[0]])
-
-    scale = max(abs(final), 1e-12)
-    outside = np.flatnonzero(np.abs(y - final) > float(settling_band) * scale)
-    settling = None
-    if outside.size:
-        index = int(outside[-1] + 1)
-        if index < len(t_s):
-            settling = float(t_s[index])
-    else:
-        settling = 0.0
-
-    return FitClosedLoopStepResult(
+    return step_result_from_response(
         t_s,
         y,
-        True,
-        poles_s,
-        final,
-        peak,
-        float(overshoot),
-        rise,
-        settling,
-        "Approximate step from validated rational open-loop fit + first-order Padé delay; validate against hardware before release use.",
+        poles_rad_s=poles_s,
+        final_value=final,
+        note="Approximate step from validated rational open-loop fit + first-order Padé delay; validate against hardware before release use.",
+        settling_band=settling_band,
     )
 
 
@@ -588,5 +616,6 @@ __all__ = [
     "FRAFitLoopValidation",
     "fit_rational_frequency_response",
     "closed_loop_step_from_fitted_loop",
+    "step_result_from_response",
     "validate_fitted_open_loop",
 ]

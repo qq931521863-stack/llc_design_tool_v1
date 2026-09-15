@@ -16,6 +16,9 @@ from .fra import (
     AutoDesignCandidate, AutoDesignResult, auto_design_controller,
     RationalPlantModel, FRAFitMetrics, FRAFitResult, FitClosedLoopStepResult,
     fit_rational_frequency_response, closed_loop_step_from_fitted_loop,
+    PlantControllerLinkResult, link_plant_model_with_controller,
+    discretize_plant_model, closed_loop_step_from_plant_and_controller,
+    plant_model_polynomials_rad_s,
 )
 
 __all__ = [
@@ -30,4 +33,7 @@ __all__ = [
     "AutoDesignCandidate", "AutoDesignResult", "auto_design_controller",
     "RationalPlantModel", "FRAFitMetrics", "FRAFitResult", "FitClosedLoopStepResult",
     "fit_rational_frequency_response", "closed_loop_step_from_fitted_loop",
+    "PlantControllerLinkResult", "link_plant_model_with_controller",
+    "discretize_plant_model", "closed_loop_step_from_plant_and_controller",
+    "plant_model_polynomials_rad_s",
 ]
