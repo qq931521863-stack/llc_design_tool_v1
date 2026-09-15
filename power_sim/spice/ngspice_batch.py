@@ -1,9 +1,9 @@
 """ngspice batch backend used for netlist/waveform smoke validation.
 
-Production closed-loop co-simulation will use the shared-ngspice callback API so
+Production closed-loop co-simulation uses the shared-ngspice callback API so
 circuit state is continuous while the digital controller executes at its sample
-rate.  This module intentionally remains a simple, deterministic batch backend
-for open-loop/steady waveform correlation and CI integration tests.
+rate. This module remains a deterministic batch backend for open-loop waveform
+correlation and CI integration tests.
 """
 from __future__ import annotations
 
@@ -66,19 +66,15 @@ def find_ngspice_executable(explicit: str | Path | None = None) -> str | None:
     if explicit is not None:
         path = Path(explicit).expanduser()
         return str(path) if path.is_file() else None
-
     env = os.environ.get("NGSPICE_EXE")
     if env:
         path = Path(env).expanduser()
         if path.is_file():
             return str(path)
-
-    # ngspice_con is required on several Windows builds for console/batch I/O.
     for candidate in ("ngspice_con", "ngspice"):
         found = shutil.which(candidate)
         if found:
             return found
-
     common = (
         Path(r"C:\Program Files\ngspice\bin\ngspice_con.exe"),
         Path(r"C:\Program Files\ngspice\ngspice_con.exe"),
@@ -109,7 +105,6 @@ def parse_ascii_raw(path: str | Path) -> NgSpiceRawData:
     point_count: int | None = None
     variable_names: list[str] = []
     values_start: int | None = None
-
     for index, raw_line in enumerate(lines):
         line = raw_line.strip()
         lower = line.lower()
@@ -136,7 +131,6 @@ def parse_ascii_raw(path: str | Path) -> NgSpiceRawData:
         elif line == "Values:":
             values_start = index + 1
             break
-
     if variable_count is None or point_count is None or values_start is None:
         raise ValueError("invalid ngspice ASCII raw header")
     if len(variable_names) != variable_count:
@@ -150,20 +144,15 @@ def parse_ascii_raw(path: str | Path) -> NgSpiceRawData:
         parts = line.split()
         if not parts:
             continue
-        # First vector of each point is typically printed as: <point-index> <value>.
-        # Remaining vectors are printed as a single indented value.  Some ngspice
-        # versions also repeat an index; taking the final numeric token handles both.
         try:
             flat.append(_parse_real_value(parts[-1]))
         except ValueError:
             continue
-
     expected = variable_count * point_count
     if len(flat) < expected:
         raise ValueError(f"raw Values section has {len(flat)} numeric values, expected {expected}")
     if len(flat) > expected:
         flat = flat[:expected]
-
     matrix = np.asarray(flat, dtype=float).reshape(point_count, variable_count)
     vectors = {name: matrix[:, i].copy() for i, name in enumerate(variable_names)}
     return NgSpiceRawData(plot_name, tuple(variable_names), vectors, point_count)
@@ -196,6 +185,7 @@ class NgSpiceBatchEngine:
         max_step_s: float,
         workdir: str | Path | None = None,
         initial_step_s: float | None = None,
+        use_initial_conditions: bool = False,
     ) -> NgSpiceBatchResult:
         if self.executable is None:
             raise FileNotFoundError("ngspice executable was not found; install ngspice or set NGSPICE_EXE")
@@ -213,8 +203,9 @@ class NgSpiceBatchEngine:
         raw_path = wd / "transient.raw"
 
         base = render_netlist(circuit, include_end=False)
+        uic = " uic" if use_initial_conditions else ""
         control = [
-            f".tran {initial:.12e} {stop:.12e} 0 {step:.12e}",
+            f".tran {initial:.12e} {stop:.12e} 0 {step:.12e}{uic}",
             ".control",
             "set filetype=ascii",
             "run",
@@ -242,7 +233,7 @@ class NgSpiceBatchEngine:
         if raw_path.exists():
             try:
                 data = parse_ascii_raw(raw_path)
-            except Exception as exc:  # preserve simulator output for diagnosis
+            except Exception as exc:
                 errors = errors + (f"raw parse error: {exc}",)
         elif proc.returncode == 0:
             errors = errors + ("ngspice completed without creating transient.raw",)
