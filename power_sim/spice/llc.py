@@ -2,7 +2,7 @@
 
 V1 intentionally targets correlation with the existing Python switched solver:
 ideal voltage-controlled primary switches, coupled-inductor transformer,
-full-wave diode rectifier and the designed output capacitor/load.  Vendor MOSFET
+full-wave diode rectifier and the designed output capacitor/load. Vendor MOSFET
 models, nonlinear Coss, Qrr and synchronous-rectifier control are later fidelity
 layers and are not silently implied by this model.
 """
@@ -24,11 +24,18 @@ class LLCSpiceConfig:
     load_fraction: float = 1.0
     gate_drive_mode: str = "pulse"  # pulse | external
     gate_high_v: float = 5.0
-    switch_ron_ohm: float = 1e-3
+    switch_ron_ohm: float = 10e-3
     switch_roff_ohm: float = 1e9
-    transformer_coupling: float = 0.999999
-    diode_is_a: float = 1e-3
-    diode_rs_ohm: float = 1e-3
+    transformer_coupling: float = 0.9999
+    # The original prototype used Is=1e-3/Rs=1m to imitate an almost-ideal
+    # rectifier. That makes the diode exponential extremely stiff exactly when
+    # the resonant secondary first commutates and ngspice can collapse its
+    # timestep to <1e-18 s. These defaults remain low-loss for the correlation
+    # model but have materially better Newton conditioning.
+    diode_is_a: float = 1e-9
+    diode_rs_ohm: float = 20e-3
+    diode_cjo_f: float = 10e-12
+    secondary_bleeder_ohm: float = 100e6
     initial_output_v: float | None = None
 
     def validate(self, spec: LLCDesignSpec) -> None:
@@ -48,6 +55,10 @@ class LLCSpiceConfig:
             raise ValueError("invalid ideal-switch Ron/Roff")
         if not (0.0 < self.transformer_coupling <= 1.0):
             raise ValueError("transformer coupling must be within (0, 1]")
+        if self.diode_is_a <= 0.0 or self.diode_rs_ohm <= 0.0 or self.diode_cjo_f < 0.0:
+            raise ValueError("invalid rectifier diode model")
+        if self.secondary_bleeder_ohm <= 0.0:
+            raise ValueError("secondary_bleeder_ohm must be positive")
 
 
 def _s(value: float) -> str:
@@ -84,7 +95,7 @@ def _gate_source(refdes: str, node: str, config: LLCSpiceConfig, spec: LLCDesign
 def build_ideal_llc_circuit(spec: LLCDesignSpec, tank: TankDesign, config: LLCSpiceConfig) -> CircuitIR:
     """Build the first ngspice LLC correlation model.
 
-    The first production milestone deliberately supports FULL_BRIDGE only.  A
+    The first production milestone deliberately supports FULL_BRIDGE only. A
     half-bridge needs an explicit split-bus/midpoint definition and must not be
     approximated by silently halving the source voltage.
     """
@@ -141,6 +152,12 @@ def build_ideal_llc_circuit(spec: LLCDesignSpec, tank: TankDesign, config: LLCSp
             SpiceElement("LPRI", ElementKind.INDUCTOR, ("PRI", "B"), _s(tank.lm_h)),
             SpiceElement("LSEC", ElementKind.INDUCTOR, ("SEC_P", "SEC_N"), _s(secondary_l_h)),
             SpiceElement("KTX", ElementKind.COUPLING, ("LPRI", "LSEC"), _s(config.transformer_coupling)),
+            # High-value secondary references are numerical bleeders only. They
+            # prevent the ideal coupled secondary/blocked bridge from becoming a
+            # nearly floating common-mode island before the first rectifier
+            # conduction event; their loss is negligible at the intended power.
+            SpiceElement("RSECP", ElementKind.RESISTOR, ("SEC_P", "0"), _s(config.secondary_bleeder_ohm)),
+            SpiceElement("RSECN", ElementKind.RESISTOR, ("SEC_N", "0"), _s(config.secondary_bleeder_ohm)),
             SpiceElement("D1", ElementKind.DIODE, ("SEC_P", "OUT"), model="DRECT"),
             SpiceElement("D2", ElementKind.DIODE, ("SEC_N", "OUT"), model="DRECT"),
             SpiceElement("D3", ElementKind.DIODE, ("0", "SEC_P"), model="DRECT"),
@@ -157,12 +174,15 @@ def build_ideal_llc_circuit(spec: LLCDesignSpec, tank: TankDesign, config: LLCSp
                 f".model {switch_model} SW(Ron={_s(config.switch_ron_ohm)} "
                 f"Roff={_s(config.switch_roff_ohm)} Vt=2.5 Vh=0.1)"
             ),
-            f".model DRECT D(Is={_s(config.diode_is_a)} N=1 Rs={_s(config.diode_rs_ohm)} Cjo=1p)",
+            (
+                f".model DRECT D(Is={_s(config.diode_is_a)} N=1 "
+                f"Rs={_s(config.diode_rs_ohm)} Cjo={_s(config.diode_cjo_f)})"
+            ),
         ]
     )
     circuit.directives.extend(
         [
-            ".options method=gear reltol=1e-5 abstol=1e-9 vntol=1e-6",
+            ".options method=gear reltol=1e-4 abstol=1e-8 vntol=1e-5 gmin=1e-12",
             f".ic V(OUT)={_s(initial_vout)} V(CO_INT)={_s(initial_vout)}",
         ]
     )
