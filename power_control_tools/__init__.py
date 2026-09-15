@@ -13,6 +13,9 @@ from .fra import (
     load_fra_file, analyze_loop_response, deembed_controller,
     digital_frequency_response, magnitude_phase,
     scale_digital_controller, firmware_feedback_a_to_denominator,
+    AutoDesignCandidate, AutoDesignResult, auto_design_controller,
+    RationalPlantModel, FRAFitMetrics, FRAFitResult, FitClosedLoopStepResult,
+    fit_rational_frequency_response, closed_loop_step_from_fitted_loop,
 )
 
 __all__ = [
@@ -24,4 +27,7 @@ __all__ = [
     "FRAMeasurement", "FRAMeasurementKind", "FRASourceFormat", "load_fra_file",
     "analyze_loop_response", "deembed_controller", "digital_frequency_response", "magnitude_phase",
     "scale_digital_controller", "firmware_feedback_a_to_denominator",
+    "AutoDesignCandidate", "AutoDesignResult", "auto_design_controller",
+    "RationalPlantModel", "FRAFitMetrics", "FRAFitResult", "FitClosedLoopStepResult",
+    "fit_rational_frequency_response", "closed_loop_step_from_fitted_loop",
 ]
