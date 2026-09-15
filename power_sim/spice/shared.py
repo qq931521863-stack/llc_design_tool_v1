@@ -19,6 +19,7 @@ from ctypes.util import find_library
 from pathlib import Path
 import os
 import sys
+import threading
 import time
 from typing import Callable, Sequence
 
@@ -172,6 +173,8 @@ class NgSpiceSharedLibrary:
         self._vsrc_callback: ExternalSourceCallback | None = None
         self._isrc_callback: ExternalSourceCallback | None = None
         self._sync_callback: SyncCallback | None = None
+        self._bg_started = threading.Event()
+        self._bg_finished = threading.Event()
         self._configure_symbols()
         self._callbacks: list[object] = []
         self._initialized = False
@@ -262,11 +265,16 @@ class NgSpiceSharedLibrary:
             return 0
 
         @BGThreadRunningCB
-        def bg_running(not_running, ident, userdata):
+        def bg_running(running, ident, userdata):
             del ident, userdata
-            # sharedspice.h names this argument ``noruns``: false while the
-            # background simulation is active, true after it stops.
-            self.background_running = not bool(not_running)
+            # Official sharedspice.h: argument is true while the worker thread
+            # is running, false when it has stopped.
+            self.background_running = bool(running)
+            if running:
+                self._bg_started.set()
+                self._bg_finished.clear()
+            elif self._bg_started.is_set():
+                self._bg_finished.set()
             return 0
 
         self._callbacks = [send_char, send_stat, controlled_exit, send_data, send_init_data, bg_running]
@@ -334,20 +342,51 @@ class NgSpiceSharedLibrary:
         return bool(self.lib.ngSpice_SetBkpt(float(time_s)))
 
     def is_running(self) -> bool:
-        """Return shared-ngspice's authoritative background-run state."""
         return bool(self.lib.ngSpice_running())
 
+    def run_background(self, *, timeout_s: float = 30.0, poll_s: float = 0.001) -> None:
+        """Start ``bg_run`` and wait until its worker lifecycle fully completes."""
+        timeout = float(timeout_s)
+        poll = float(poll_s)
+        if timeout <= 0.0 or poll <= 0.0:
+            raise ValueError("timeout_s and poll_s must be positive")
+        self._bg_started.clear()
+        self._bg_finished.clear()
+        self.background_running = False
+        rc = self.command("bg_run")
+        if rc != 0:
+            raise RuntimeError(f"shared ngspice bg_run failed to start with status {rc}")
+
+        deadline = time.monotonic() + timeout
+        while not self._bg_started.is_set():
+            # The authoritative C API provides a second observation channel in
+            # case callback delivery is delayed relative to command return.
+            if self.is_running():
+                self._bg_started.set()
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError("shared ngspice background thread never entered running state")
+            time.sleep(poll)
+
+        while True:
+            if self._bg_finished.is_set():
+                break
+            if not self.is_running():
+                # Some builds may report stop via ngSpice_running() before the
+                # Python callback event becomes visible; both indicate idle.
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"shared ngspice did not finish within {timeout:.3g} s")
+            time.sleep(poll)
+        self.background_running = False
+
     def wait_until_idle(self, *, timeout_s: float = 30.0, poll_s: float = 0.001) -> None:
-        """Wait for a ``bg_run`` simulation to finish or raise TimeoutError."""
+        """Wait for an already-started shared-ngspice background run."""
         timeout = float(timeout_s)
         poll = float(poll_s)
         if timeout <= 0.0 or poll <= 0.0:
             raise ValueError("timeout_s and poll_s must be positive")
         deadline = time.monotonic() + timeout
-        # bg_run starts asynchronously. Give ngspice one poll interval to enter
-        # running state, then rely on ngSpice_running() rather than callback
-        # ordering to determine completion.
-        time.sleep(min(poll, timeout))
         while self.is_running():
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"shared ngspice did not finish within {timeout:.3g} s")
