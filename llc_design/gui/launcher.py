@@ -15,6 +15,7 @@ from llc_design.core.spec import LLCDesignSpec
 from llc_design.gui import theme
 from llc_design.gui.main_window import LLCMainWindow
 from pfc_design.gui.main_window import PFCMainWindow
+from power_control_tools.gui.fra_advanced import install_advanced_fra_actions
 from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
 from power_control_tools.gui.main_window import ControlToolsMainWindow
 
@@ -38,7 +39,7 @@ class WorkspaceSelectionDialog(QDialog):
 
         subtitle = QLabel(
             "LLC、PFC、数字控制工具与 FRA Loop Designer 使用独立工作区；"
-            "FRA 工作区可从实测/仿真 Bode 数据剥离当前控制器并实时整定新控制器。"
+            "FRA 工作区支持控制器剥离、实时整定、目标 Fc/PM 自动设计与低阶模型辨识。"
         )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
@@ -62,7 +63,7 @@ class WorkspaceSelectionDialog(QDialog):
         )
         fra_button = self._choice_button(
             "进入 FRA Loop Designer",
-            "Bode100 / SIMPLIS / Generic：控制器剥离、Equivalent Plant、实时 Fc/PM/GM/S/T 与 C99",
+            "Bode100 / SIMPLIS / Generic：Equivalent Plant、Auto Design、Model ID、稳定性与 C99",
         )
         llc_button.clicked.connect(lambda: self._select("llc"))
         pfc_button.clicked.connect(lambda: self._select("pfc"))
@@ -107,6 +108,7 @@ class WorkspaceApplicationController:
         self.pfc_window = PFCMainWindow()
         self.control_window = ControlToolsMainWindow()
         self.fra_window = FRALoopDesignerWindow()
+        install_advanced_fra_actions(self.fra_window)
         self.active_workspace: str | None = None
         self.llc_window.workspace_switch_requested.connect(self._handle_request)
         self.pfc_window.workspace_switch_requested.connect(self._handle_request)
