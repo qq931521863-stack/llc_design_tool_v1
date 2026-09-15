@@ -2,7 +2,7 @@
 
 These classes model what firmware actually executes: ADC sampling/quantization,
 one-sample-at-a-time exact H(z), controller limiting and LLC frequency
-modulation.  They are backend independent so the same digital chain can drive a
+modulation. They are backend independent so the same digital chain can drive a
 surrogate plant or a shared-ngspice switching circuit.
 """
 from __future__ import annotations
@@ -117,7 +117,7 @@ class DigitalTransferRuntime:
       y[n]=sum(b*x)-sum(a*y)
 
     When limited, the clamped output can be inserted into output history as a
-    generic state-clamping anti-windup approximation.  No controller
+    generic state-clamping anti-windup approximation. No controller
     re-discretization occurs here.
     """
 
@@ -199,11 +199,9 @@ class LLCFMConfig:
 class LLCFMLUTConfig:
     """Firmware-style piecewise-linear PCMD frequency-modulator table.
 
-    ``values_are_tbprd`` selects the firmware's PCMD->TBPRD representation or a
-    direct PCMD->frequency table. ``command_bias_pu`` is the steady-state PCMD;
-    the exact controller H(z) produces a perturbation around that bias.  This
-    lets small-signal-designed controllers drive the full nonlinear LUT in
-    transient co-simulation without inventing a hidden controller DC state.
+    ``values_are_tbprd`` selects PCMD->TBPRD or direct PCMD->frequency.
+    ``command_bias_pu`` is the steady operating command; the exact H(z)
+    controller supplies the perturbation around that bias.
     """
 
     pcmd: tuple[float, ...]
@@ -245,12 +243,14 @@ class LLCFMLUTConfig:
     @property
     def minimum_frequency_hz(self) -> float:
         p, _ = self.arrays()
-        return float(min(self.frequency_at_absolute_command(float(p[0])), self.frequency_at_absolute_command(float(p[-1]))))
+        frequencies = np.asarray([self.frequency_at_absolute_command(float(x)) for x in p])
+        return float(np.min(frequencies))
 
     @property
     def maximum_frequency_hz(self) -> float:
         p, _ = self.arrays()
-        return float(max(self.frequency_at_absolute_command(float(p[0])), self.frequency_at_absolute_command(float(p[-1]))))
+        frequencies = np.asarray([self.frequency_at_absolute_command(float(x)) for x in p])
+        return float(np.max(frequencies))
 
     @property
     def nominal_frequency_hz(self) -> float:
@@ -267,13 +267,52 @@ class LLCFMStep:
     quantized: bool
 
 
+def _map_lut(config: LLCFMLUTConfig, command: float) -> LLCFMStep:
+    c = config
+    p, v = c.arrays()
+    perturbation = float(command)
+    absolute_raw = c.command_bias_pu + perturbation
+    absolute = float(np.clip(absolute_raw, p[0], p[-1]))
+    saturated = not math.isclose(absolute, absolute_raw, rel_tol=0.0, abs_tol=1e-15)
+    mapped_value = float(np.interp(absolute, p, v))
+
+    if c.values_are_tbprd:
+        raw_tbprd = mapped_value
+        if c.quantize_tbprd:
+            tbprd = max(1, int(round(raw_tbprd)))
+            quantized = not math.isclose(float(tbprd), raw_tbprd, rel_tol=0.0, abs_tol=1e-15)
+        else:
+            tbprd = None
+            quantized = False
+        fcmd = c.frequency_from_value(raw_tbprd)
+        factual = c.frequency_from_value(float(tbprd)) if tbprd is not None else fcmd
+    else:
+        fcmd = mapped_value
+        if c.quantize_tbprd:
+            raw_tbprd = c.tbclk_hz / (c.count_mode.divisor * fcmd)
+            tbprd = max(1, int(round(raw_tbprd)))
+            factual = c.tbclk_hz / (c.count_mode.divisor * tbprd)
+            quantized = not math.isclose(factual, fcmd, rel_tol=0.0, abs_tol=1e-12)
+        else:
+            tbprd = None
+            factual = fcmd
+            quantized = False
+
+    return LLCFMStep(perturbation, float(fcmd), float(factual), tbprd, saturated, quantized)
+
+
 class LLCFMRuntime:
-    def __init__(self, config: LLCFMConfig):
+    """Compatibility runtime accepting legacy analytic FM or exact LUT config."""
+
+    def __init__(self, config: LLCFMConfig | LLCFMLUTConfig):
         config.validate()
         self.config = config
 
     def map(self, command: float) -> LLCFMStep:
         c = self.config
+        if isinstance(c, LLCFMLUTConfig):
+            return _map_lut(c, command)
+
         command = float(command)
         saturated = False
         quantized = False
@@ -312,37 +351,7 @@ class LLCFMLUTRuntime:
         self.config = config
 
     def map(self, command: float) -> LLCFMStep:
-        c = self.config
-        p, v = c.arrays()
-        perturbation = float(command)
-        absolute_raw = c.command_bias_pu + perturbation
-        absolute = float(np.clip(absolute_raw, p[0], p[-1]))
-        saturated = not math.isclose(absolute, absolute_raw, rel_tol=0.0, abs_tol=1e-15)
-        mapped_value = float(np.interp(absolute, p, v))
-
-        if c.values_are_tbprd:
-            raw_tbprd = mapped_value
-            if c.quantize_tbprd:
-                tbprd = max(1, int(round(raw_tbprd)))
-                quantized = not math.isclose(float(tbprd), raw_tbprd, rel_tol=0.0, abs_tol=1e-15)
-            else:
-                tbprd = None
-                quantized = False
-            fcmd = c.frequency_from_value(raw_tbprd)
-            factual = c.frequency_from_value(float(tbprd)) if tbprd is not None else fcmd
-        else:
-            fcmd = mapped_value
-            if c.quantize_tbprd:
-                raw_tbprd = c.tbclk_hz / (c.count_mode.divisor * fcmd)
-                tbprd = max(1, int(round(raw_tbprd)))
-                factual = c.tbclk_hz / (c.count_mode.divisor * tbprd)
-                quantized = not math.isclose(factual, fcmd, rel_tol=0.0, abs_tol=1e-12)
-            else:
-                tbprd = None
-                factual = fcmd
-                quantized = False
-
-        return LLCFMStep(perturbation, float(fcmd), float(factual), tbprd, saturated, quantized)
+        return _map_lut(self.config, command)
 
 
 def make_fm_runtime(config: LLCFMConfig | LLCFMLUTConfig) -> LLCFMRuntime | LLCFMLUTRuntime:
