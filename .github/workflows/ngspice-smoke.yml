@@ -1,0 +1,36 @@
+name: ngspice-smoke
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  spice-smoke:
+    runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ngspice and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ngspice libngspice0
+          ngspice --version
+          ldconfig -p | grep -i ngspice || true
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run power_sim including live batch/shared ngspice tests
+        run: |
+          python -m pytest power_sim/tests -q
