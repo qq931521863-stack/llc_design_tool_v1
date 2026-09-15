@@ -349,6 +349,8 @@ Power Electronics · Digital Power · Embedded Control · Control Algorithms
 - WeChat: `maileyang`
 - Technical blog / WeChat official account: **开关电源仿真与实用设计**
 
+![WeChat official account QR](llc_design/data/wechat_official_account.jpg)
+
 For bug reports, include the toolkit version, topology/workspace, input parameters, expected result, actual result and relevant screenshot/export whenever possible.
 
 ---
