@@ -9,22 +9,22 @@ from numpy.typing import NDArray
 from scipy import signal
 from scipy.optimize import least_squares
 
+from power_control_tools.fra.analysis import LoopStabilityResult, analyze_loop_response
+
 
 @dataclass(frozen=True)
 class RationalPlantModel:
-    """Stable real-coefficient rational FRA model plus optional pure delay.
+    """Stable real-coefficient rational FRA approximation plus pure delay.
 
-    The rational part is represented in normalized frequency ``x=s/w_ref`` to
-    keep polynomial conditioning reasonable across wide FRA frequency ranges.
-    ``numerator_coefficients`` are ascending powers of x.  The denominator is
-    factored into stable first-order real poles and stable second-order pole
-    pairs.  This is an engineering identification model, not a claim about the
-    physical component topology.
+    The model is represented in normalized frequency x=s/w_ref to improve
+    polynomial conditioning.  It is an engineering approximation of measured
+    frequency response, not a claim that fitted poles/zeros correspond to
+    physical components in the hardware.
     """
 
-    numerator_coefficients: tuple[float, ...]
+    numerator_coefficients: tuple[float, ...]  # ascending powers of x
     real_pole_hz: tuple[float, ...]
-    complex_pole_pairs: tuple[tuple[float, float], ...]  # (natural_frequency_hz, damping_ratio)
+    complex_pole_pairs: tuple[tuple[float, float], ...]  # (fn_hz, damping)
     reference_frequency_hz: float
     delay_s: float = 0.0
 
@@ -53,8 +53,10 @@ class RationalPlantModel:
     def normalized_polynomials(self, *, pade_delay: bool = True) -> tuple[np.ndarray, np.ndarray]:
         """Return descending polynomial coefficients in x=s/w_ref.
 
-        A first-order Padé delay is used only for approximate time-domain/root
-        calculations.  Frequency-domain validation always uses the exact delay.
+        Pure delay is represented by first-order Padé only for optional
+        time-domain/root calculations.  Extremely small fitted delays are
+        ignored so numerical optimizer noise cannot create an enormous fake
+        Padé pole/zero pair.
         """
         wref = 2.0 * math.pi * float(self.reference_frequency_hz)
         den_asc = np.asarray([1.0], dtype=float)
@@ -69,10 +71,10 @@ class RationalPlantModel:
                 np.asarray([1.0, 2.0 * float(damping) * ratio, ratio * ratio], dtype=float),
             )
         num_asc = np.asarray(self.numerator_coefficients, dtype=float)
-        if pade_delay and self.delay_s > 0.0:
-            tau = wref * float(self.delay_s)
-            num_asc = poly.polymul(num_asc, np.asarray([1.0, -0.5 * tau], dtype=float))
-            den_asc = poly.polymul(den_asc, np.asarray([1.0, 0.5 * tau], dtype=float))
+        tau_normalized = wref * float(self.delay_s)
+        if pade_delay and self.delay_s > 0.0 and abs(tau_normalized) > 1e-9:
+            num_asc = poly.polymul(num_asc, np.asarray([1.0, -0.5 * tau_normalized], dtype=float))
+            den_asc = poly.polymul(den_asc, np.asarray([1.0, 0.5 * tau_normalized], dtype=float))
         return np.asarray(num_asc[::-1], dtype=float), np.asarray(den_asc[::-1], dtype=float)
 
     @property
@@ -125,6 +127,20 @@ class FitClosedLoopStepResult:
     note: str
 
 
+@dataclass(frozen=True)
+class FRAFitLoopValidation:
+    passed: bool
+    status: str
+    raw_metrics: LoopStabilityResult
+    fitted_metrics: LoopStabilityResult
+    crossover_count_match: bool
+    crossover_error_percent: float | None
+    phase_margin_error_deg: float | None
+    gain_margin_error_db: float | None
+    fitted_closed_loop_stable: bool
+    note: str
+
+
 def _fit_metrics(
     measured: np.ndarray,
     fitted: np.ndarray,
@@ -143,14 +159,24 @@ def _fit_metrics(
     if focus_hz is not None and focus_hz > 0.0:
         lf = np.log10(frequency_hz)
         center = math.log10(float(focus_hz))
-        mask = np.abs(lf - center) <= 0.5  # +/- half decade around the control focus
+        mask = np.abs(lf - center) <= 0.5
         if int(np.count_nonzero(mask)) >= 3:
             focus_mag = float(np.sqrt(np.mean(np.square(mag_error[mask]))))
             focus_phase = float(np.sqrt(np.mean(np.square(phase_error[mask]))))
 
-    if mag_rms <= 1.0 and phase_rms <= 5.0 and (focus_mag is None or focus_mag <= 0.75) and (focus_phase is None or focus_phase <= 4.0):
+    if (
+        mag_rms <= 1.0
+        and phase_rms <= 5.0
+        and (focus_mag is None or focus_mag <= 0.75)
+        and (focus_phase is None or focus_phase <= 4.0)
+    ):
         confidence = "GOOD"
-    elif mag_rms <= 3.0 and phase_rms <= 15.0 and (focus_mag is None or focus_mag <= 2.0) and (focus_phase is None or focus_phase <= 10.0):
+    elif (
+        mag_rms <= 3.0
+        and phase_rms <= 15.0
+        and (focus_mag is None or focus_mag <= 2.0)
+        and (focus_phase is None or focus_phase <= 10.0)
+    ):
         confidence = "FAIR"
     else:
         confidence = "LOW"
@@ -188,17 +214,13 @@ def _fit_structure(
     real_count = int(order) - 2 * pair_count
     if real_count < 0:
         raise ValueError("complex-pair count exceeds rational order")
-    numerator_degree = max(int(order) - 1, 0)
+    numerator_degree = max(int(order) - 1, 0)  # strictly proper rational part
 
     feature_count = real_count + pair_count
     if feature_count:
         centers = np.linspace(math.log10(float(f[0])), math.log10(float(f[-1])), feature_count + 2)[1:-1]
     else:
         centers = np.asarray([], dtype=float)
-    init_real = centers[:real_count]
-    init_pair = centers[real_count:real_count + pair_count]
-    init_zeta = np.full(pair_count, math.log10(0.5), dtype=float)
-    base = np.r_[init_real, init_pair, init_zeta]
 
     low_log = math.log10(float(f[0]) / 10.0)
     high_log = math.log10(float(f[-1]) * 10.0)
@@ -249,13 +271,32 @@ def _fit_structure(
         err = (fitted - h) / scale * weights
         return np.r_[err.real, err.imag]
 
-    delay_starts = (0.0, estimated_delay) if fit_delay and estimated_delay > 1e-12 else (0.0,)
+    starts: list[np.ndarray] = []
+    for shift, zeta0, use_delay_estimate in (
+        (0.0, 0.50, False),
+        (-0.20, 0.30, True),
+        (+0.20, 0.80, True),
+    ):
+        shifted = np.clip(centers + shift, low_log, high_log)
+        init_real = shifted[:real_count]
+        init_pair = shifted[real_count:real_count + pair_count]
+        init_zeta = np.full(pair_count, math.log10(zeta0), dtype=float)
+        base = np.r_[init_real, init_pair, init_zeta]
+        delay0 = estimated_delay if (fit_delay and use_delay_estimate) else 0.0
+        starts.append(np.r_[base, delay0] if fit_delay else base.copy())
+
+    lower = np.r_[lower_base, 0.0] if fit_delay else lower_base
+    upper = np.r_[upper_base, max_delay] if fit_delay else upper_base
     best: tuple[float, np.ndarray, np.ndarray] | None = None
-    for delay0 in delay_starts:
-        v0 = np.r_[base, delay0] if fit_delay else base.copy()
-        lower = np.r_[lower_base, 0.0] if fit_delay else lower_base
-        upper = np.r_[upper_base, max_delay] if fit_delay else upper_base
-        result = least_squares(residual, v0, bounds=(lower, upper), max_nfev=max(int(max_nfev), 40))
+    for v0 in starts:
+        result = least_squares(
+            residual,
+            v0,
+            bounds=(lower, upper),
+            max_nfev=max(int(max_nfev), 40),
+            loss="soft_l1",
+            f_scale=1.0,
+        )
         coeff, fitted = solve_numerator(result.x)
         cost = float(np.mean(np.square(np.abs((fitted - h) / scale))))
         if best is None or cost < best[0]:
@@ -264,6 +305,10 @@ def _fit_structure(
     assert best is not None
     cost, vector, coeff = best
     real_hz, pair_hz, damping, delay_s = unpack(vector)
+    # If the delay produces <0.1 degree at the highest fitted frequency it is
+    # below the meaningful resolution of this model and is canonicalized to 0.
+    if delay_s > 0.0 and 2.0 * math.pi * float(f[-1]) * delay_s < math.radians(0.1):
+        delay_s = 0.0
     real_sorted = tuple(float(v) for v in np.sort(real_hz))
     pairs_sorted = tuple(sorted(((float(fn), float(z)) for fn, z in zip(pair_hz, damping)), key=lambda item: item[0]))
     model = RationalPlantModel(
@@ -288,13 +333,12 @@ def fit_rational_frequency_response(
     max_nfev: int = 220,
     fit_target: str = "Equivalent Plant",
 ) -> FRAFitResult:
-    """Fit a stable low-order rational model directly to complex FRA points.
+    """Fit a stable low-order rational approximation to complex FRA points.
 
-    Orders are tried from ``min_poles`` through ``max_poles``.  For each order,
-    all combinations of stable real poles and stable complex-conjugate pole
-    pairs are considered.  The lowest order reaching GOOD confidence is kept;
-    otherwise the lowest normalized fit-error candidate through max order is
-    returned and explicitly marked FAIR/LOW by the metrics.
+    This V2 implementation is a constrained nonlinear variable-projection
+    fitter.  It is deliberately labelled rational fit, not Vector Fitting.
+    Orders 1..5 and real/complex-conjugate stable pole structures are tried.
+    Raw FRA remains the authority for crossover/margin decisions.
     """
     f = np.asarray(frequency_hz, dtype=float).reshape(-1)
     h = np.asarray(response, dtype=complex).reshape(-1)
@@ -338,7 +382,7 @@ def fit_rational_frequency_response(
                     max_order,
                     order,
                     str(fit_target),
-                    "Fit uses stable real/complex pole factors and optional pure delay; raw FRA remains the stability authority.",
+                    "Constrained stable rational approximation; raw FRA remains the stability authority and fitted poles/zeros are not physical-component identification.",
                 )
                 if rank < order_rank:
                     order_rank = rank
@@ -366,9 +410,8 @@ def closed_loop_step_from_fitted_loop(
 ) -> FitClosedLoopStepResult:
     """Approximate closed-loop step from a fitted *open-loop* model.
 
-    The model's pure delay is converted to a first-order Padé approximation for
-    this time-domain calculation.  The result must therefore be presented as a
-    fit-derived engineering estimate, never as a substitute for measured step
+    Delay is represented by first-order Padé only when numerically meaningful.
+    This output is fit-derived and must not replace measured transient
     validation.
     """
     num, den = loop_model.normalized_polynomials(pade_delay=True)
@@ -404,7 +447,11 @@ def closed_loop_step_from_fitted_loop(
     _, y = signal.step((closed_num, closed_den), T=t_norm)
     y = np.asarray(y, dtype=float).reshape(-1)
     t_s = np.asarray(t_norm / wref, dtype=float)
-    final = float(y[-1])
+
+    if abs(closed_den[-1]) > 1e-18:
+        final = float(closed_num[-1] / closed_den[-1])
+    else:
+        final = float(y[-1])
     peak = float(np.max(y)) if final >= 0.0 else float(np.min(y))
     if abs(final) > 1e-12:
         overshoot = max(0.0, (peak - final) / abs(final) * 100.0) if final >= 0.0 else max(0.0, (final - peak) / abs(final) * 100.0)
@@ -443,7 +490,93 @@ def closed_loop_step_from_fitted_loop(
         float(overshoot),
         rise,
         settling,
-        "Approximate step from rational open-loop fit + first-order Padé delay; validate against hardware before release use.",
+        "Approximate step from validated rational open-loop fit + first-order Padé delay; validate against hardware before release use.",
+    )
+
+
+def validate_fitted_open_loop(
+    frequency_hz: NDArray[np.float64] | np.ndarray,
+    measured_loop: NDArray[np.complex128] | np.ndarray,
+    fit_result: FRAFitResult,
+    *,
+    crossover_tolerance_percent: float = 8.0,
+    phase_margin_tolerance_deg: float = 5.0,
+    gain_margin_tolerance_db: float = 4.0,
+) -> FRAFitLoopValidation:
+    """Check whether an open-loop fit preserves control-critical behavior.
+
+    Low Bode RMS error alone is not enough to authorize time-domain analysis.
+    The fitted loop must preserve gain-crossing count, crossover location and
+    stability margins on the same measured frequency window, and the fitted
+    closed-loop rational model must have no RHP poles.
+    """
+    f = np.asarray(frequency_hz, dtype=float).reshape(-1)
+    measured = np.asarray(measured_loop, dtype=complex).reshape(-1)
+    fitted = np.asarray(fit_result.fitted_response, dtype=complex).reshape(-1)
+    if f.size != measured.size or f.size != fitted.size:
+        raise ValueError("fit validation requires matching frequency/measured/fitted arrays")
+
+    raw = analyze_loop_response(f, measured)
+    fit = analyze_loop_response(f, fitted)
+    count_match = len(raw.gain_crossovers) == len(fit.gain_crossovers)
+
+    fc_error = None
+    if raw.main_crossover_hz is not None and fit.main_crossover_hz is not None:
+        fc_error = abs(float(fit.main_crossover_hz) / float(raw.main_crossover_hz) - 1.0) * 100.0
+
+    pm_error = None
+    if raw.phase_margin_deg is not None and fit.phase_margin_deg is not None:
+        pm_error = abs(float(fit.phase_margin_deg) - float(raw.phase_margin_deg))
+
+    gm_error = None
+    gm_evidence_ok = True
+    if raw.gain_margin_db is not None:
+        if fit.gain_margin_db is None:
+            gm_evidence_ok = False
+        else:
+            gm_error = abs(float(fit.gain_margin_db) - float(raw.gain_margin_db))
+
+    step_probe = closed_loop_step_from_fitted_loop(fit_result.model, samples=240)
+    closed_stable = step_probe.stable
+
+    passed = (
+        fit_result.metrics.confidence != "LOW"
+        and count_match
+        and fc_error is not None
+        and fc_error <= float(crossover_tolerance_percent)
+        and pm_error is not None
+        and pm_error <= float(phase_margin_tolerance_deg)
+        and gm_evidence_ok
+        and (gm_error is None or gm_error <= float(gain_margin_tolerance_db))
+        and closed_stable
+    )
+    status = "PASS" if passed else "REVIEW"
+    note_parts: list[str] = []
+    if fit_result.metrics.confidence == "LOW":
+        note_parts.append("Bode residual confidence is LOW")
+    if not count_match:
+        note_parts.append("gain-crossover count changed")
+    if fc_error is None or fc_error > float(crossover_tolerance_percent):
+        note_parts.append("crossover mismatch")
+    if pm_error is None or pm_error > float(phase_margin_tolerance_deg):
+        note_parts.append("phase-margin mismatch")
+    if not gm_evidence_ok or (gm_error is not None and gm_error > float(gain_margin_tolerance_db)):
+        note_parts.append("gain-margin evidence/mismatch")
+    if not closed_stable:
+        note_parts.append("fitted closed loop is unstable")
+    note = "control-critical fit preserved" if passed else "; ".join(note_parts)
+
+    return FRAFitLoopValidation(
+        bool(passed),
+        status,
+        raw,
+        fit,
+        bool(count_match),
+        fc_error,
+        pm_error,
+        gm_error,
+        bool(closed_stable),
+        note,
     )
 
 
@@ -452,6 +585,8 @@ __all__ = [
     "FRAFitMetrics",
     "FRAFitResult",
     "FitClosedLoopStepResult",
+    "FRAFitLoopValidation",
     "fit_rational_frequency_response",
     "closed_loop_step_from_fitted_loop",
+    "validate_fitted_open_loop",
 ]
