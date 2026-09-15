@@ -684,7 +684,7 @@ Ctrl+R        LLC：运行当前页面对应的分析
 )
 
 _LANGUAGE = HelpSection(
-    "语言 / Language",
+    t("语言 / Language"),
     """界面语言      简体中文 / English / 日本語 / 한국어
 切换位置      任意工作区工具栏最右侧「语言 / Language」；选择后立即生效并记住，下次启动沿用。
 
@@ -940,7 +940,7 @@ class HelpButton(QToolButton):
                 docs_menu.addAction(action)
         self.setMenu(menu)
 
-        self.help_action = QAction("帮助", window)
+        self.help_action = QAction(t("帮助"), window)
         self.help_action.setShortcut(QKeySequence.StandardKey.HelpContents)
         self.help_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.help_action.triggered.connect(lambda: show_help(window, topic))

@@ -29,6 +29,7 @@ from llc_design.gui.widgets.bode_cursor import (
     BodeCursorTrace,
 )
 from llc_design.gui import theme
+from llc_design.i18n import t
 
 
 @dataclass(frozen=True)
@@ -70,7 +71,7 @@ class SelectableBodePanel(QWidget):
         root.setSpacing(5)
 
         selector_bar = QHBoxLayout()
-        self.selector_toggle = QPushButton("传递函数 ▸")
+        self.selector_toggle = QPushButton(t("传递函数 ▸"))
         self.selector_toggle.setCheckable(True)
         self.selector_toggle.setChecked(False)
         self.selector_toggle.setToolTip("展开/收起逐传递函数复选框；默认折叠以给 Bode 图更多垂直空间")
@@ -102,14 +103,14 @@ class SelectableBodePanel(QWidget):
         self.selector_group.setVisible(False)
         self.selector_toggle.toggled.connect(self._toggle_selector_group)
 
-        self.empty_hint = QLabel("尚未运行分析。")
+        self.empty_hint = QLabel(t("尚未运行分析。"))
         self.empty_hint.setWordWrap(True)
         root.addWidget(self.empty_hint)
         root.addWidget(self.canvas, 1)
 
     def _toggle_selector_group(self, visible: bool) -> None:
         self.selector_group.setVisible(bool(visible))
-        self.selector_toggle.setText("传递函数 ▾" if visible else "传递函数 ▸")
+        self.selector_toggle.setText(t("传递函数 ▾") if visible else t("传递函数 ▸"))
 
     @property
     def visible_keys(self) -> tuple[str, ...]:

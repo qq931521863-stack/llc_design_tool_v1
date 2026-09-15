@@ -34,6 +34,7 @@ from pfc_design.magnetics import (
     design_pfc_inductor,
 )
 from llc_design.gui import theme
+from llc_design.i18n import t
 
 
 class PFCInductorDesignEditor(QWidget):
@@ -197,7 +198,7 @@ class PFCInductorDesignEditor(QWidget):
         try:
             result = design_pfc_inductor(self._request())
         except Exception as exc:
-            QMessageBox.warning(self, "PFC 电感设计失败", str(exc))
+            QMessageBox.warning(self, t("PFC 电感设计失败"), str(exc))
             return
         self.last_result = result
         self.apply_button.setEnabled(True)

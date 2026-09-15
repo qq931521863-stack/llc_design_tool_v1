@@ -42,6 +42,7 @@ from llc_design.gui.widgets.control_block_diagram import (
 )
 from llc_design.gui.widgets.sense_schematic import AnalogSenseSchematic
 from llc_design.gui import theme
+from llc_design.i18n import t
 from pfc_design.control.config import (
     ADCTimingConfig,
     DigitalFilterConfig,
@@ -106,9 +107,9 @@ class ViennaControlLabView(QWidget):
         self.zoom_out_button = QPushButton("−"); self.zoom_out_button.setFixedWidth(34)
         self.zoom_in_button = QPushButton("＋"); self.zoom_in_button.setFixedWidth(34)
         self.fullscreen_diagram_button = QPushButton("全屏")
-        self.diagram_toggle = QPushButton("隐藏框图")
+        self.diagram_toggle = QPushButton(t("隐藏框图"))
         self.diagram_toggle.setCheckable(True); self.diagram_toggle.setChecked(True)
-        self.inspector_toggle = QPushButton("隐藏参数")
+        self.inspector_toggle = QPushButton(t("隐藏参数"))
         self.inspector_toggle.setCheckable(True); self.inspector_toggle.setChecked(True)
         for button in (
             self.fit_diagram_button, self.actual_diagram_button, self.zoom_out_button,
@@ -181,7 +182,7 @@ class ViennaControlLabView(QWidget):
 
     def _toggle_diagram(self, visible: bool) -> None:
         self.diagram.setVisible(bool(visible))
-        self.diagram_toggle.setText("隐藏框图" if visible else "显示框图")
+        self.diagram_toggle.setText(t("隐藏框图") if visible else t("显示框图"))
         if visible:
             self.diagram.fit_to_view()
 
@@ -207,7 +208,7 @@ class ViennaControlLabView(QWidget):
         big = ControlBlockDiagram(dialog)
         for text, slot in (("适应窗口", big.fit_to_view), ("100%", big.actual_size), ("−", big.zoom_out), ("＋", big.zoom_in)):
             button = QPushButton(text); button.clicked.connect(slot); bar.addWidget(button)
-        close = QPushButton("关闭"); close.clicked.connect(dialog.accept); bar.addWidget(close)
+        close = QPushButton(t("关闭")); close.clicked.connect(dialog.accept); bar.addWidget(close)
         layout.addLayout(bar)
         big.set_diagram(list(self._diagram_blocks), list(self._diagram_connections))
         if self.diagram.selected_key and big.has_block(self.diagram.selected_key):
@@ -582,7 +583,7 @@ class ViennaControlLabView(QWidget):
 
     def _generate_c99(self):
         if self.result is None:
-            QMessageBox.information(self, "C99 代码生成", "请先运行 Vienna 完整分析。")
+            QMessageBox.information(self, t("C99 代码生成"), t("请先运行 Vienna 完整分析。"))
             return
         directory = QFileDialog.getExistingDirectory(self, "选择 Vienna C99 输出目录")
         if not directory:
@@ -591,10 +592,10 @@ class ViennaControlLabView(QWidget):
             analysis = self.result[0]
             result = generate_vienna_control_code(analysis, Path(directory) / "vienna_control_generated")
         except Exception as exc:
-            QMessageBox.warning(self, "C99 代码生成失败", str(exc))
+            QMessageBox.warning(self, t("C99 代码生成失败"), str(exc))
             return
         QMessageBox.information(
-            self, "C99 代码生成完成",
+            self, t("C99 代码生成完成"),
             f"已生成：{result.directory}\n\n输出 duty A/B/C 等语义控制命令，不生成 PWM/ADC/GPIO BSP。",
         )
 
@@ -604,7 +605,7 @@ class ViennaControlLabView(QWidget):
             config.validate()
             self.analysis_requested.emit(config)
         except Exception as exc:
-            QMessageBox.warning(self, "Vienna 参数错误", str(exc))
+            QMessageBox.warning(self, t("Vienna 参数错误"), str(exc))
 
     def set_busy(self, busy):
         self.run_button.setEnabled(not busy)

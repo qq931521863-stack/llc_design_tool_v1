@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from llc_design import __version__
+from llc_design.i18n import t
 from llc_design.i18n import LANGUAGES, current_language, set_language, t
 from llc_design.i18n.fonts import apply_matplotlib_fonts, apply_qt_font
 

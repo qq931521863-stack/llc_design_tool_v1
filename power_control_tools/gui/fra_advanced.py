@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from llc_design.i18n import t
+
+
 import math
 
 import numpy as np
@@ -99,7 +102,7 @@ class FRAAutoDesignDialog(QDialog):
         self.run_button = QPushButton("AUTO DESIGN")
         self.apply_button = QPushButton("应用到 FRA Loop Designer")
         self.apply_button.setEnabled(False)
-        close_button = QPushButton("关闭")
+        close_button = QPushButton(t("关闭"))
         self.run_button.clicked.connect(self.run_design)
         self.apply_button.clicked.connect(self.apply_result)
         close_button.clicked.connect(self.accept)
@@ -218,13 +221,13 @@ class FRAAutoDesignDialog(QDialog):
         except Exception as exc:
             self.result = None
             self.apply_button.setEnabled(False)
-            QMessageBox.critical(self, "Auto Design 失败", str(exc))
+            QMessageBox.critical(self, t("Auto Design 失败"), str(exc))
 
     def apply_result(self) -> None:
         if self.result is None or self.result.selected is None:
             return
         if self.result.status != "PASS" or not self.result.selected.accepted:
-            QMessageBox.warning(self, "Auto Design 未通过", "当前结果没有满足完整的 Fc/PM/GM/Ms 约束，禁止一键应用。")
+            QMessageBox.warning(self, t("Auto Design 未通过"), t("当前结果没有满足完整的 Fc/PM/GM/Ms 约束，禁止一键应用。"))
             return
         selected = self.result.selected
         host = self.host
@@ -263,7 +266,7 @@ class FRAAutoDesignDialog(QDialog):
         if "td_s" in p: host.new_td.setValue(max(p["td_s"], 1e-9))
         if "lpf_pole_hz" in p: host.new_lpf.setValue(p["lpf_pole_hz"])
         host.recalculate()
-        QMessageBox.information(self, "Auto Design 已应用", "严格 PASS 的自动设计参数已回写，可继续 Slider 微调并导出 C99。")
+        QMessageBox.information(self, t("Auto Design 已应用"), t("严格 PASS 的自动设计参数已回写，可继续 Slider 微调并导出 C99。"))
 
 
 class FRAModelFitDialog(QDialog):
@@ -302,7 +305,7 @@ class FRAModelFitDialog(QDialog):
         run = QPushButton("FIT MODEL")
         self.use_for_loop = QPushButton("用于环路设计（回传 FRA Loop Designer）")
         self.use_for_loop.setEnabled(False)
-        close = QPushButton("关闭")
+        close = QPushButton(t("关闭"))
         run.clicked.connect(self.run_fit)
         self.use_for_loop.clicked.connect(self.send_plant_to_host)
         close.clicked.connect(self.accept)
@@ -364,12 +367,12 @@ class FRAModelFitDialog(QDialog):
             )
             return
         if not hasattr(self.host, "set_identified_plant"):
-            QMessageBox.warning(self, "当前工作区不支持", "宿主窗口没有辨识模型回传接口。")
+            QMessageBox.warning(self, t("当前工作区不支持"), t("宿主窗口没有辨识模型回传接口。"))
             return
         try:
             self.host.set_identified_plant(self.result.model, self.fit_band, self.result.metrics.confidence)
         except Exception as exc:
-            QMessageBox.critical(self, "回传失败", str(exc))
+            QMessageBox.critical(self, t("回传失败"), str(exc))
             return
         QMessageBox.information(
             self,
@@ -492,7 +495,7 @@ class FRAModelFitDialog(QDialog):
             self.result = None
             self.fit_band = None
             self.use_for_loop.setEnabled(False)
-            QMessageBox.critical(self, "Model Fit 失败", str(exc))
+            QMessageBox.critical(self, t("Model Fit 失败"), str(exc))
 
 
 def install_advanced_fra_actions(window) -> None:

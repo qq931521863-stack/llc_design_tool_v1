@@ -37,6 +37,8 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 import numpy as np
 
+from llc_design.i18n import t
+
 from ..analysis import (
     FidelityLevel,
     GoldenSolverConfig,
@@ -238,7 +240,7 @@ class LLCMainWindow(QMainWindow):
         self.progress.setVisible(False)
         status.addPermanentWidget(self.progress)
         self.setStatusBar(status)
-        self.statusBar().showMessage("就绪")
+        self.statusBar().showMessage(t("就绪"))
         self._apply_llc_style()
 
     def _sync_parameter_toggle(self, visible: bool) -> None:
@@ -258,13 +260,13 @@ class LLCMainWindow(QMainWindow):
                 self.parameter_dock.hide()
             if hasattr(self, "log_dock"):
                 self.log_dock.hide()
-            self.statusBar().showMessage("专注模式：已隐藏全局参数与运行日志")
+            self.statusBar().showMessage(t("专注模式：已隐藏全局参数与运行日志"))
         else:
             if hasattr(self, "parameter_dock") and getattr(self, "_params_was_visible", True):
                 self.parameter_dock.show()
             if hasattr(self, "log_dock") and getattr(self, "_log_was_visible", False):
                 self.log_dock.show()
-            self.statusBar().showMessage("就绪")
+            self.statusBar().showMessage(t("就绪"))
 
     def _run_current_page(self) -> None:
         if not hasattr(self, "tabs"):
@@ -517,7 +519,7 @@ class LLCMainWindow(QMainWindow):
         self.transformer_design_view.set_busy(busy)
         self.sr_design_view.set_busy(busy)
         self.interleaved_view.set_busy(busy)
-        self.statusBar().showMessage(message if busy else "就绪")
+        self.statusBar().showMessage(message if busy else t("就绪"))
 
     def _append_log(self, message: str) -> None:
         self.log_text.appendPlainText(message.rstrip())
@@ -545,7 +547,7 @@ class LLCMainWindow(QMainWindow):
             if idx >= 0:
                 self.parameter_mode_combo.setCurrentIndex(idx)
         except Exception as exc:
-            QMessageBox.warning(self, "无法复制参数", str(exc))
+            QMessageBox.warning(self, t("无法复制参数"), str(exc))
 
     def _update_manual_derived_label(self) -> None:
         if not hasattr(self, "manual_derived_label"):
@@ -648,7 +650,7 @@ class LLCMainWindow(QMainWindow):
             self._load_spec_to_widgets(self.spec)
             self._append_log(f"Loaded: {path}")
         except Exception as exc:
-            QMessageBox.critical(self, "加载失败", str(exc))
+            QMessageBox.critical(self, t("加载失败"), str(exc))
 
     def save_json(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "保存 LLC JSON", "llc_project.json", "JSON (*.json)")
@@ -664,7 +666,7 @@ class LLCMainWindow(QMainWindow):
             save_project(self.spec, path, analysis)
             self._append_log(f"Saved: {path}")
         except Exception as exc:
-            QMessageBox.critical(self, "保存失败", str(exc))
+            QMessageBox.critical(self, t("保存失败"), str(exc))
 
     def choose_output_directory(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择输出目录", str(self.output_directory))
@@ -684,7 +686,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, "参数错误", str(exc))
+            QMessageBox.warning(self, t("参数错误"), str(exc))
             return
         analysis = (
             self.system_analysis
@@ -728,13 +730,13 @@ class LLCMainWindow(QMainWindow):
 
     def _worker_error(self, error: str) -> None:
         self._append_log(error)
-        QMessageBox.critical(self, "计算失败", error.splitlines()[-1])
+        QMessageBox.critical(self, t("计算失败"), error.splitlines()[-1])
 
     def run_design(self) -> None:
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, "参数错误", str(exc)); return
+            QMessageBox.warning(self, t("参数错误"), str(exc)); return
         self._run_worker("正在运行 LLC 完整计算…", lambda: LLCSystemAnalyzer().analyze(self.spec), self._design_ready)
 
     def _design_ready(self, analysis: SystemAnalysis) -> None:
@@ -799,7 +801,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, "参数错误", str(exc)); return
+            QMessageBox.warning(self, t("参数错误"), str(exc)); return
         if core_input is None:
             core_input = self.transformer_design_view._core_input()
         if settings is None:
@@ -844,7 +846,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, "参数错误", str(exc)); return
+            QMessageBox.warning(self, t("参数错误"), str(exc)); return
         self._run_worker(
             "正在计算 LLC 多负载 Q / ZVS 工作区域…",
             lambda: build_q_zvs_analysis(self.spec),
@@ -886,7 +888,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, "参数错误", str(exc)); return
+            QMessageBox.warning(self, t("参数错误"), str(exc)); return
         options = options or {}
         vbus_v = float(options.get("vbus_v", self.spec.vbus_nom_v))
         load_fraction = float(options.get("load_fraction", 1.0))
@@ -938,7 +940,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, "参数错误", str(exc)); return
+            QMessageBox.warning(self, t("参数错误"), str(exc)); return
         options = options or {}
         vbus = float(options.get("vbus_v", self.spec.vbus_nom_v))
         load = float(options.get("load_fraction", 1.0))
@@ -957,7 +959,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, "参数错误", str(exc)); return
+            QMessageBox.warning(self, t("参数错误"), str(exc)); return
         options = options or {}
         vbus = float(options.get("vbus_v", self.spec.vbus_nom_v))
         load = float(options.get("load_fraction", 1.0))
@@ -992,7 +994,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, "参数错误", str(exc)); return
+            QMessageBox.warning(self, t("参数错误"), str(exc)); return
         options = options or {}
         request = LLCAnalysisRequest(
             spec=self.spec,
@@ -1028,7 +1030,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, "参数错误", str(exc)); return
+            QMessageBox.warning(self, t("参数错误"), str(exc)); return
         options = options or {}
         def calculate():
             small = self._build_small_signal(options)
@@ -1056,7 +1058,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, "参数错误", str(exc)); return
+            QMessageBox.warning(self, t("参数错误"), str(exc)); return
         self._run_worker("正在建立 LLC 小信号与 ZOH 对象…",
                          lambda: self._build_small_signal(options), self._small_signal_ready)
 
@@ -1072,7 +1074,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, "参数错误", str(exc)); return
+            QMessageBox.warning(self, t("参数错误"), str(exc)); return
 
         def calculate():
             small_options = options.get("small_signal", {}) if options else {}

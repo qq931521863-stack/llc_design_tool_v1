@@ -187,7 +187,7 @@ def _remember_release(tag_name: str) -> None:
 
 
 def add_toolbar_right_side(toolbar, main_window) -> None:
-    """在工具栏最右侧追加联系方式与"检查更新"按钮。
+    """在工具栏最右侧追加联系方式与t("检查更新")按钮。
 
     ``toolbar`` 必须已添加过可伸缩 spacer,此函数只在 spacer 之后追加内容。
     """

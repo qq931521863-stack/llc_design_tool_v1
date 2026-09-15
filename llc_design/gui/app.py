@@ -17,9 +17,14 @@ def run_gui(config_path: str | None = None) -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Power Design Toolkit")
     theme.apply_app_theme(app)
-    apply_language(load_language(), app)
     spec = load_spec(config_path) if config_path else LLCDesignSpec()
+    # Build the windows FIRST, while the source language (Simplified Chinese) is
+    # still active: the i18n binding records each widget's current text as the
+    # translation source, so constructing in a translated language would capture
+    # the translation and make the switch back to Chinese impossible.  The stored
+    # language is applied immediately afterwards, before anything is shown.
     controller = WorkspaceApplicationController(spec)
+    apply_language(load_language(), app)
     if not controller.start():
         return 0
     # Keep the controller strongly reachable for the lifetime of the Qt event loop.

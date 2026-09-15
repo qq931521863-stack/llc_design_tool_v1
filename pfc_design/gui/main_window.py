@@ -12,6 +12,7 @@ from llc_design.gui.updater import add_toolbar_right_side, check_for_updates
 from llc_design.gui.help import install_help
 from llc_design.gui.i18n_ui import about_text, install_language_selector
 from llc_design.gui import theme
+from llc_design.i18n import t
 from pfc_design.control import PFCControlLabConfig,build_pfc_control_lab_analysis,build_pfc_switching_waveforms,simulate_pfc_line_cycle
 from pfc_design.vienna import (
     ViennaControlLabConfig,
@@ -66,10 +67,10 @@ class PFCMainWindow(QMainWindow):
         if hasattr(w,"_request"):w._request()
 
     def _build_statusbar(self):
-        st=QStatusBar();self.progress=QProgressBar();self.progress.setRange(0,0);self.progress.setVisible(False);st.addPermanentWidget(self.progress);self.setStatusBar(st);st.showMessage("PFC 工作区就绪")
+        st=QStatusBar();self.progress=QProgressBar();self.progress.setRange(0,0);self.progress.setVisible(False);st.addPermanentWidget(self.progress);self.setStatusBar(st);st.showMessage(t("PFC 工作区就绪"))
 
     def set_busy(self,busy,message=""):
-        self.progress.setVisible(busy);self.control_lab_view.set_busy(busy);self.vienna_view.set_busy(busy);self.statusBar().showMessage(message if busy else "PFC 工作区就绪")
+        self.progress.setVisible(busy);self.control_lab_view.set_busy(busy);self.vienna_view.set_busy(busy);self.statusBar().showMessage(message if busy else t("PFC 工作区就绪"))
 
     def _run_worker(self,label,function,callback):
         self.set_busy(True,label);w=FunctionWorker(function);self._active_workers.append(w);w.signals.result.connect(callback);w.signals.error.connect(self._worker_error);w.signals.finished.connect(lambda:self.set_busy(False));w.signals.finished.connect(lambda:self._active_workers.remove(w));self.thread_pool.start(w)
@@ -136,7 +137,7 @@ class PFCMainWindow(QMainWindow):
             self._worker_error("Vienna 结果绘图/GUI 更新失败\n" + traceback.format_exc())
 
     def show_about(self):
-        QMessageBox.about(self,"关于 PFC Design","<h3>PFC Design Workspace</h3><p>Single-phase TTPL + Three-phase Vienna PFC.</p><p>双环数字控制、模拟采样链、开环 Bode、完整 AC 周期、开关工作点、PF/THD，并包含 TTPL/Vienna High Flux 电感设计；Vienna 增加 Split DC Bus / Midpoint Balance / Sector Analyzer。</p>")
+        QMessageBox.about(self,t("关于 PFC Design"),"<h3>PFC Design Workspace</h3><p>Single-phase TTPL + Three-phase Vienna PFC.</p><p>双环数字控制、模拟采样链、开环 Bode、完整 AC 周期、开关工作点、PF/THD，并包含 TTPL/Vienna High Flux 电感设计；Vienna 增加 Split DC Bus / Midpoint Balance / Sector Analyzer。</p>")
 
 
 __all__=["PFCMainWindow"]

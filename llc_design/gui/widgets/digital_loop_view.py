@@ -7,6 +7,8 @@ keeps the Bode plot large.  The numerical model is unchanged.
 
 from __future__ import annotations
 
+from llc_design.i18n import t
+
 import math
 from pathlib import Path
 
@@ -110,7 +112,7 @@ class DigitalLoopView(QWidget):
         diagram_header.addWidget(self.zoom_in_button)
         diagram_header.addWidget(self.fullscreen_diagram_button)
 
-        self.inspector_toggle = QPushButton("隐藏环节参数")
+        self.inspector_toggle = QPushButton(t("隐藏环节参数"))
         self.inspector_toggle.setCheckable(True)
         self.inspector_toggle.setChecked(True)
         self.inspector_toggle.setToolTip("隐藏/显示数字环路的局部参数检查器")
@@ -199,7 +201,7 @@ class DigitalLoopView(QWidget):
         actual_button = QPushButton("100%")
         minus_button = QPushButton("−")
         plus_button = QPushButton("＋")
-        close_button = QPushButton("关闭")
+        close_button = QPushButton(t("关闭"))
         header.addWidget(fit_button)
         header.addWidget(actual_button)
         header.addWidget(minus_button)
@@ -754,7 +756,7 @@ class DigitalLoopView(QWidget):
 
     def _generate_c99(self) -> None:
         if self.result is None:
-            QMessageBox.information(self, "C99 代码生成", "请先建立 / 更新完整数字电压环。")
+            QMessageBox.information(self, t("C99 代码生成"), t("请先建立 / 更新完整数字电压环。"))
             return
         directory = QFileDialog.getExistingDirectory(self, "选择 LLC C99 输出目录")
         if not directory:
@@ -775,14 +777,14 @@ class DigitalLoopView(QWidget):
                     f"C99 float32_t / DF2T-SOS 验证："
                     f"{'PASS' if verification.passed else verification.message}"
                 )
-                QMessageBox.information(self, "C99 代码生成完成", detail)
+                QMessageBox.information(self, t("C99 代码生成完成"), detail)
                 return
             result = generate_llc_control_code(self.result, Path(directory) / "llc_control_generated")
         except Exception as exc:
-            QMessageBox.warning(self, "C99 代码生成失败", str(exc))
+            QMessageBox.warning(self, t("C99 代码生成失败"), str(exc))
             return
         QMessageBox.information(
-            self, "C99 代码生成完成",
+            self, t("C99 代码生成完成"),
             f"已生成：{result.directory}\n\n输出 PCMD / Fsw / TBPRD 等语义控制量，不生成 ePWM/ADC BSP。",
         )
 
@@ -853,7 +855,7 @@ class DigitalLoopView(QWidget):
                 },
             })
         except Exception as exc:
-            QMessageBox.warning(self, "数字环路参数错误", str(exc))
+            QMessageBox.warning(self, t("数字环路参数错误"), str(exc))
 
     def set_analysis(self, result: DigitalLoopAnalysis) -> None:
         self.result = result

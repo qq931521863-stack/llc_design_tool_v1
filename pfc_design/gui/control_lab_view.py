@@ -40,6 +40,7 @@ from llc_design.control.digital_loop import (
 from llc_design.gui.widgets.control_block_diagram import BlockSpec, ConnectionSpec, ControlBlockDiagram
 from llc_design.gui.widgets.sense_schematic import AnalogSenseSchematic
 from llc_design.gui import theme
+from llc_design.i18n import t
 from llc_design.control.phase_budget import phase_budget
 from llc_design.gui.widgets.bode_cursor import (
     BodeCursorMeasurement,
@@ -115,11 +116,11 @@ class PFCControlLabView(QWidget):
         self.zoom_in_button = QPushButton("＋")
         self.zoom_in_button.setFixedWidth(34)
         self.fullscreen_diagram_button = QPushButton("全屏")
-        self.diagram_toggle = QPushButton("隐藏框图")
+        self.diagram_toggle = QPushButton(t("隐藏框图"))
         self.diagram_toggle.setCheckable(True)
         self.diagram_toggle.setChecked(True)
         self.diagram_toggle.setToolTip("隐藏/显示顶部 TTPL 控制框图，释放波形/Bode 垂直空间")
-        self.inspector_toggle = QPushButton("隐藏参数")
+        self.inspector_toggle = QPushButton(t("隐藏参数"))
         self.inspector_toggle.setCheckable(True)
         self.inspector_toggle.setChecked(True)
         self.inspector_toggle.setToolTip("隐藏/显示左侧 PFC 参数区")
@@ -200,7 +201,7 @@ class PFCControlLabView(QWidget):
 
     def _toggle_diagram(self, visible: bool) -> None:
         self.diagram.setVisible(bool(visible))
-        self.diagram_toggle.setText("隐藏框图" if visible else "显示框图")
+        self.diagram_toggle.setText(t("隐藏框图") if visible else t("显示框图"))
         if visible:
             self.diagram.fit_to_view()
 
@@ -227,7 +228,7 @@ class PFCControlLabView(QWidget):
         buttons = []
         for text, slot in (("适应窗口", big.fit_to_view), ("100%", big.actual_size), ("−", big.zoom_out), ("＋", big.zoom_in)):
             b = QPushButton(text); b.clicked.connect(slot); bar.addWidget(b); buttons.append(b)
-        close = QPushButton("关闭"); close.clicked.connect(dialog.accept); bar.addWidget(close)
+        close = QPushButton(t("关闭")); close.clicked.connect(dialog.accept); bar.addWidget(close)
         layout.addLayout(bar)
         big.set_diagram(list(self._diagram_blocks), list(self._diagram_connections))
         if self.diagram.selected_key and big.has_block(self.diagram.selected_key):
@@ -768,7 +769,7 @@ class PFCControlLabView(QWidget):
 
     def _generate_c99(self) -> None:
         if self.result is None:
-            QMessageBox.information(self, "C99 代码生成", "请先运行 PFC 完整分析；建议先执行一键稳定整定。")
+            QMessageBox.information(self, t("C99 代码生成"), t("请先运行 PFC 完整分析；建议先执行一键稳定整定。"))
             return
         directory = QFileDialog.getExistingDirectory(self, "选择 TTPL C99 输出目录")
         if not directory:
@@ -777,10 +778,10 @@ class PFCControlLabView(QWidget):
             analysis = self.result[0]
             result = generate_ttpl_control_code(analysis, Path(directory) / "ttpl_control_generated")
         except Exception as exc:
-            QMessageBox.warning(self, "C99 代码生成失败", str(exc))
+            QMessageBox.warning(self, t("C99 代码生成失败"), str(exc))
             return
         QMessageBox.information(
-            self, "C99 代码生成完成",
+            self, t("C99 代码生成完成"),
             f"已生成：{result.directory}\n\n仅包含控制算法 / ControlStep / ISR 模板，不包含 ADC、PWM、GPIO 或中断 BSP 配置。",
         )
 
@@ -790,7 +791,7 @@ class PFCControlLabView(QWidget):
             config.validate()
             self.analysis_requested.emit(config)
         except Exception as exc:
-            QMessageBox.warning(self, "PFC Control Lab 参数错误", str(exc))
+            QMessageBox.warning(self, t("PFC Control Lab 参数错误"), str(exc))
 
     def set_result(self, result) -> None:
         self.result = result

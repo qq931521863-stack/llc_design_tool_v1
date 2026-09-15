@@ -22,6 +22,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from llc_design.gui import theme
+from llc_design.i18n import t
 from llc_design.gui.help import install_help
 from llc_design.gui.i18n_ui import install_language_selector
 from llc_design.gui.updater import add_toolbar_right_side
@@ -392,9 +393,9 @@ class ControlToolsMainWindow(QMainWindow):
         try:
             out = export_c99_filter(self.current_digital, path, prefix=prefix); verify = verify_c99_filter(self.current_digital, out)
             self.c99.setPlainText(out.file_path.read_text(encoding='utf-8') + f"\n/* Verification: {verify.message}; impulse={verify.impulse_max_abs_error:.3e}; step={verify.step_max_abs_error:.3e} */\n")
-            QMessageBox.information(self, "C99 导出完成", f"单文件已生成:\n{out.file_path}\n\nVerification: {verify.message}")
+            QMessageBox.information(self, t("C99 导出完成"), f"单文件已生成:\n{out.file_path}\n\nVerification: {verify.message}")
         except Exception as exc:
-            QMessageBox.critical(self, "C99 导出失败", str(exc))
+            QMessageBox.critical(self, t("C99 导出失败"), str(exc))
 
 
 __all__ = ["ControlToolsMainWindow"]

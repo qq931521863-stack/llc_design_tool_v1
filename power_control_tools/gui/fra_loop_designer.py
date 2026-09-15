@@ -41,6 +41,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from llc_design.gui import theme
+from llc_design.i18n import t
 from llc_design.gui.help import install_help
 from llc_design.gui.i18n_ui import install_language_selector
 from power_control_tools.codegen import export_c99_filter, render_c99_single_file, verify_c99_filter
@@ -198,7 +199,7 @@ class FRALoopDesignerWindow(QMainWindow):
         self.plant_source.addItem("Measured TS — 导入的 FRA 数据", _PLANT_SOURCE_MEASURED)
         self.plant_source.addItem("Identified model — Model ID 回传模型", _PLANT_SOURCE_IDENTIFIED)
         self._hook(self.plant_source)
-        self.identified_label = QLabel("未回传辨识模型：Advanced → Model ID / Fit 完成后点击“用于环路设计”。")
+        self.identified_label = QLabel(t("未回传辨识模型：Advanced → Model ID / Fit 完成后点击“用于环路设计”。"))
         self.identified_label.setWordWrap(True)
         self.clear_identified_button = QPushButton("清除辨识模型")
         self.clear_identified_button.clicked.connect(self.clear_identified_plant)
@@ -788,11 +789,11 @@ class FRALoopDesignerWindow(QMainWindow):
             )
             self.recalculate()
         except Exception as exc:
-            QMessageBox.critical(self, "FRA 导入失败", str(exc))
+            QMessageBox.critical(self, t("FRA 导入失败"), str(exc))
 
     def copy_existing_pi(self) -> None:
         if not self._is_complete_loop() or self.old_mode.currentData() != "pi":
-            QMessageBox.information(self, "仅 PI 可直接复制", "请先选择 Complete Loop TS，并使用 PI Kp+Ti 作为当前控制器输入。")
+            QMessageBox.information(self, t("仅 PI 可直接复制"), t("请先选择 Complete Loop TS，并使用 PI Kp+Ti 作为当前控制器输入。"))
             return
         idx = self.new_mode.findData("structure")
         if idx >= 0:
@@ -1058,10 +1059,10 @@ class FRALoopDesignerWindow(QMainWindow):
 
     def export_c99(self) -> None:
         if self.current_new_controller is None:
-            QMessageBox.information(self, "没有可导出的控制器", "请先导入 FRA 并完成一次有效计算。")
+            QMessageBox.information(self, t("没有可导出的控制器"), t("请先导入 FRA 并完成一次有效计算。"))
             return
         if not self.current_new_controller.implementable:
-            QMessageBox.critical(self, "控制器不可导出", "当前 H(z) 含单位圆外极点。请先恢复控制器稳定性。")
+            QMessageBox.critical(self, t("控制器不可导出"), t("当前 H(z) 含单位圆外极点。请先恢复控制器稳定性。"))
             return
         prefix = self.export_prefix.text().strip() or "FRA_CTRL"
         default = str(Path.cwd() / f"{prefix.lower()}.h")
@@ -1075,11 +1076,11 @@ class FRALoopDesignerWindow(QMainWindow):
             verify = verify_c99_filter(self.current_new_controller, out)
             QMessageBox.information(
                 self,
-                "C99 导出完成",
+                t("C99 导出完成"),
                 f"{out.file_path}\n\n{verify.message}\nImpulse error={verify.impulse_max_abs_error:.3e}\nStep error={verify.step_max_abs_error:.3e}",
             )
         except Exception as exc:
-            QMessageBox.critical(self, "C99 导出失败", str(exc))
+            QMessageBox.critical(self, t("C99 导出失败"), str(exc))
 
 
 __all__ = ["FRALoopDesignerWindow"]

@@ -210,52 +210,79 @@ def test_font_stacks_cover_all_languages_and_are_applied():
     apply_matplotlib_fonts("zh-Hans")
 
 
-def test_help_bodies_fall_back_with_a_visible_notice():
+def test_help_bodies_fall_back_with_a_visible_notice(monkeypatch):
+    """All bodies are translated today, so the fallback path is exercised by
+    removing one entry rather than by relying on an unfinished translation."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     qt_widgets = pytest.importorskip("PySide6.QtWidgets")
-    import llc_design.i18n as i18n
+    import llc_design.gui.help as help_module
 
-    from llc_design.gui.help import HelpDialog
-    from llc_design.i18n import catalogue, set_language, t
+    from llc_design.gui.help import HelpDialog, HelpSection, help_topic, section_body
+    from llc_design.i18n import catalogue, set_language
 
     app = _qapp(qt_widgets)
-
-    def notice_for(code: str) -> str:
-        return catalogue(code)["此章节暂无当前语言的正文译文，以下显示原文。"]
-
     try:
-        # Source language: original text, never a notice.
+        set_language("en", notify=False)
+        target = next(s for s in help_topic("fra").sections if s.key == "fra.ts_semantics")
+        body, translated = section_body(target)
+        assert translated and "Complete Loop TS" in body
+
+        orphan = HelpSection("未翻译的章节", "原始正文内容。", key="does.not.exist")
+        body, translated = section_body(orphan)
+        assert not translated and body == "原始正文内容。"
+
+        original = help_module.catalogue
+        monkeypatch.setattr(
+            help_module, "catalogue",
+            lambda code=None: {k: v for k, v in original(code).items()
+                               if k != "helpbody.fra.ts_semantics"},
+        )
+        dialog = HelpDialog(None, "fra", "测量语义：TS 类型不能猜")
+        rendered = dialog.browser.toPlainText()
+        assert catalogue("en")["此章节暂无当前语言的正文译文，以下显示原文。"] in rendered
+        assert "Plant TS" in rendered
+        dialog.close()
+
         set_language("zh-Hans", notify=False)
         zh = HelpDialog(None, "fra", "测量语义：TS 类型不能猜")
-        assert "Plant TS" in zh.browser.toPlainText()
-        assert notice_for("en") not in zh.browser.toPlainText()
+        assert "此章节暂无当前语言的正文译文，以下显示原文。" not in zh.browser.toPlainText()
         zh.close()
-
-        # A section that *is* translated must not show the notice.
-        set_language("en", notify=False)
-        assert "helpbody.fra.ts_semantics" in catalogue("en")
-        en = HelpDialog(None, "fra", "测量语义：TS 类型不能猜")
-        text = en.browser.toPlainText()
-        assert "Complete Loop TS" in text and "reconstruction" in text
-        assert notice_for("en") not in text
-        en.close()
-
-        # A section with no English body shows the source plus the notice.
-        assert "helpbody.llc.impl_models" not in catalogue("en")
-        fallback = HelpDialog(None, "llc", "实现说明 — FHA / HB / TD 三种模型怎么算的")
-        fallback_text = fallback.browser.toPlainText()
-        assert notice_for("en") in fallback_text
-        assert "FHA（基波近似）" in fallback_text
-        fallback.close()
-
-        # Japanese translates the title but not this body yet: same contract.
-        set_language("ja", notify=False)
-        ja = HelpDialog(None, "llc", "实现说明 — FHA / HB / TD 三种模型怎么算的")
-        ja_text = ja.browser.toPlainText()
-        assert ja_text.startswith("実装の説明 — FHA / HB / TD")
-        assert notice_for("ja") in ja_text
-        ja.close()
-        del i18n
     finally:
         set_language("zh-Hans", notify=False)
+        app.processEvents()
+
+def test_starting_in_a_translated_language_still_allows_switching_back():
+    """Regression: the binding records the text it sees, so the windows must be
+    built while the source language is active, not after the stored language has
+    already been applied."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
+    from PySide6.QtWidgets import QToolBar
+
+    from llc_design.core.spec import LLCDesignSpec
+    from llc_design.gui.i18n_ui import apply_language
+    from llc_design.gui.launcher import WorkspaceApplicationController
+    from llc_design.i18n import set_language
+
+    app = _qapp(qt_widgets)
+    set_language("zh-Hans", notify=False)
+    controller = WorkspaceApplicationController(LLCDesignSpec())
+    app.processEvents()
+    window = controller.llc_window
+    try:
+        # Simulate a start-up with a persisted non-source language.
+        apply_language("en", app)
+        assert window.windowTitle().startswith("Power Design Toolkit")
+        assert "Load JSON" in [a.text() for bar in window.findChildren(QToolBar)
+                               for a in bar.actions() if a.text()]
+
+        # The source must still be Chinese, so switching back must work.
+        apply_language("zh-Hans", app)
+        assert window.windowTitle().startswith("电源设计工具箱")
+        assert "加载 JSON" in [a.text() for bar in window.findChildren(QToolBar)
+                              for a in bar.actions() if a.text()]
+    finally:
+        apply_language("zh-Hans", app)
+        set_language("zh-Hans", notify=False)
+        window.close()
         app.processEvents()
