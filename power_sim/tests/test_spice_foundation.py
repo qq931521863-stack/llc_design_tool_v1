@@ -150,3 +150,61 @@ def test_live_ngspice_batch_rc_transient_if_installed(tmp_path: Path):
     assert result.data.points > 10
     assert "v(out)" in result.data.vectors
     assert float(result.data.vector("v(out)")[-1]) > 0.95
+
+
+def test_live_ngspice_generated_llc_switches_and_carries_tank_current_if_installed(tmp_path: Path):
+    """Execute the generated LLC netlist in real ngspice, not only string-test it.
+
+    This is intentionally a topology/simulator smoke test rather than an
+    efficiency or hardware-correlation claim.  It proves that the FULL_BRIDGE
+    CircuitIR, gate timing, resonant tank, coupled transformer and rectifier are
+    numerically executable together before the shared closed-loop path is used.
+    """
+    engine = NgSpiceBatchEngine()
+    if not engine.available:
+        pytest.skip("ngspice executable is not installed")
+
+    spec = LLCDesignSpec()
+    tank = design_tank(spec)
+    config = LLCSpiceConfig(
+        switching_frequency_hz=spec.resonant_frequency_hz,
+        bus_voltage_v=spec.vbus_nom_v,
+        load_fraction=1.0,
+        gate_drive_mode="pulse",
+        initial_output_v=spec.vout_v,
+    )
+    circuit = build_ideal_llc_circuit(spec, tank, config)
+    stop_time = 80.0 / config.switching_frequency_hz
+    max_step = 1.0 / config.switching_frequency_hz / 80.0
+    result = engine.run_transient(
+        circuit,
+        stop_time_s=stop_time,
+        max_step_s=max_step,
+        workdir=tmp_path / "llc_live",
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.data is not None, result.errors
+    assert not result.errors
+    data = result.data
+    assert data.points > 500
+
+    t = data.vector("time")
+    va = data.vector("v(a)")
+    vb = data.vector("v(b)")
+    ilr = data.vector("i(lr)")
+    vout = data.vector("v(out)")
+    assert len(t) == len(va) == len(vb) == len(ilr) == len(vout)
+    assert np.all(np.isfinite(ilr))
+    assert np.all(np.isfinite(vout))
+
+    bridge = va - vb
+    assert float(np.max(bridge)) > 0.8 * spec.vbus_nom_v
+    assert float(np.min(bridge)) < -0.8 * spec.vbus_nom_v
+    assert float(np.max(np.abs(ilr))) > 0.1
+
+    # With Vout precharged to the design target, the smoke run should not
+    # numerically collapse or explode.  Tight regulation/correlation belongs to
+    # later closed-loop/hardware validation, not this ideal fixed-Fs test.
+    tail = vout[int(0.75 * len(vout)) :]
+    assert 0.25 * spec.vout_v < float(np.mean(tail)) < 2.0 * spec.vout_v
