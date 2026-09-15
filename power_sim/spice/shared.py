@@ -1,16 +1,8 @@
-"""Minimal, typed wrapper around ngspice's shared-library API.
+"""Typed wrapper around ngspice's shared-library API.
 
-This module is the production path for digital closed-loop co-simulation. The
-public declarations mirror ``sharedspice.h`` closely enough to support:
-
-- in-memory circuit loading via ``ngSpice_Circ``;
-- commands and vector extraction;
-- live data callbacks;
-- external voltage/current sources;
-- transient time-step synchronization.
-
-No controller algorithm lives here. Existing ``power_sim.digital_control``
-remains the single source of truth for ADC/controller/FM behaviour.
+The shared backend is the continuous-state path for digital closed-loop
+co-simulation.  Controller mathematics deliberately remain in
+``power_sim.digital_control``; this module only owns the simulator interface.
 """
 from __future__ import annotations
 
@@ -112,7 +104,6 @@ def _library_candidates() -> list[str]:
     found = find_library("ngspice")
     if found:
         candidates.append(found)
-
     if sys.platform.startswith("win"):
         candidates += [
             r"C:\Program Files\ngspice\bin\ngspice.dll",
@@ -134,14 +125,8 @@ def _library_candidates() -> list[str]:
 
 
 def find_ngspice_shared_library(explicit: str | Path | None = None) -> str | None:
-    if explicit is not None:
-        text = str(Path(explicit).expanduser())
-        try:
-            ct.CDLL(text)
-            return text
-        except OSError:
-            return None
-    for candidate in _library_candidates():
+    candidates = [str(Path(explicit).expanduser())] if explicit is not None else _library_candidates()
+    for candidate in candidates:
         try:
             ct.CDLL(candidate)
             return candidate
@@ -151,11 +136,7 @@ def find_ngspice_shared_library(explicit: str | Path | None = None) -> str | Non
 
 
 class NgSpiceSharedLibrary:
-    """Stateful shared-ngspice session.
-
-    Callback objects are kept as instance members because ctypes callbacks must
-    remain strongly referenced for as long as ngspice may call them.
-    """
+    """Stateful shared-ngspice session with strongly referenced callbacks."""
 
     def __init__(self, library: str | Path | None = None):
         resolved = find_ngspice_shared_library(library)
@@ -175,9 +156,9 @@ class NgSpiceSharedLibrary:
         self._sync_callback: SyncCallback | None = None
         self._bg_started = threading.Event()
         self._bg_finished = threading.Event()
-        self._configure_symbols()
         self._callbacks: list[object] = []
         self._initialized = False
+        self._configure_symbols()
 
     @staticmethod
     def available() -> bool:
@@ -255,7 +236,9 @@ class NgSpiceSharedLibrary:
                 if not item_ptr:
                     continue
                 item = item_ptr.contents
-                point[self._decode(item.name)] = complex(item.creal, item.cimag if item.is_complex else 0.0)
+                point[self._decode(item.name)] = complex(
+                    item.creal, item.cimag if item.is_complex else 0.0
+                )
             self._data_callback(int(values.vecindex), point)
             return 0
 
@@ -265,16 +248,20 @@ class NgSpiceSharedLibrary:
             return 0
 
         @BGThreadRunningCB
-        def bg_running(running, ident, userdata):
+        def bg_running(exited, ident, userdata):
             del ident, userdata
-            # Official sharedspice.h: argument is true while the worker thread
-            # is running, false when it has stopped.
-            self.background_running = bool(running)
-            if running:
+            # ngspice's current implementation passes its internal fl_exited:
+            # FALSE when the worker starts, TRUE when it exits. This is opposite
+            # to the historical header comment, so lifecycle handling follows
+            # the implementation and ngSpice_running() rather than the comment.
+            if bool(exited):
+                self.background_running = False
+                if self._bg_started.is_set():
+                    self._bg_finished.set()
+            else:
+                self.background_running = True
                 self._bg_started.set()
                 self._bg_finished.clear()
-            elif self._bg_started.is_set():
-                self._bg_finished.set()
             return 0
 
         self._callbacks = [send_char, send_stat, controlled_exit, send_data, send_init_data, bg_running]
@@ -309,7 +296,8 @@ class NgSpiceSharedLibrary:
                 del ident, userdata
                 if delta_ptr and self._sync_callback is not None:
                     requested = self._sync_callback(
-                        float(time_s), float(delta_ptr[0]), float(old_delta), int(redostep), int(location)
+                        float(time_s), float(delta_ptr[0]), float(old_delta),
+                        int(redostep), int(location)
                     )
                     if requested is not None and requested > 0.0:
                         delta_ptr[0] = float(requested)
@@ -317,7 +305,9 @@ class NgSpiceSharedLibrary:
 
             self._callbacks.extend([get_vsrc, get_isrc, get_sync])
             ident = ct.c_int(0)
-            rc = int(self.lib.ngSpice_Init_Sync(get_vsrc, get_isrc, get_sync, ct.byref(ident), None))
+            rc = int(self.lib.ngSpice_Init_Sync(
+                get_vsrc, get_isrc, get_sync, ct.byref(ident), None
+            ))
             if rc != 0:
                 raise RuntimeError(f"ngSpice_Init_Sync failed with status {rc}")
         self._initialized = True
@@ -345,7 +335,7 @@ class NgSpiceSharedLibrary:
         return bool(self.lib.ngSpice_running())
 
     def run_background(self, *, timeout_s: float = 30.0, poll_s: float = 0.001) -> None:
-        """Start ``bg_run`` and wait until its worker lifecycle fully completes."""
+        """Start ``bg_run`` and wait for a confirmed start and stop lifecycle."""
         timeout = float(timeout_s)
         poll = float(poll_s)
         if timeout <= 0.0 or poll <= 0.0:
@@ -359,8 +349,6 @@ class NgSpiceSharedLibrary:
 
         deadline = time.monotonic() + timeout
         while not self._bg_started.is_set():
-            # The authoritative C API provides a second observation channel in
-            # case callback delivery is delayed relative to command return.
             if self.is_running():
                 self._bg_started.set()
                 break
@@ -369,11 +357,7 @@ class NgSpiceSharedLibrary:
             time.sleep(poll)
 
         while True:
-            if self._bg_finished.is_set():
-                break
-            if not self.is_running():
-                # Some builds may report stop via ngSpice_running() before the
-                # Python callback event becomes visible; both indicate idle.
+            if self._bg_finished.is_set() or not self.is_running():
                 break
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"shared ngspice did not finish within {timeout:.3g} s")
@@ -381,7 +365,6 @@ class NgSpiceSharedLibrary:
         self.background_running = False
 
     def wait_until_idle(self, *, timeout_s: float = 30.0, poll_s: float = 0.001) -> None:
-        """Wait for an already-started shared-ngspice background run."""
         timeout = float(timeout_s)
         poll = float(poll_s)
         if timeout <= 0.0 or poll <= 0.0:
@@ -404,7 +387,9 @@ class NgSpiceSharedLibrary:
             return np.ctypeslib.as_array(info.v_realdata, shape=(length,)).astype(float, copy=True)
         if info.v_compdata:
             raw = np.ctypeslib.as_array(info.v_compdata, shape=(length,))
-            return np.asarray([complex(item.cx_real, item.cx_imag) for item in raw], dtype=complex)
+            return np.asarray([
+                complex(item.cx_real, item.cx_imag) for item in raw
+            ], dtype=complex)
         return np.asarray([], dtype=float)
 
 
