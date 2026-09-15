@@ -17,7 +17,7 @@ Power Design (LLC/PFC/Vienna)
         -> closed-loop waveforms and metrics
 ```
 
-The digital controller is reused from Control Tools / FRA Loop Designer. The user must not re-enter coefficients after design.
+The exact discrete controller is reused from the existing LLC Digital Control / Control Tools path. Coefficients are not re-entered and are not re-discretized in the SPICE layer.
 
 ## 2. Reference code used
 
@@ -34,168 +34,229 @@ Its image-recognition / OCR / schematic-redraw front end is deliberately outside
 
 ### 3.1 Batch backend
 
-Use for:
+Use for generated-netlist smoke tests, fixed-frequency transient correlation and CI. The batch backend starts an ngspice process, forces ASCII RAW output and parses vectors into NumPy arrays.
 
-- generated-netlist smoke tests;
-- open-loop/fixed-frequency transient correlation;
-- CI tests that prove ngspice can parse and solve the generated circuit;
-- future Python switched-solver vs ngspice waveform comparison.
-
-The batch backend starts an ngspice process, forces ASCII raw output, and parses vectors into NumPy arrays.
-
-It is **not** the production digital closed-loop architecture. Restarting a process for each controller sample would lose continuous circuit state and would be far too slow.
+It is **not** the digital closed-loop architecture. Restarting ngspice for every controller sample would destroy continuous L/C state and be far too slow.
 
 ### 3.2 Shared-library backend
 
-Production closed-loop uses `libngspice` / shared-ngspice. The official API provides:
+Closed loop uses `libngspice` / shared-ngspice. The implemented binding uses:
 
 - `ngSpice_Circ()` for in-memory circuit loading;
-- `ngSpice_Command()` for simulator control;
-- `SendData` callbacks for accepted transient points;
-- `GetVSRCData` / `GetISRCData` callbacks for host-controlled external sources;
-- `GetSyncData` for transient-step synchronization;
-- `ngSpice_SetBkpt()` for exact time breakpoints.
+- `ngSpice_Command()` / `bg_run` for simulator control;
+- `SendData` for accepted transient points;
+- `GetVSRCData` for host-controlled external gate sources;
+- `GetSyncData` to force solver steps onto PWM/control events;
+- `ngGet_Vec_Info()` for direct vector access and diagnostics.
 
-This is the mechanism that allows ngspice to remain the continuous-time power-stage solver while the existing Python/C99-equivalent digital runtime executes at discrete control instants.
+`ngSpice_SetBkpt()` is a solver timestep breakpoint API, **not a pause/resume primitive**, so V1 does not use it as the digital control clock.
 
-## 4. Existing code reused as-is
+One important implementation finding is that shared ngspice is effectively process-global. Repeated native `ngSpice_Init()` calls from independent wrapper objects caused a real native crash in CI. `NgSpiceSharedLibrary` is therefore a process singleton: native callbacks are installed once and Python-side handlers are retargeted between runs.
 
-`power_sim` already contains the digital closed-loop primitives:
+## 4. Existing digital code reused as authority
+
+`power_sim` remains the single digital execution implementation:
 
 - `SamplerRuntime`
-- ADC quantization and sample delay
+- ADC quantization / sample delay
 - `DigitalTransferRuntime` for exact H(z)
 - `ControllerLimitConfig`
 - `LLCFMRuntime`
+- `LLCFMLUTRuntime` for firmware-style PCMD tables
 - TBPRD quantization
-- control / computation / PWM scheduling
+- computation / PWM timing
 - closed-loop diagnostics
 
-These remain the single source of truth. No second PI/2P2Z implementation is introduced in the SPICE layer.
+No second PI/2P2Z implementation is introduced inside the SPICE backend.
 
-## 5. New code structure
+## 5. Code structure
 
 ```text
 power_sim/spice/
     ir.py               backend-neutral circuit representation + validation
     netlist.py          deterministic CircuitIR -> SPICE text
-    ngspice_batch.py    batch simulator + ASCII raw parser
-    shared.py           ctypes binding to sharedspice.h
-    llc.py              LLCDesignSpec/TankDesign -> ideal LLC CircuitIR
-    gate.py             phase-continuous variable-frequency gate generation
-    sync.py             control/PWM event synchronization for ngspice timestep
+    ngspice_batch.py    batch simulator + ASCII RAW parser
+    shared.py           ctypes binding + process-singleton lifetime
+    llc.py              LLCDesignSpec/TankDesign -> LLC CircuitIR
+    gate.py             phase-continuous variable-frequency full-bridge gates
+    sync.py             control/PWM event synchronization
+    closed_loop.py      exact H(z) <-> shared-ngspice closed-loop runner
+    waveforms.py        adaptive SPICE vectors -> existing WaveformBundle
+```
+
+GUI integration:
+
+```text
+LLC workspace
+    Digital Control / Control Tools exact H(z)
+        -> Closed-Loop Verification tab
+        -> worker-thread shared-ngspice run
+        -> WaveformBundle
+        -> existing synchronized waveform/cursor/statistics GUI
 ```
 
 ## 6. LLC V1 electrical model
 
-Initial model deliberately corresponds to the current ideal switching correlation layer:
+V1 is a **switching correlation model with explicit small physical damping**, not a vendor semiconductor model:
 
 ```text
-400-V source
-   -> full bridge ideal voltage-controlled switches
-   -> Lr
-   -> Cr
-   -> coupled-inductor transformer (Lp = Lm, Ls = Lm/n^2)
-   -> diode full bridge
-   -> Cout + ESR
-   -> Rload
+DC bus
+ -> full bridge voltage-controlled switches
+ -> Lr + DCR
+ -> Cr + ESR
+ -> coupled-inductor transformer + winding R, K<1
+ -> diode full bridge
+ -> Cout + ESR
+ -> Rload
 ```
 
-The model supports full-bridge primary only in V1. Half-bridge is rejected explicitly rather than approximated silently.
+FULL_BRIDGE primary only. Half bridge is rejected explicitly rather than silently approximated.
 
-The full-wave diode bridge is a placeholder for the first electrical correlation step. Synchronous-rectifier timing, Qrr, third-quadrant behavior, nonlinear MOSFET Coss and vendor `.lib` models are later fidelity layers.
+The explicit DCR/ESR/winding resistance and finite transformer coupling are important. A first near-lossless prototype produced real ngspice `timestep too small` failures at the first secondary commutation. The current small damping terms regularize the physical switching network without pretending to provide vendor-device loss accuracy.
+
+Later fidelity layers may add nonlinear MOSFET Coss, body diode/Qrr, SR timing and vendor `.lib` models.
 
 ## 7. Gate timing
 
-Fixed-frequency batch mode generates complementary PULSE sources with symmetric deadtime:
+Fixed-frequency batch mode uses complementary PULSE sources with symmetric deadtime:
 
-- positive state: AH + BL;
-- negative state: AL + BH;
-- all switches off during deadtime around each half-cycle transition.
+- positive bridge state: AH + BL;
+- negative bridge state: AL + BH;
+- all four switches off around each half-cycle transition.
 
-Shared closed-loop mode uses `EXTERNAL` voltage sources. Gate voltage is evaluated from absolute simulation time and a **piecewise frequency/phase timeline**, not by incrementing phase inside the callback.
+Shared closed-loop mode uses `EXTERNAL` voltage sources. Gate state is a deterministic function of **absolute simulation time** and a piecewise frequency/phase timeline. If ngspice retries a timestep, repeated source queries at the same time return the same value.
 
-This is important because ngspice can retry a timestep or query a source at irregular times. Repeated evaluation at the same time must return exactly the same gate value.
-
-When the controller changes switching frequency, the timeline preserves accumulated phase:
+When switching frequency changes, accumulated phase is continuous:
 
 ```text
 phase_new(t_change) == phase_old(t_change)
 ```
 
-so frequency control does not create a nonphysical phase jump.
+so control updates do not create nonphysical bridge phase jumps.
 
 ## 8. Time synchronization
 
-The shared backend must force ngspice accepted points onto:
+`LLCCoSimulationSynchronizer` constrains ngspice's proposed transient delta through `GetSyncData` so accepted solver points do not jump over:
 
-1. ADC/control sample times;
-2. gate turn-on/turn-off/deadtime edges;
-3. scheduled switching-frequency update times.
+1. digital control sample times;
+2. full-bridge switching edges/deadtime boundaries;
+3. scheduled switching-frequency application times.
 
-`LLCCoSimulationSynchronizer` computes the next event and limits ngspice's proposed transient `delta` through `GetSyncData`.
+The controller itself runs only at its discrete sample clock. Circuit integration remains continuous/adaptive between those events.
 
-This prevents a large solver step from jumping across a PWM edge or controller sample.
+## 9. Shared callback name contract
 
-## 9. First closed-loop milestone
-
-The first real closed-loop scenario is intentionally narrow:
+A real Ubuntu `libngspice.so.0` CI run exposed an important naming difference:
 
 ```text
-Vout
- -> Sampler/ADC
- -> exact designed H(z)
- -> output clamp
- -> LLC FM/TBPRD runtime
- -> phase-continuous full-bridge gates
- -> shared ngspice LLC
- -> Vout
+ngGet_Vec_Info expression      SendData raw vector
+v(out)                         out
+i(lr)                          lr#branch   (implementation dependent alias)
 ```
 
-Initial scenario set:
+The bridge now normalizes expression-style names to the raw callback names at one boundary. This fixed the initial false diagnosis that `SendData` was not streaming: the callback was actually producing hundreds of accepted points, but the first parser looked only for `v(out)` instead of `out`.
 
-- steady regulation;
-- Vref step.
+## 10. Real closed-loop milestones already proven
 
-After this is numerically stable and correlated, add:
+The dedicated GitHub workflow installs **real `ngspice` and `libngspice0`** and runs the SPICE tests instead of mocking the engine.
 
-- Vin step (external bus source);
-- load step;
-- soft start;
-- protection and nonlinear state machine behavior;
-- SR gate algorithm;
-- device nonlinear models.
+Validated sequence:
 
-## 10. Validation order
+1. Circuit IR -> deterministic netlist -> real batch ngspice RC transient.
+2. Generated FULL_BRIDGE LLC -> real batch transient with bridge switching and finite resonant current.
+3. shared-ngspice in-memory DC operating point.
+4. shared-ngspice background transient with live `SendData` callback.
+5. shared LLC with a zero exact-H(z) controller at 40 kHz, proving the digital clock/gates/vector path.
+6. shared LLC with a **nonzero exact PI H(z)** and a +1 V Vref step:
+   - sampled error changes at the discrete controller tick;
+   - exact controller output changes;
+   - FM changes switching frequency in the correct LLC direction;
+   - SPICE continues with finite switching waveforms to the end of the run.
+7. the same shared result is converted into the existing `WaveformBundle` contract.
 
-The engineering validation ladder is:
+The nonzero PI test is a causal/plumbing smoke test, not a claim that those example PI values are an optimized production loop.
+
+## 11. WaveformBundle / GUI contract
+
+ngspice accepted points are adaptive and non-uniform. Existing waveform statistics assume uniform sampling. Therefore the adapter:
+
+- preserves raw adaptive vectors in `NgSpiceClosedLoopResult`;
+- removes duplicate/non-increasing display points;
+- resamples analog SPICE vectors onto a uniform display grid;
+- zero-order-holds controller signals between exact ISR ticks;
+- returns the existing `WaveformBundle` used by the LLC GUI.
+
+Initial displayed signals include:
+
+- bridge leg A/B and differential bridge voltage;
+- resonant current;
+- Vout and Vout ripple;
+- four gate voltages;
+- ideal-switch reconstructed VDS;
+- Vref, sampled feedback, error, controller output and switching frequency.
+
+This avoids building a second plotting/cursor/statistics stack for SPICE.
+
+## 12. Controller and FM interpretation
+
+The exact controller coefficients are consumed directly:
+
+```text
+H(z) = (b0 + b1 z^-1 + ...)/(1 + a1 z^-1 + ...)
+```
+
+No S->Z conversion occurs in the co-simulation runner.
+
+For a small-signal controller designed around an LLC operating point, controller output is interpreted as a PCMD perturbation about the operating command. The code now also contains a firmware-style `LLCFMLUTRuntime` that supports:
+
+- PCMD -> TBPRD LUT;
+- PCMD -> frequency LUT;
+- operating-command bias;
+- interpolation;
+- PCMD endpoint clamp;
+- timer/TBPRD quantization.
+
+The first GUI bridge still uses the locally linearized FM slope while the exact LUT runtime is being connected end-to-end. The GUI/report must state this boundary until that last link is complete.
+
+## 13. GUI V1
+
+The LLC workspace receives a `Closed-Loop Verification` tab rather than another top-level application.
+
+Current intended user flow:
+
+```text
+LLC power design
+ -> LLC Digital Control or Control Tools exact H(z)
+ -> Closed-Loop Verification
+ -> choose Vref step / duration / Vbus / load
+ -> RUN CLOSED LOOP
+ -> power + control waveforms and transient metrics
+```
+
+The SPICE solve runs in the existing Qt worker thread path; it must never block the UI thread.
+
+## 14. Validation ladder
 
 ```text
 FHA / small signal
    -> harmonic balance
    -> internal Python switched solver
-   -> ideal ngspice switching model
+   -> ideal shared-ngspice switching model
    -> detailed/vendor ngspice model
    -> hardware
 ```
 
-Each higher layer should be compared against the previous layer before adding another nonideality.
+Each higher layer is compared with the previous one before adding another nonideality.
 
-## 11. V1 acceptance criteria
+## 15. Remaining V1 work before merge
 
-Foundation is accepted only when:
+- connect the new exact FM LUT runtime into the shared LLC runner/GUI end-to-end;
+- finish GUI smoke and user-flow validation with the exact controller source bridge;
+- add a controlled comparison against the existing Python switched solver at the same operating point;
+- make ngspice installation/runtime discovery clear on Windows and macOS packages;
+- update localized help strings after the engineering workflow is frozen;
+- final user GUI review before merging to `main`.
 
-- Circuit IR/netlist unit tests pass;
-- ASCII raw parser regression passes;
-- GitHub CI installs real ngspice and solves an RC transient;
-- shared `libngspice` loads and solves a simple in-memory DC circuit;
-- default full-bridge LLC netlist is generated with correct Lr/Cr/Lm/n/Cout/load values;
-- gate schedule is phase-continuous under frequency changes;
-- timestep synchronizer hits control and PWM events;
-- no existing `power_sim` digital-control tests regress.
+## 16. Model boundary
 
-The shared closed-loop LLC run is the next commit after this foundation is green; it will not be declared complete merely because the ctypes API loads.
-
-## 12. Model boundary
-
-This first implementation is an **ideal switching circuit correlation model**. It is not yet a vendor-device SPICE model and must not be presented as predicting ringing, switching loss, Coss commutation or Qrr with release accuracy.
+This implementation is currently a **design/correlation switching model**. It must not be presented as release-accurate prediction of ringing, switching loss, nonlinear Coss commutation, Qrr or synchronous-rectifier device stress. Those require the later detailed-device fidelity layer and hardware correlation.
