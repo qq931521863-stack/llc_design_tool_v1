@@ -58,7 +58,25 @@ def test_shared_ngspice_background_transient_streams_senddata_if_library_install
     )
     assert rc == 0
     session.run_background(timeout_s=20.0)
-    assert len(points) > 20, "SendData callback did not stream transient points"
+
+    # Independent evidence that transient analysis actually completed. This
+    # separates simulator execution from callback ABI/name-mapping failures.
+    time_vector = session.vector("time")
+    out_vector = session.vector("v(out)")
+    assert len(time_vector) > 20
+    assert len(out_vector) == len(time_vector)
+
+    diagnostic = (
+        f"SendData callback did not stream usable transient points; "
+        f"data_cb={session.data_callback_count}, init_cb={session.init_callback_count}, "
+        f"init_names={session.init_vector_names}, last_names={session.last_data_names}, "
+        f"plot={session.current_plot()!r}, all_vecs={session.all_vectors()}, "
+        f"direct_time_len={len(time_vector)}, direct_out_len={len(out_vector)}, "
+        f"messages_tail={session.messages[-12:]}"
+    )
+    assert session.data_callback_count > 20, diagnostic
+    assert len(points) > 20, diagnostic
+
     times = np.asarray([item[1] for item in points])
     outputs = np.asarray([item[2] for item in points])
     assert np.all(np.diff(times) >= 0.0)
