@@ -1,15 +1,15 @@
 """LLC design -> ideal switching CircuitIR.
 
-V1 intentionally targets correlation with the existing Python switched solver:
-ideal voltage-controlled primary switches, coupled-inductor transformer,
-full-wave diode rectifier and the designed output capacitor/load. Vendor MOSFET
-models, nonlinear Coss, Qrr and synchronous-rectifier control are later fidelity
-layers and are not silently implied by this model.
+V1 targets correlation with the existing Python switched solver while keeping
+the SPICE network numerically well posed.  The correlation model therefore uses
+ideal controlled primary switches plus small, explicit physical parasitics:
+resonant-cap ESR, resonant-inductor DCR, transformer winding resistance and
+finite leakage through the coupled-inductor coefficient.  These are not vendor
+MOSFET/Coss/Qrr/SR models and must not be presented as such.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
 
 from llc_design.core.spec import LLCDesignSpec, PrimaryTopology
 from llc_design.core.tank import TankDesign
@@ -25,17 +25,24 @@ class LLCSpiceConfig:
     gate_drive_mode: str = "pulse"  # pulse | external
     gate_high_v: float = 5.0
     switch_ron_ohm: float = 10e-3
-    switch_roff_ohm: float = 1e9
-    transformer_coupling: float = 0.9999
-    # The original prototype used Is=1e-3/Rs=1m to imitate an almost-ideal
-    # rectifier. That makes the diode exponential extremely stiff exactly when
-    # the resonant secondary first commutates and ngspice can collapse its
-    # timestep to <1e-18 s. These defaults remain low-loss for the correlation
-    # model but have materially better Newton conditioning.
+    switch_roff_ohm: float = 1e7
+    transformer_coupling: float = 0.999
+
+    # Small physical damping terms.  They regularize the idealized switching
+    # network without materially changing a ~15-ohm resonant impedance default
+    # design. Cr ESR comes from LLCDesignSpec and is not duplicated here.
+    resonant_inductor_dcr_ohm: float = 20e-3
+    primary_winding_r_ohm: float = 30e-3
+    secondary_winding_r_ohm: float = 5e-3
+    bridge_bleeder_ohm: float = 10e6
+
+    # Rectifier model: low-loss but intentionally not an unrealistically stiff
+    # near-ideal diode.  The goal of this V1 layer is robust circuit/state
+    # correlation, not reverse-recovery prediction.
     diode_is_a: float = 1e-9
-    diode_rs_ohm: float = 20e-3
-    diode_cjo_f: float = 10e-12
-    secondary_bleeder_ohm: float = 100e6
+    diode_rs_ohm: float = 50e-3
+    diode_cjo_f: float = 0.0
+    secondary_bleeder_ohm: float = 1e6
     initial_output_v: float | None = None
 
     def validate(self, spec: LLCDesignSpec) -> None:
@@ -53,12 +60,19 @@ class LLCSpiceConfig:
             raise ValueError("gate_high_v must be positive")
         if self.switch_ron_ohm <= 0.0 or self.switch_roff_ohm <= self.switch_ron_ohm:
             raise ValueError("invalid ideal-switch Ron/Roff")
-        if not (0.0 < self.transformer_coupling <= 1.0):
-            raise ValueError("transformer coupling must be within (0, 1]")
+        if not (0.0 < self.transformer_coupling < 1.0):
+            raise ValueError("transformer coupling must be within (0, 1) for the switching correlation model")
+        for name, value in (
+            ("resonant_inductor_dcr_ohm", self.resonant_inductor_dcr_ohm),
+            ("primary_winding_r_ohm", self.primary_winding_r_ohm),
+            ("secondary_winding_r_ohm", self.secondary_winding_r_ohm),
+            ("bridge_bleeder_ohm", self.bridge_bleeder_ohm),
+            ("secondary_bleeder_ohm", self.secondary_bleeder_ohm),
+        ):
+            if value <= 0.0:
+                raise ValueError(f"{name} must be positive")
         if self.diode_is_a <= 0.0 or self.diode_rs_ohm <= 0.0 or self.diode_cjo_f < 0.0:
             raise ValueError("invalid rectifier diode model")
-        if self.secondary_bleeder_ohm <= 0.0:
-            raise ValueError("secondary_bleeder_ohm must be positive")
 
 
 def _s(value: float) -> str:
@@ -80,7 +94,6 @@ def _pulse(value_high: float, frequency_hz: float, deadtime_s: float, *, half_cy
 
 def _gate_source(refdes: str, node: str, config: LLCSpiceConfig, spec: LLCDesignSpec, *, shifted: bool) -> SpiceElement:
     if config.gate_drive_mode == "external":
-        # shared-ngspice calls GetVSRCData for sources marked EXTERNAL.
         expression = "DC 0 EXTERNAL"
     else:
         expression = _pulse(
@@ -93,11 +106,10 @@ def _gate_source(refdes: str, node: str, config: LLCSpiceConfig, spec: LLCDesign
 
 
 def build_ideal_llc_circuit(spec: LLCDesignSpec, tank: TankDesign, config: LLCSpiceConfig) -> CircuitIR:
-    """Build the first ngspice LLC correlation model.
+    """Build the first ngspice LLC switching-correlation model.
 
-    The first production milestone deliberately supports FULL_BRIDGE only. A
-    half-bridge needs an explicit split-bus/midpoint definition and must not be
-    approximated by silently halving the source voltage.
+    FULL_BRIDGE is intentionally the only V1 primary topology.  Half bridge is
+    not approximated by silently changing bridge gain or bus voltage.
     """
     spec.validate()
     config.validate(spec)
@@ -118,7 +130,7 @@ def build_ideal_llc_circuit(spec: LLCDesignSpec, tank: TankDesign, config: LLCSp
             f"{config.load_fraction*100:.3g}% load | {config.switching_frequency_hz:.8g} Hz"
         ),
         metadata={
-            "model_level": "ideal_switching_correlation",
+            "model_level": "ideal_switching_correlation_with_physical_damping",
             "topology": "FULL_BRIDGE_LLC_FULL_BRIDGE_DIODE_RECTIFIER",
             "vbus_v": config.bus_voltage_v,
             "load_fraction": config.load_fraction,
@@ -127,6 +139,10 @@ def build_ideal_llc_circuit(spec: LLCDesignSpec, tank: TankDesign, config: LLCSp
             "cr_f": tank.cr_f,
             "lm_h": tank.lm_h,
             "turns_ratio": n,
+            "lr_dcr_ohm": config.resonant_inductor_dcr_ohm,
+            "cr_esr_ohm": spec.resonant_cap_esr_ohm,
+            "primary_winding_r_ohm": config.primary_winding_r_ohm,
+            "secondary_winding_r_ohm": config.secondary_winding_r_ohm,
         },
     )
 
@@ -147,17 +163,26 @@ def build_ideal_llc_circuit(spec: LLCDesignSpec, tank: TankDesign, config: LLCSp
             SpiceElement("SAL", ElementKind.SWITCH, ("A", "0", "G_AL", "0"), model=switch_model),
             SpiceElement("SBH", ElementKind.SWITCH, ("BUS", "B", "G_BH", "0"), model=switch_model),
             SpiceElement("SBL", ElementKind.SWITCH, ("B", "0", "G_BL", "0"), model=switch_model),
-            SpiceElement("LR", ElementKind.INDUCTOR, ("A", "N_LR"), _s(tank.lr_h)),
-            SpiceElement("CR", ElementKind.CAPACITOR, ("N_LR", "PRI"), _s(tank.cr_f)),
-            SpiceElement("LPRI", ElementKind.INDUCTOR, ("PRI", "B"), _s(tank.lm_h)),
-            SpiceElement("LSEC", ElementKind.INDUCTOR, ("SEC_P", "SEC_N"), _s(secondary_l_h)),
+            SpiceElement("RBA", ElementKind.RESISTOR, ("A", "0"), _s(config.bridge_bleeder_ohm)),
+            SpiceElement("RBB", ElementKind.RESISTOR, ("B", "0"), _s(config.bridge_bleeder_ohm)),
+
+            # Resonant branch with explicit small physical loss.
+            SpiceElement("RLR", ElementKind.RESISTOR, ("A", "LR_IN"), _s(config.resonant_inductor_dcr_ohm)),
+            SpiceElement("LR", ElementKind.INDUCTOR, ("LR_IN", "N_LR"), _s(tank.lr_h)),
+            SpiceElement("RCR", ElementKind.RESISTOR, ("N_LR", "CR_IN"), _s(max(spec.resonant_cap_esr_ohm, 1e-6))),
+            SpiceElement("CR", ElementKind.CAPACITOR, ("CR_IN", "PRI"), _s(tank.cr_f)),
+
+            # Coupled transformer.  The winding resistances and K<1 are both
+            # physically meaningful and avoid a singular/near-singular ideal
+            # transformer at switching edges.
+            SpiceElement("RPRI", ElementKind.RESISTOR, ("PRI", "PRI_W"), _s(config.primary_winding_r_ohm)),
+            SpiceElement("LPRI", ElementKind.INDUCTOR, ("PRI_W", "B"), _s(tank.lm_h)),
+            SpiceElement("LSEC", ElementKind.INDUCTOR, ("SEC_P", "SEC_W"), _s(secondary_l_h)),
+            SpiceElement("RSEC", ElementKind.RESISTOR, ("SEC_W", "SEC_N"), _s(config.secondary_winding_r_ohm)),
             SpiceElement("KTX", ElementKind.COUPLING, ("LPRI", "LSEC"), _s(config.transformer_coupling)),
-            # High-value secondary references are numerical bleeders only. They
-            # prevent the ideal coupled secondary/blocked bridge from becoming a
-            # nearly floating common-mode island before the first rectifier
-            # conduction event; their loss is negligible at the intended power.
             SpiceElement("RSECP", ElementKind.RESISTOR, ("SEC_P", "0"), _s(config.secondary_bleeder_ohm)),
             SpiceElement("RSECN", ElementKind.RESISTOR, ("SEC_N", "0"), _s(config.secondary_bleeder_ohm)),
+
             SpiceElement("D1", ElementKind.DIODE, ("SEC_P", "OUT"), model="DRECT"),
             SpiceElement("D2", ElementKind.DIODE, ("SEC_N", "OUT"), model="DRECT"),
             SpiceElement("D3", ElementKind.DIODE, ("0", "SEC_P"), model="DRECT"),
@@ -182,7 +207,7 @@ def build_ideal_llc_circuit(spec: LLCDesignSpec, tank: TankDesign, config: LLCSp
     )
     circuit.directives.extend(
         [
-            ".options method=gear reltol=1e-4 abstol=1e-8 vntol=1e-5 gmin=1e-12",
+            ".options method=gear reltol=2e-4 abstol=1e-7 vntol=1e-5 gmin=1e-10",
             f".ic V(OUT)={_s(initial_vout)} V(CO_INT)={_s(initial_vout)}",
         ]
     )
