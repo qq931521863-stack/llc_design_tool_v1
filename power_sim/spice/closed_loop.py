@@ -1,19 +1,18 @@
 """Shared-ngspice LLC closed-loop co-simulation.
 
-This is the first continuous-state controller-in-the-loop path.  ngspice owns
+This is the first continuous-state controller-in-the-loop path. ngspice owns
 the switching circuit state; Power Design Toolkit owns ADC sampling, exact H(z),
-limits and FM/TBPRD logic.  Gate voltage sources are supplied through
+limits and FM/TBPRD logic. Gate voltage sources are supplied through
 shared-ngspice EXTERNAL callbacks and solver timesteps are synchronized to PWM
 and control events.
 
 V1 scope is deliberately narrow: FULL_BRIDGE LLC, fixed input bus/load and a
-reference step.  Vin/load steps are added after this path is numerically proven.
+reference step. Vin/load steps are added after this path is numerically proven.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import math
-from typing import Iterable
 
 import numpy as np
 
@@ -50,6 +49,7 @@ class NgSpiceClosedLoopConfig:
     pwm_update_delay_s: float = 0.0
     output_step_s: float | None = None
     max_step_s: float | None = None
+    wall_timeout_s: float = 120.0
     record_vectors: tuple[str, ...] = (
         "time",
         "v(out)",
@@ -68,6 +68,8 @@ class NgSpiceClosedLoopConfig:
             raise ValueError("duration_s must be positive")
         if self.computation_delay_s < 0.0 or self.pwm_update_delay_s < 0.0:
             raise ValueError("control delays cannot be negative")
+        if self.wall_timeout_s <= 0.0:
+            raise ValueError("wall_timeout_s must be positive")
         if sample_time_s <= 0.0 or maximum_frequency_hz <= 0.0:
             raise ValueError("sample time and maximum switching frequency must be positive")
         switching_period_min = 1.0 / maximum_frequency_hz
@@ -131,7 +133,6 @@ def run_llc_shared_closed_loop(
     output_step, max_step = simulation.validate(sampler.sample_time_s, modulator.maximum_frequency_hz)
     shared_spice = replace(spice_config, gate_drive_mode="external")
     circuit = build_ideal_llc_circuit(spec, tank, shared_spice)
-    # Shared closed-loop only needs the vectors that are actually recorded.
     circuit.save_vectors = list(dict.fromkeys(simulation.record_vectors))
     circuit.directives.append(
         f".tran {output_step:.12e} {simulation.duration_s:.12e} 0 {max_step:.12e}"
@@ -203,8 +204,6 @@ def run_llc_shared_closed_loop(
         if next_sample_s <= time_s + tolerance:
             next_sample_s = time_s + sampler.sample_time_s
 
-    # If sample phase is exactly zero, initialize the digital loop before the
-    # first transient step using the same output value used by the SPICE .ic.
     if sampler.sample_phase_s <= tolerance:
         execute_controller(0.0, initial_output)
 
@@ -228,8 +227,6 @@ def run_llc_shared_closed_loop(
         if time_s is None:
             return
         if time_s + tolerance < last_time:
-            # Retries should not be emitted as accepted SendData points, but do
-            # not allow a simulator peculiarity to move the controller backward.
             return
         last_time = max(last_time, time_s)
         vout = _lookup(point, "v(out)")
@@ -242,7 +239,10 @@ def run_llc_shared_closed_loop(
             if value is not None:
                 vector_lists[name].append(float(value.real))
 
-        if time_s + tolerance >= next_sample_s and next_sample_s <= simulation.duration_s + tolerance:
+        # GetSyncData constrains the transient solver to land on every control
+        # sample. A while loop still makes the callback robust to small floating
+        # tolerance or simulator versions that emit a point just beyond a tick.
+        while time_s + tolerance >= next_sample_s and next_sample_s <= simulation.duration_s + tolerance:
             execute_controller(next_sample_s, latest_vout)
 
     session = NgSpiceSharedLibrary(library)
@@ -254,10 +254,18 @@ def run_llc_shared_closed_loop(
     rc = session.load_circuit(circuit_lines)
     if rc != 0:
         raise RuntimeError(f"ngSpice_Circ failed with status {rc}: {' | '.join(session.messages[-20:])}")
-    rc = session.command("run")
-    if rc != 0 or (session.exit_status not in (None, 0)):
+
+    # SendData is the streaming callback used by shared-ngspice background
+    # analysis. Synchronous `run` completes the circuit but does not provide the
+    # per-point callback stream required to execute the discrete controller.
+    rc = session.command("bg_run")
+    if rc != 0:
+        raise RuntimeError(f"shared ngspice bg_run failed to start with status {rc}")
+    session.wait_until_idle(timeout_s=simulation.wall_timeout_s)
+
+    if session.exit_status not in (None, 0):
         raise RuntimeError(
-            f"shared ngspice transient failed: command={rc}, exit={session.exit_status}; "
+            f"shared ngspice transient failed: exit={session.exit_status}; "
             + " | ".join(session.messages[-30:])
         )
     if not samples:
