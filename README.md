@@ -1,4 +1,4 @@
-# Power Design Toolkit V9.1.0
+# Power Design Toolkit V9.2.0
 
 Integrated engineering design and control-analysis toolkit for:
 
@@ -48,8 +48,17 @@ Legend: 🚀 Feature · 🐛 Bugfix · 🎨 GUI/UX · 🧪 Test/CI/Build
 | 2026-09-09 / V9.1.0 | 🚀 | 版本化工程 JSON 保存，包含输入、计算摘要和工程参考数据来源；兼容旧参数文件 |
 | 2026-09-09 / V9.1.0 | 🐛 | 统一更新检查版本号，正确比较 SemVer，记住已忽略版本；修复控制工具页签初始化异常 |
 | 2026-09-09 / V9.1.0 | 🧪 | 补齐 Excel/API 测试依赖，增加公式报告、工程保存、数据来源和 GUI 启动回归；本机 315 项通过、2 项预期失败 |
+| 2026-09-15 / V9.2.0 | 🚀 | 新增 **FRA Loop Designer** 独立工作区：导入 Bode100 / SIMPLIS / 通用频响，支持 Plant TS 与 Complete Loop TS（剥离当前控制器）两种语义，Quick Tune / New Structure 实时整定，导出最终 H(z) 的 C99 float32_t |
+| 2026-09-15 / V9.2.0 | 🚀 | 新增目标 Fc/PM 的 **FRA Auto Design** 与**低阶有理模型辨识**（≤5 极点、实/复共轭稳定极点、可选纯延时）；Raw FRA 始终为稳定性判据，辨识结果仅为工程近似 |
+| 2026-09-15 / V9.2.0 | 🚀 | **辨识被控对象模型 × 控制器打通**：Model ID 结果可直接回传为被控对象，与控制工具库中任意控制器组成开环 L(jω)，输出 Bode、PM/GM、S/T 与闭环 Step |
+| 2026-09-15 / V9.2.0 | 🚀 | FRA Loop Designer 控制器类型与 Control Tools **完全配齐**（Integrator / PI / PIF / PID / PIDF / Type-II / Type-III / Modified PI / Lead / Lag / 1P1Z / 2P2Z / 3P3Z / General + R/C 输入），并新增 **Custom H(z)** 精确系数入口 |
+| 2026-09-15 / V9.2.0 | 🐛 | 修复 Complete Loop TS 导入后 summary/details 全部变成 ERROR（PySide6 将 str-Enum 的 itemData 还原为 str 导致 `.value` 抛异常）；导出按钮在无有效计算时置灰 |
+| 2026-09-15 / V9.2.0 | 🐛 | 修复 LEAD / LAG / 1P1Z / Modified PI 在 FRA 界面下 `fz_hz` / `fp_hz` 未映射而静默使用引擎默认值；补齐 Type-II/III 的 `fp0` |
+| 2026-09-15 / V9.2.0 | 🧪 | **阶跃门控统一**：拟合环路与辨识被控对象两条 Step 路径共用同一带宽覆盖判据（`Fc/Fmin ≥ 10`、`Fmax/Fc ≥ 5`），置信度 LOW / 模型含右半平面极点 / 环路裕度 FAIL / 闭环不稳定时一律不给 Step 并说明原因 |
+| 2026-09-15 / V9.2.0 | 🧪 | 新增 FRA 深度审计报告与回归：多圈相位与重复穿越裕度、Bode100 实测夹具列一致性、Auto Power 2P2Z 精确 H(z) 导出并与 float32 C99 数值对照、控制工具全类型可构造性 |
+| 2026-09-15 / V9.2.0 | 🐛 | 修复 CI 依赖：`httpx2` 提供的是 `httpx2` 模块，而 `fastapi.testclient` 需要 `httpx`，导致 webapp/backend 测试收集失败、构建与发布任务被跳过 |
 
-本版使用说明与已知限制见 [V9.1.0 发布说明](DC/release_v9.1.0.md)。
+本版使用说明与已知限制见 [V9.2.0 发布说明](DC/release_v9.2.0.md)。
 
 ## Install
 
@@ -95,7 +104,60 @@ or:
 power-design-gui
 ```
 
-The launcher first asks whether to enter **LLC Design** or **PFC Design**. Both top-level windows preserve their state while switching.
+The launcher first asks whether to enter **LLC Design**, **PFC Design**, **Control Tools** or **FRA Loop Designer**. All top-level windows preserve their state while switching.
+
+## Control Tools — controller catalogue
+
+`power_control_tools` is the single source of truth for the controller structures shared by every workspace (`CONTROLLER_LABELS`, `controller_parameter_keys`):
+
+| Structure | Parameters |
+| --- | --- |
+| Integrator | `gain` |
+| PI | `Kp`, `Ti` |
+| PIF | `Kp`, `Ti`, LPF pole |
+| PID | `Kp`, `Ti`, `Td` |
+| PIDF | `Kp`, `Ti`, `Td`, LPF pole |
+| Analog Type-II | `fp0`, `fz1`, `fp1` — or `R1/R2/C1/C2` |
+| Analog Type-III | `fp0`, `fz1`, `fz2`, `fp1`, `fp2` — or `R1/R2/R3/C1/C2/C3` |
+| Modified PI | `gain`, `fz1`, `fp1` |
+| Lead / Lag / 1P1Z | `gain`, `fz1`, `fp1` |
+| 2P2Z / 3P3Z | equal-order finite pole/zero form |
+| General H(s) | explicit numerator / denominator |
+
+Auto Design uses **power-compensator** templates for the 2P2Z/3P3Z cases (integrator pole at `s=0`: `K(s+wz1)(s+wz2)/[s(s+wp1)]`), which is deliberately different from the legacy equal-order manual sliders. Those results are therefore transferred as **exact H(z)** coefficients rather than silently remapped into the sliders.
+
+Every controller or filter can be exported as one header-only C99 `float32_t` file (DF2T / SOS) and verified by compiling and stepping the generated C against the Python reference.
+
+## FRA Loop Designer (V9.2)
+
+A separate workspace for measured-frequency-response-based controller work.
+
+**Inputs** — Bode100 CSV, SIMPLIS TXT, generic frequency / gain / phase. Two semantics, never guessed:
+
+* **Plant TS** — the record already excludes the controller: `L_new = G_plant · C_new`.
+* **Complete Loop TS** — the record is the loop gain / return ratio around the closed loop and does contain the current controller. Only that controller is divided out: `G_eq = H_scan / C_old`. PWM, ADC, sensing and real delays stay inside `G_eq` because they are already in the measurement. The tool immediately rebuilds `H_scan` algebraically and reports the reconstruction error; that check proves the arithmetic, **not** that the entered `C_old` is what produced the hardware sweep.
+
+**Controller handling**
+
+* *Quick Tune* — scale loop gain and per-coefficient `b0x…a3x` of the existing controller (exact B/A input, canonical or firmware `+A` convention), or scale `Kp`/`Ti` when the current controller is a PI. Unity scales reproduce the measured loop exactly.
+* *New Structure* — redesign with the full Control Tools catalogue above, including the Type-II/III R/C input mode and `Custom H(z)` exact coefficients.
+
+**Outputs** — open-loop Bode, main and all 0-dB crossovers, PM, GM, worst PM/GM, `S`, `T`, `Ms`, `Mt`, and single-file C99 export. A finite sweep that never reaches an odd-180° phase crossing reports GM as **not proven** instead of silently passing it. Analysis is limited to `0.49·Fs`.
+
+**Auto Design** — target `Fc`/`PM`/minimum `GM`/maximum `Ms` synthesis on the raw measured plant, retrying at lower crossover when the requested point cannot satisfy every measured constraint. Raw FRA points remain the acceptance authority; no rational fit is required.
+
+**Model Identification** — optional stable low-order rational approximation (≤5 poles, real or complex-conjugate, optional pure delay) from ~10 Hz to 100 kHz class sweeps. This is explicitly *not* Vector Fitting and not physical component identification.
+
+**Identified model × controller link (V9.2)** — a fitted **plant** model can be handed to the designer as the plant source and connected to any controller from the catalogue:
+
+```text
+L(jw) = G_fit(jw) · H_ctrl(e^{jwT})      margins / S / T via the same engine as raw FRA
+T(z)  = L(z) / (1 + L(z))                closed-loop step, exact discrete controller
+```
+
+The step is a **model-derived prediction** and is withheld — with a stated reason — when the fit residual confidence is LOW, the identified model contains right-half-plane poles, the linked loop fails its margin check, the closed loop is unstable, or the analysed band does not satisfy the step bandwidth-coverage requirement (`Fc/Fmin ≥ 10` and `Fmax/Fc ≥ 5`). A narrow local fit may be useful for `Fc`/`PM` interpretation but never authorises a time-domain prediction.
+
+See [`DC/FRA_LOOP_DESIGNER_V1.md`](DC/FRA_LOOP_DESIGNER_V1.md), [`DC/FRA_LOOP_DESIGNER_V1_5_V2.md`](DC/FRA_LOOP_DESIGNER_V1_5_V2.md) and the [FRA deep audit](DC/FRA_DEEP_AUDIT_2026-09-15.md) for the frozen contracts, margins policy and the list of assumptions that frequency-domain margins alone cannot prove.
 
 ## LLC V8.1 multi-fidelity analysis
 
@@ -269,7 +331,16 @@ python -m llc_design model-compare --help
 
 ## Validation status
 
-The source tree includes unit/regression tests covering LLC tank/magnetics/digital control/Q-ZVS, TTPL sensing/control/waveforms/PF-THD, and Vienna nested-loop/midpoint/switching behavior.
+The source tree includes unit/regression tests covering LLC tank/magnetics/digital control/Q-ZVS, TTPL sensing/control/waveforms/PF-THD, Vienna nested-loop/midpoint/switching behavior, the Control Tools controller/filter/codegen chain, the FRA Loop Designer (import, de-embedding, margins, Auto Design, rational identification, identified-model × controller link) and the FastAPI web edition.
+
+Current full-suite result (Linux, gcc available, `pip install -e ".[dev,web,gui]"`, `QT_QPA_PLATFORM=offscreen`):
+
+```text
+369 passed, 2 xfailed
+```
+
+The five `verify_c99_filter` regressions compile and step the generated C against the Python reference, so they only run where a C compiler is on `PATH`; without one those cases fail with `C compiler not found` rather than being skipped.
+GUI tests really construct the windows and render offscreen figures when PySide6 is installed, and are skipped by `pytest.importorskip` when it is not.
 
 GUI source is import/compile checked by the project; a real window run still requires PySide6 on the target machine.
 

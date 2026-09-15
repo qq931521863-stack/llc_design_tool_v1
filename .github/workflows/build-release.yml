@@ -113,33 +113,39 @@ jobs:
           files: ${{ matrix.zip-name }}
           generate_release_notes: true
           body: |
-            Power Design Toolkit V9.1 双平台安装包（自动构建）
+            Power Design Toolkit V9.2.0 双平台安装包（自动构建）
 
-            ## 本次新增与修复
-            - LLC 公式 PDF：公式、代入值、单位、结果与模型边界；GUI 一键导出
-            - 版本化工程 JSON：输入、结果摘要和数据来源
-            - 修复已升级后重复提醒，记住已忽略版本
-            - 修复控制工具页签初始化异常；补齐 Excel/API 依赖与回归测试
-            - 本机测试 315 passed、2 xfailed；示例 PDF 逐页检查
-            - 完整说明与已知限制：[V9.1.0 发布说明](https://github.com/yangshuai2022-star/llc_design_tool_v1/blob/v9.1.0/DC/release_v9.1.0.md)
+            ## 本版重点：实测频响接进数字控制设计链
+            - 新增 **FRA Loop Designer** 独立工作区：Bode100 / SIMPLIS / 通用频响导入，
+              Plant TS 与 Complete Loop TS 两种语义（只剥离当前控制器，PWM/ADC/延时保留在实测数据内），
+              Quick Tune / New Structure 实时整定，输出最终 H(z) 的 C99 float32_t
+            - 新增目标 Fc/PM 的 **FRA Auto Design** 与 **低阶有理模型辨识**（≤5 极点，可选纯延时）；
+              Raw FRA 始终是稳定性判据，辨识结果仅为工程近似
+            - **辨识被控对象模型 × 控制器打通**：Model ID 结果可回传为被控对象，
+              与控制器库中任意类型组成开环 L(jω)，输出 Bode、PM/GM、S/T 与闭环 Step
+            - FRA Loop Designer 控制器类型与 Control Tools **完全配齐**
+              （14 种结构 + Type-II/III 的 R/C 输入 + Custom H(z) 精确系数入口）
+            - **阶跃门控统一**：拟合环路与辨识被控对象两条 Step 路径共用同一带宽覆盖判据
+              (Fc/Fmin ≥ 10、Fmax/Fc ≥ 5)，置信度 LOW / 含 RHP 极点 / 裕度 FAIL / 闭环不稳定时
+              一律不给 Step 并说明原因
 
-            ## V9.1 主要功能
-            - LLC 统一 FHA / 多谐波 HB / 分段时域分析接口与 Golden Waveform 数据层
-            - LLC 自洽非线性多谐波求解、精确换向零点投影、模型误差对比与 CSV/JSON/Markdown 导出
-            - GUI 新增 FHA / HB / TD 对比页与多谐波 HB 波形入口；CLI 新增 `model-compare`
-            - GUI 自动适配 Windows 11 深色/浅色主题：启动时检测系统外观并切换配色，
-              解决深色主题下浅色背景 + 跟随系统的浅色文字导致整屏不可见的问题
-            - README 新增开发时间线，同步展示功能演进与缺陷修复
-            - 新增“检查更新”: 后台联网查询 GitHub 最新 Release, 有新版本时展示
-              发布说明并提供下载页跳转; 启动后自动静默检查
-            - 工具栏右上角新增联系方式: 邮箱 maileyang@qq.com / 微信 maileyang
-            - TTPL/Vienna PFC 电感设计页（Magnetics High Flux Core Data 254、
-              直流偏置磁导率跌落与磁芯损耗拟合、满载 L(I) 曲线、漆包铜线热态 DCR/直流 I²R 铜损、
-              一键回写功率级参数）
-            - Vienna 工作区 UI 与 TTPL/LLC 对齐（紧凑工具栏/框图/隐藏参数交互）
-            - LLC 谐振腔、Q/ZVS、磁件、损耗、波形和数字控制设计
-            - 单相 TTPL PFC 与三相 Vienna PFC 控制、Bode、波形和 PF/THD 分析
-            - LLC、TTPL、Vienna 平台无关 C99/Float32 控制代码生成
+            ## 本版修复
+            - Complete Loop TS 导入后 summary/details 全部变成 ERROR（PySide6 str-Enum itemData 还原为 str）
+            - LEAD / LAG / 1P1Z / Modified PI 的 fz_hz / fp_hz 未映射而静默使用引擎默认值；补齐 Type-II/III 的 fp0
+            - 导出按钮在无有效计算时置灰；清空 log 轴前复位尺度以消除 matplotlib 噪声警告
+            - CI 依赖：httpx2 提供的是 httpx2 模块，而 fastapi.testclient 需要 httpx，
+              导致 webapp/backend 测试收集失败、构建与发布被跳过
+
+            ## 完整说明
+            使用方式、Step 授权边界、已声明假设与已知限制：
+            [V9.2.0 发布说明](https://github.com/yangshuai2022-star/llc_design_tool_v1/blob/v9.2.0/DC/release_v9.2.0.md)
+
+            ## 主要功能
+            - LLC 谐振腔、Q/ZVS、磁件、损耗、波形、FHA/HB/时域多精度分析与数字电压环设计
+            - 单相 TTPL PFC 与三相 Vienna PFC 控制、Bode、AC 周期与开关波形、PF/THD 分析
+            - 数字控制工具：控制器/滤波器设计、Bode、Step/Impulse、P/Z、SOS 与单文件 C99 float32_t 导出
+            - FRA Loop Designer：实测频响整定、自动设计、模型辨识与辨识模型 × 控制器闭环分析
+            - LLC / TTPL / Vienna 平台无关 C99/Float32 控制代码生成
 
             ## Windows 11
             1. 解压 `PowerDesignTool-Windows-x64.zip`
@@ -153,7 +159,7 @@ jobs:
             3. 双击 `PowerDesignTool.app` 启动
 
             ## 使用
-            - 启动后先选择 LLC 或 PFC 工作区，工具栏可随时切换
+            - 启动后选择 LLC / PFC / Control Tools / FRA Loop Designer 工作区，工具栏可随时切换
             - 单相 PFC CLI：`pfc-control-lab --output output/ttpl`
             - Vienna CLI：`vienna-control-lab --output output/vienna`
             - C99 代码生成：`python -m power_codegen --help`
