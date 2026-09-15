@@ -10,6 +10,7 @@ V1 workflow:
 
 from __future__ import annotations
 
+import hashlib
 import math
 from pathlib import Path
 
@@ -17,6 +18,7 @@ import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -30,6 +32,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -39,7 +42,7 @@ from matplotlib.figure import Figure
 
 from llc_design.gui import theme
 from power_control_tools.codegen import export_c99_filter, render_c99_single_file, verify_c99_filter
-from power_control_tools.controllers import design_controller
+from power_control_tools.controllers import CONTROLLER_LABELS, EXACT_CONTROLLER, controller_parameter_keys, design_controller
 from power_control_tools.discretize import discretize_transfer_function
 from power_control_tools.fra.analysis import (
     analyze_loop_response,
@@ -47,20 +50,20 @@ from power_control_tools.fra.analysis import (
     digital_frequency_response,
     magnitude_phase,
 )
+from power_control_tools.fra.fitting import fit_rational_frequency_response
 from power_control_tools.fra.importers import load_fra_file
+from power_control_tools.fra.loop_link import (
+    STEP_OK,
+    link_plant_model_with_controller,
+)
 from power_control_tools.fra.models import FRAMeasurement, FRAMeasurementKind, FRASourceFormat
 from power_control_tools.fra.tuning import firmware_feedback_a_to_denominator, scale_digital_controller
 from power_control_tools.gui.main_window import SliderSpin
 from power_control_tools.models import ControllerKind, DigitalTransferFunction, DiscretizationMethod, StabilityClass
 
 
-_NEW_CONTROLLER_LABELS = {
-    ControllerKind.PI: "PI — Kp + Ti",
-    ControllerKind.PIF: "PIF — PI + LPF",
-    ControllerKind.PID: "PID — Kp + Ti + Td",
-    ControllerKind.TWO_P_TWO_Z: "2P2Z — K + 2 Zero + 2 Pole",
-    ControllerKind.THREE_P_THREE_Z: "3P3Z — K + 3 Zero + 3 Pole",
-}
+_PLANT_SOURCE_MEASURED = "measured"
+_PLANT_SOURCE_IDENTIFIED = "identified"
 
 
 class FRALoopDesignerWindow(QMainWindow):
@@ -80,6 +83,16 @@ class FRALoopDesignerWindow(QMainWindow):
         self.current_loop = None
         self.current_usable_mask = None
         self.current_plant_valid_mask = None
+        self.current_frequency_hz: np.ndarray | None = None
+        # Plant model identified by the FRA Model Identification dialog.
+        self.identified_plant = None
+        self.identified_plant_band: tuple[float, float] | None = None
+        self.identified_plant_confidence: str | None = None
+        self.current_step = None
+        self.current_step_status = "DISABLED"
+        self._plant_model_cache_key: str | None = None
+        self._plant_model_cache = None
+        self._plant_model_cache_confidence: str | None = None
 
         root = QWidget()
         row = QHBoxLayout(root)
@@ -172,6 +185,21 @@ class FRALoopDesignerWindow(QMainWindow):
         f.addRow("Phase Offset", self.phase_offset)
         f.addRow(self.import_button)
         f.addRow("File", self.file_label)
+
+        # Plant source lets an identified (Model ID) rational model replace the
+        # raw measured points, so the whole controller catalogue below can be
+        # applied to the identified transfer function.
+        self.plant_source = QComboBox()
+        self.plant_source.addItem("Measured TS — 导入的 FRA 数据", _PLANT_SOURCE_MEASURED)
+        self.plant_source.addItem("Identified model — Model ID 回传模型", _PLANT_SOURCE_IDENTIFIED)
+        self._hook(self.plant_source)
+        self.identified_label = QLabel("未回传辨识模型：Advanced → Model ID / Fit 完成后点击“用于环路设计”。")
+        self.identified_label.setWordWrap(True)
+        self.clear_identified_button = QPushButton("清除辨识模型")
+        self.clear_identified_button.clicked.connect(self.clear_identified_plant)
+        f.addRow("Plant Source", self.plant_source)
+        f.addRow(self.identified_label)
+        f.addRow(self.clear_identified_button)
         v.addWidget(source_group)
 
         self.old_group = QGroupBox("2. 当前控制器 — 仅 Complete Loop 需要")
@@ -244,50 +272,88 @@ class FRALoopDesignerWindow(QMainWindow):
             f.addRow(f"a{i} feedback", x)
         self.quick_fields = {self.quick_gain, self.quick_ti, *self.quick_b_scales, *self.quick_a_scales}
 
-        # New-structure controls reuse the existing Control Tools engine.
+        # New-structure controls reuse the existing Control Tools engine and now
+        # expose the complete shared controller catalogue.
         self.new_kind = QComboBox()
-        for kind, label in _NEW_CONTROLLER_LABELS.items():
+        for kind, label in CONTROLLER_LABELS.items():
             self.new_kind.addItem(label, kind)
+        self.new_kind.addItem("Custom H(z) — exact coefficients", EXACT_CONTROLLER)
         self.new_fs = SliderSpin(1_000.0, 1_000_000.0, 40_000.0, decimals=1, logarithmic=True, suffix=" Hz")
         self.new_method = QComboBox()
         for method in DiscretizationMethod:
             self.new_method.addItem(method.value, method)
+        self.new_type_input_mode = QComboBox()
+        self.new_type_input_mode.addItem("Pole / Zero", "pz")
+        self.new_type_input_mode.addItem("R / C Components", "rc")
         self.new_kp = SliderSpin(1e-6, 1e4, 1.0, decimals=8, logarithmic=True)
         self.new_ti = SliderSpin(1e-7, 10.0, 0.01, decimals=8, logarithmic=True, suffix=" s")
         self.new_td = SliderSpin(1e-9, 1.0, 1e-4, decimals=9, logarithmic=True, suffix=" s")
         self.new_lpf = SliderSpin(0.1, 500_000.0, 10_000.0, decimals=2, logarithmic=True, suffix=" Hz")
         self.new_gain = SliderSpin(1e-6, 1e6, 1.0, decimals=8, logarithmic=True)
+        self.new_fp0 = SliderSpin(0.01, 200_000.0, 100.0, decimals=2, logarithmic=True, suffix=" Hz")
         self.new_fz1 = SliderSpin(0.1, 200_000.0, 300.0, decimals=2, logarithmic=True, suffix=" Hz")
         self.new_fz2 = SliderSpin(0.1, 200_000.0, 1_000.0, decimals=2, logarithmic=True, suffix=" Hz")
         self.new_fz3 = SliderSpin(0.1, 200_000.0, 3_000.0, decimals=2, logarithmic=True, suffix=" Hz")
         self.new_fp1 = SliderSpin(0.1, 500_000.0, 8_000.0, decimals=2, logarithmic=True, suffix=" Hz")
         self.new_fp2 = SliderSpin(0.1, 500_000.0, 20_000.0, decimals=2, logarithmic=True, suffix=" Hz")
         self.new_fp3 = SliderSpin(0.1, 500_000.0, 50_000.0, decimals=2, logarithmic=True, suffix=" Hz")
+        self.new_r1 = SliderSpin(10.0, 10_000_000.0, 10_000.0, decimals=1, logarithmic=True, suffix=" Ω")
+        self.new_r2 = SliderSpin(10.0, 10_000_000.0, 47_000.0, decimals=1, logarithmic=True, suffix=" Ω")
+        self.new_r3 = SliderSpin(10.0, 10_000_000.0, 10_000.0, decimals=1, logarithmic=True, suffix=" Ω")
+        self.new_c1 = SliderSpin(0.001, 100_000.0, 10.0, decimals=4, logarithmic=True, suffix=" nF")
+        self.new_c2 = SliderSpin(0.001, 100_000.0, 0.47, decimals=4, logarithmic=True, suffix=" nF")
+        self.new_c3 = SliderSpin(0.001, 100_000.0, 1.0, decimals=4, logarithmic=True, suffix=" nF")
+        self.new_general_num = QLineEdit("1")
+        self.new_general_den = QLineEdit("1, 1")
+        self.new_exact_b = QLineEdit("0.1, -0.09")
+        self.new_exact_a = QLineEdit("1, -1.9, 0.91")
         for x in (
-            self.new_kind, self.new_fs, self.new_method, self.new_kp, self.new_ti, self.new_td,
-            self.new_lpf, self.new_gain, self.new_fz1, self.new_fz2, self.new_fz3,
-            self.new_fp1, self.new_fp2, self.new_fp3,
+            self.new_kind, self.new_fs, self.new_method, self.new_type_input_mode,
+            self.new_kp, self.new_ti, self.new_td, self.new_lpf, self.new_gain, self.new_fp0,
+            self.new_fz1, self.new_fz2, self.new_fz3, self.new_fp1, self.new_fp2, self.new_fp3,
+            self.new_r1, self.new_r2, self.new_r3, self.new_c1, self.new_c2, self.new_c3,
+            self.new_general_num, self.new_general_den, self.new_exact_b, self.new_exact_a,
         ):
             self._hook(x)
         f.addRow("Controller", self.new_kind)
         f.addRow("Fs", self.new_fs)
         f.addRow("S→Z", self.new_method)
+        f.addRow("Type-II/III input", self.new_type_input_mode)
         f.addRow("Kp", self.new_kp)
         f.addRow("Ti", self.new_ti)
         f.addRow("Td", self.new_td)
         f.addRow("LPF pole", self.new_lpf)
         f.addRow("Gain K", self.new_gain)
+        f.addRow("Integrator fp0", self.new_fp0)
         f.addRow("Zero fz1", self.new_fz1)
         f.addRow("Zero fz2", self.new_fz2)
         f.addRow("Zero fz3", self.new_fz3)
         f.addRow("Pole fp1", self.new_fp1)
         f.addRow("Pole fp2", self.new_fp2)
         f.addRow("Pole fp3", self.new_fp3)
+        f.addRow("R1", self.new_r1)
+        f.addRow("R2", self.new_r2)
+        f.addRow("R3", self.new_r3)
+        f.addRow("C1", self.new_c1)
+        f.addRow("C2", self.new_c2)
+        f.addRow("C3", self.new_c3)
+        f.addRow("General numerator", self.new_general_num)
+        f.addRow("General denominator", self.new_general_den)
+        f.addRow("Exact b =", self.new_exact_b)
+        f.addRow("Exact a =", self.new_exact_a)
         self.structure_header_fields = {self.new_kind, self.new_fs, self.new_method}
-        self.new_fields = {
-            self.new_kp, self.new_ti, self.new_td, self.new_lpf, self.new_gain,
-            self.new_fz1, self.new_fz2, self.new_fz3, self.new_fp1, self.new_fp2, self.new_fp3,
+        self.new_field_widgets = {
+            "gain": self.new_gain, "kp": self.new_kp, "ti": self.new_ti, "td": self.new_td,
+            "lpf_pole": self.new_lpf, "fp0": self.new_fp0,
+            "fz1": self.new_fz1, "fz2": self.new_fz2, "fz3": self.new_fz3,
+            "fp1": self.new_fp1, "fp2": self.new_fp2, "fp3": self.new_fp3,
+            "r1": self.new_r1, "r2": self.new_r2, "r3": self.new_r3,
+            "c1": self.new_c1, "c2": self.new_c2, "c3": self.new_c3,
+            "numerator": self.new_general_num, "denominator": self.new_general_den,
+            "type_input_mode": self.new_type_input_mode,
         }
+        self.new_exact_fields = {self.new_exact_b, self.new_exact_a}
+        self.new_fields = set(self.new_field_widgets.values()) | self.new_exact_fields
         v.addWidget(new_group)
 
         action_row = QHBoxLayout()
@@ -298,6 +364,30 @@ class FRALoopDesignerWindow(QMainWindow):
         action_row.addWidget(copy_button)
         action_row.addWidget(reset_button)
         v.addLayout(action_row)
+
+        step_group = QGroupBox("闭环 Step（需要有理被控对象模型）")
+        sf = QFormLayout(step_group)
+        self.step_enable = QCheckBox("计算闭环 Step")
+        self.step_enable.stateChanged.connect(lambda *_: self.schedule())
+        self.step_max_order = QSpinBox()
+        self.step_max_order.setRange(1, 5)
+        self.step_max_order.setValue(3)
+        self.step_max_order.valueChanged.connect(lambda *_: self._step_setting_changed())
+        self.step_samples = QSpinBox()
+        self.step_samples.setRange(200, 20_000)
+        self.step_samples.setSingleStep(200)
+        self.step_samples.setValue(1_500)
+        self.step_samples.valueChanged.connect(lambda *_: self.schedule())
+        self.step_note = QLabel(
+            "Measured TS 需要先辨识有理模型（首次拟合较慢，之后按被控对象缓存）；"
+            "回传的 Model ID 辨识模型可直接计算。Step 为模型推算结果，不能替代实测瞬态。"
+        )
+        self.step_note.setWordWrap(True)
+        sf.addRow(self.step_enable)
+        sf.addRow("Plant fit max poles", self.step_max_order)
+        sf.addRow("Step samples", self.step_samples)
+        sf.addRow(self.step_note)
+        v.addWidget(step_group)
 
         result_group = QGroupBox("实时稳定性")
         rv = QVBoxLayout(result_group)
@@ -313,6 +403,7 @@ class FRALoopDesignerWindow(QMainWindow):
         self._hook(self.export_prefix)
         self.export_button = QPushButton("导出最终 H(z) — C99 float32_t")
         self.export_button.clicked.connect(self.export_c99)
+        self.export_button.setEnabled(False)
         ef.addRow("Symbol Prefix", self.export_prefix)
         ef.addRow(self.export_button)
         v.addWidget(export_group)
@@ -327,6 +418,9 @@ class FRALoopDesignerWindow(QMainWindow):
         self.st_fig = Figure(figsize=(9, 6))
         self.st_canvas = FigureCanvasQTAgg(self.st_fig)
         tabs.addTab(self.st_canvas, "S / T")
+        self.step_fig = Figure(figsize=(9, 5))
+        self.step_canvas = FigureCanvasQTAgg(self.step_fig)
+        tabs.addTab(self.step_canvas, "Closed-Loop Step")
         self.details = QPlainTextEdit()
         self.details.setReadOnly(True)
         tabs.addTab(self.details, "Analysis Details")
@@ -339,7 +433,176 @@ class FRALoopDesignerWindow(QMainWindow):
         return self.measurement_kind.currentData() == FRAMeasurementKind.COMPLETE_LOOP
 
     def _is_quick_tune(self) -> bool:
-        return self._is_complete_loop() and self.new_mode.currentData() == "quick"
+        # Quick Tune scales the de-embedded controller of a complete-loop
+        # measurement; it is meaningless when the identified model is the plant.
+        return (
+            not self._identified_plant_active()
+            and self._is_complete_loop()
+            and self.new_mode.currentData() == "quick"
+        )
+
+    # ------------------------------------------------------------------
+    # Identified (Model ID) plant model as an alternative plant source
+    # ------------------------------------------------------------------
+    def _identified_plant_active(self) -> bool:
+        return self.plant_source.currentData() == _PLANT_SOURCE_IDENTIFIED
+
+    def set_identified_plant(self, model, band_hz, confidence: str) -> None:
+        """Receive a fitted plant model from the FRA Model Identification dialog."""
+        low, high = (float(band_hz[0]), float(band_hz[1]))
+        if not (low > 0.0 and high > low):
+            raise ValueError("identified model band must satisfy 0 < f_min < f_max")
+        self.identified_plant = model
+        self.identified_plant_band = (low, high)
+        self.identified_plant_confidence = str(confidence)
+        self._invalidate_plant_model()
+        self.identified_label.setText(
+            f"已回传辨识模型：order={getattr(model, 'order', '?')} | "
+            f"band={low:.5g}–{high:.5g} Hz | confidence={confidence}"
+        )
+        index = self.plant_source.findData(_PLANT_SOURCE_IDENTIFIED)
+        if index >= 0:
+            self.plant_source.setCurrentIndex(index)
+        self.step_enable.setChecked(True)
+        self.recalculate()
+
+    def clear_identified_plant(self) -> None:
+        self.identified_plant = None
+        self.identified_plant_band = None
+        self.identified_plant_confidence = None
+        self._invalidate_plant_model()
+        self.identified_label.setText("未回传辨识模型：Advanced → Model ID / Fit 完成后点击“用于环路设计”。")
+        index = self.plant_source.findData(_PLANT_SOURCE_MEASURED)
+        if index >= 0:
+            self.plant_source.setCurrentIndex(index)
+        self.recalculate()
+
+    def _invalidate_plant_model(self) -> None:
+        self._plant_model_cache_key = None
+        self._plant_model_cache = None
+        self._plant_model_cache_confidence = None
+
+    def _step_setting_changed(self) -> None:
+        self._invalidate_plant_model()
+        self.schedule()
+
+    def _analysis_frequency_hz(self) -> np.ndarray:
+        if self._identified_plant_active():
+            if self.identified_plant is None or self.identified_plant_band is None:
+                raise ValueError(
+                    "尚未回传辨识模型：请先在 Advanced → Model ID / Fit 完成辨识，再点击“用于环路设计”。"
+                )
+            low, high = self.identified_plant_band
+            if self.measurement is not None:
+                f = np.asarray(self.measurement.frequency_hz, dtype=float)
+                inside = f[(f >= low) & (f <= high)]
+                if inside.size >= 8:
+                    return inside
+            return np.geomspace(low, high, 800)
+        if self.measurement is None:
+            raise ValueError("请先导入 FRA / Bode 数据，或回传 Model ID 辨识模型作为被控对象。")
+        return np.asarray(self.measurement.frequency_hz, dtype=float)
+
+    def _plant_model_for_step(self, f: np.ndarray, plant: np.ndarray):
+        """Return ``(model, band, confidence)`` for the closed-loop step.
+
+        An identified model is used directly.  A measured plant is fitted once
+        per plant/band/order combination and cached, so slider moves reuse it.
+        """
+        if self._identified_plant_active() and self.identified_plant is not None:
+            return self.identified_plant, self.identified_plant_band, self.identified_plant_confidence
+        order = int(self.step_max_order.value())
+        digest = hashlib.sha1()
+        for array in (np.ascontiguousarray(f, dtype=float), np.ascontiguousarray(np.asarray(plant, dtype=complex).real), np.ascontiguousarray(np.asarray(plant, dtype=complex).imag)):
+            digest.update(array.tobytes())
+        digest.update(str(order).encode("ascii"))
+        key = digest.hexdigest()
+        if key == self._plant_model_cache_key and self._plant_model_cache is not None:
+            return self._plant_model_cache, (float(f[0]), float(f[-1])), self._plant_model_cache_confidence
+        focus = None
+        if self.current_metrics is not None and self.current_metrics.main_crossover_hz is not None:
+            focus = float(self.current_metrics.main_crossover_hz)
+        result = fit_rational_frequency_response(
+            f, plant, max_poles=order, focus_hz=focus, fit_delay=True, fit_target="Current plant"
+        )
+        self._plant_model_cache_key = key
+        self._plant_model_cache = result.model
+        self._plant_model_cache_confidence = result.metrics.confidence
+        return result.model, (float(f[0]), float(f[-1])), result.metrics.confidence
+
+    def _render_step(self, f: np.ndarray, plant: np.ndarray, usable: np.ndarray) -> list[str]:
+        """Render the closed-loop step tab and return summary lines."""
+        self.step_fig.clear()
+        axis = self.step_fig.add_subplot(111)
+        self.current_step = None
+        self.current_step_status = "DISABLED"
+        if not self.step_enable.isChecked():
+            axis.text(0.5, 0.5, "Closed-loop step disabled\n(tick the step checkbox to enable)", ha="center", va="center", transform=axis.transAxes)
+            self.step_fig.tight_layout()
+            self.step_canvas.draw_idle()
+            return ["Step           disabled"]
+
+        controller = self.current_new_controller
+        if controller is None:
+            return ["Step           unavailable"]
+        band_mask = np.asarray(usable, dtype=bool) & np.asarray(self.current_plant_valid_mask, dtype=bool)
+        if int(np.count_nonzero(band_mask)) < 8:
+            axis.text(0.5, 0.5, "Not enough usable plant points (<8)", ha="center", va="center", transform=axis.transAxes)
+            self.step_fig.tight_layout()
+            self.step_canvas.draw_idle()
+            return ["Step           unavailable (too few plant points)"]
+        f_use = np.asarray(f, dtype=float)[band_mask]
+        plant_use = np.asarray(plant, dtype=complex)[band_mask]
+        try:
+            model, band, confidence = self._plant_model_for_step(f_use, plant_use)
+            if band is None:
+                raise ValueError("被控对象模型缺少辨识频带信息")
+            link = link_plant_model_with_controller(
+                model,
+                controller,
+                f_min_hz=float(band[0]),
+                f_max_hz=float(band[1]),
+                points=min(max(f_use.size, 200), 1000),
+                fit_confidence=confidence,
+                step_samples=int(self.step_samples.value()),
+            )
+        except Exception as exc:
+            axis.text(0.5, 0.5, "Step computation failed:\n" + str(exc), ha="center", va="center", transform=axis.transAxes, wrap=True)
+            self.step_fig.tight_layout()
+            self.step_canvas.draw_idle()
+            return [f"Step           ERROR: {exc}"]
+
+        lines = [
+            f"Step status    {link.step_status}",
+            f"Plant model    fit confidence={confidence} | band={band[0]:.5g}–{band[1]:.5g} Hz",
+        ]
+        step = link.step
+        if step is not None and step.stable and step.time_s.size:
+            axis.plot(step.time_s * 1e3, step.response, linewidth=1.8, label="Closed-loop step")
+            axis.axhline(step.final_value, linestyle=":", linewidth=0.9, label="Final value")
+            axis.set_xlabel("Time (ms)")
+            axis.set_ylabel("Amplitude")
+            axis.grid(True, which="both")
+            title = f"Model-derived step | overshoot={step.overshoot_percent:.3g}%"
+            if step.settling_time_s is not None:
+                title += f" | Ts={step.settling_time_s * 1e3:.4g} ms"
+            axis.set_title(title)
+            axis.legend(loc="best")
+            lines.append(f"Step overshoot {step.overshoot_percent:.6g} %")
+            lines.append(
+                "Step settling  "
+                + ("N/A" if step.settling_time_s is None else f"{step.settling_time_s * 1e3:.6g} ms")
+            )
+            lines.append(f"Step final     {step.final_value:.6g}")
+            self.current_step = step
+        else:
+            axis.text(0.5, 0.5, link.step_note, ha="center", va="center", transform=axis.transAxes, wrap=True)
+            axis.set_title("Closed-loop step withheld")
+        lines.append("Step note      " + link.step_note)
+        self.current_step_status = link.step_status
+        self.step_fig.tight_layout()
+        self.step_canvas.draw_idle()
+        return lines
 
     def _safe_old_lengths(self) -> tuple[int, int]:
         """Return normalized b/a lengths for visibility only; never raise while typing."""
@@ -400,16 +663,12 @@ class FRALoopDesignerWindow(QMainWindow):
             self._field_visible(self.new_form, widget, True)
         kind = self.new_kind.currentData()
         visible: set[QWidget] = set()
-        if kind == ControllerKind.PI:
-            visible |= {self.new_kp, self.new_ti}
-        elif kind == ControllerKind.PIF:
-            visible |= {self.new_kp, self.new_ti, self.new_lpf}
-        elif kind == ControllerKind.PID:
-            visible |= {self.new_kp, self.new_ti, self.new_td}
-        elif kind == ControllerKind.TWO_P_TWO_Z:
-            visible |= {self.new_gain, self.new_fz1, self.new_fz2, self.new_fp1, self.new_fp2}
-        elif kind == ControllerKind.THREE_P_THREE_Z:
-            visible |= {self.new_gain, self.new_fz1, self.new_fz2, self.new_fz3, self.new_fp1, self.new_fp2, self.new_fp3}
+        if kind == EXACT_CONTROLLER:
+            visible |= self.new_exact_fields
+        else:
+            # Qt hands back the enum's str value, not the enum member.
+            keys = controller_parameter_keys(ControllerKind(kind), type_input_mode=self.new_type_input_mode.currentData())
+            visible |= {self.new_field_widgets[key] for key in keys}
         for widget in self.new_fields:
             self._field_visible(self.new_form, widget, widget in visible)
 
@@ -462,19 +721,37 @@ class FRALoopDesignerWindow(QMainWindow):
 
     def _new_structure_controller(self) -> DigitalTransferFunction:
         kind = self.new_kind.currentData()
+        if kind == EXACT_CONTROLLER:
+            b = self._parse_coefficients(self.new_exact_b.text())
+            a = self._parse_coefficients(self.new_exact_a.text())
+            return DigitalTransferFunction(
+                b, a, self.new_fs.value(), "Custom H(z)", "FRA exact H(z) entry"
+            ).normalized()
+        kind = ControllerKind(kind)
         kwargs = dict(
+            gain=self.new_gain.value(),
             kp=self.new_kp.value(),
             ti_s=self.new_ti.value(),
             td_s=self.new_td.value(),
             lpf_pole_hz=self.new_lpf.value(),
-            gain=self.new_gain.value(),
+            fp0_hz=self.new_fp0.value(),
             fz1_hz=self.new_fz1.value(),
             fz2_hz=self.new_fz2.value(),
             fz3_hz=self.new_fz3.value(),
             fp1_hz=self.new_fp1.value(),
             fp2_hz=self.new_fp2.value(),
             fp3_hz=self.new_fp3.value(),
+            type_input_mode=self.new_type_input_mode.currentData(),
+            r1_ohm=self.new_r1.value(),
+            r2_ohm=self.new_r2.value(),
+            r3_ohm=self.new_r3.value(),
+            c1_f=self.new_c1.value() * 1e-9,
+            c2_f=self.new_c2.value() * 1e-9,
+            c3_f=self.new_c3.value() * 1e-9,
         )
+        if kind == ControllerKind.GENERAL:
+            kwargs["numerator"] = self._parse_coefficients(self.new_general_num.text())
+            kwargs["denominator"] = self._parse_coefficients(self.new_general_den.text())
         analog = design_controller(kind, **kwargs)
         return discretize_transfer_function(analog, self.new_fs.value(), self.new_method.currentData())
 
@@ -537,26 +814,37 @@ class FRALoopDesignerWindow(QMainWindow):
         self.new_td.setValue(1e-4)
         self.new_lpf.setValue(10_000.0)
         self.new_gain.setValue(1.0)
+        self.new_fp0.setValue(100.0)
         self.new_fz1.setValue(300.0)
         self.new_fz2.setValue(1_000.0)
         self.new_fz3.setValue(3_000.0)
         self.new_fp1.setValue(8_000.0)
         self.new_fp2.setValue(20_000.0)
         self.new_fp3.setValue(50_000.0)
+        self.new_r1.setValue(10_000.0)
+        self.new_r2.setValue(47_000.0)
+        self.new_r3.setValue(10_000.0)
+        self.new_c1.setValue(10.0)
+        self.new_c2.setValue(0.47)
+        self.new_c3.setValue(1.0)
         self.recalculate()
 
     def recalculate(self) -> None:
-        if self.measurement is None:
-            self.summary.setPlainText("请先导入 FRA / Bode 数据。")
-            self.export_button.setEnabled(False)
-            return
         try:
-            f = self.measurement.frequency_hz
-            measured = self.measurement.complex_response(self.phase_offset.value())
+            f = self._analysis_frequency_hz()
+            measured = None
+            measured_f = None
+            if self.measurement is not None:
+                measured_f = np.asarray(self.measurement.frequency_hz, dtype=float)
+                measured = self.measurement.complex_response(self.phase_offset.value())
             old_controller = None
             self.current_deembed = None
 
-            if self._is_complete_loop():
+            if self._identified_plant_active():
+                # The identified rational model replaces the measured plant.
+                plant = np.asarray(self.identified_plant.frequency_response(f), dtype=complex)
+                plant_valid = np.ones_like(f, dtype=bool)
+            elif self._is_complete_loop():
                 old_controller = self._existing_controller()
                 cold = digital_frequency_response(old_controller, f)
                 self.current_deembed = deembed_controller(measured, cold)
@@ -578,6 +866,7 @@ class FRALoopDesignerWindow(QMainWindow):
                 raise ValueError("FRA frequency range does not contain at least two points below the controller Nyquist limit")
             metrics = analyze_loop_response(f[usable], loop[usable])
 
+            self.current_frequency_hz = f
             self.current_old_controller = old_controller
             self.current_new_controller = new_controller
             self.current_metrics = metrics
@@ -586,39 +875,44 @@ class FRALoopDesignerWindow(QMainWindow):
             self.current_usable_mask = usable
             self.current_plant_valid_mask = plant_valid
             self.export_button.setEnabled(new_controller.implementable)
-            self._render(measured, plant, cnew, loop, plant_valid, usable, valid_limit)
+            step_lines = self._render_step(f, plant, usable)
+            self._render(measured_f, measured, plant, cnew, loop, plant_valid, usable, valid_limit, step_lines)
         except Exception as exc:
             self.current_new_controller = None
             self.summary.setPlainText("ERROR: " + str(exc))
             self.details.setPlainText("ERROR: " + str(exc))
             self.export_button.setEnabled(False)
 
-    def _render(self, measured, plant, cnew, loop, plant_valid, usable, valid_limit: float) -> None:
-        assert self.measurement is not None
+    def _render(self, measured_f, measured, plant, cnew, loop, plant_valid, usable, valid_limit: float, step_lines: list[str] | None = None) -> None:
         assert self.current_new_controller is not None
         assert self.current_metrics is not None
-        f = self.measurement.frequency_hz
+        f = np.asarray(self.current_frequency_hz, dtype=float)
         fu = f[usable]
         fp = f[plant_valid]
         metrics = self.current_metrics
         controller = self.current_new_controller.normalized()
 
-        measured_mag, measured_phase = magnitude_phase(measured)
         plant_mag, plant_phase = magnitude_phase(plant[plant_valid])
         ctrl_mag, ctrl_phase = magnitude_phase(cnew[usable])
         loop_mag, loop_phase = magnitude_phase(loop[usable])
+        if measured is not None:
+            measured_mag, measured_phase = magnitude_phase(measured)
 
+        # Reset log scales before clear(): clearing an existing log-scaled axis
+        # makes matplotlib try to restore a non-positive default xlim.
+        for stale in list(self.bode_fig.axes):
+            stale.set_xscale("linear")
         self.bode_fig.clear()
         ax = self.bode_fig.add_subplot(211)
         axp = self.bode_fig.add_subplot(212, sharex=ax)
-        ax.semilogx(f, measured_mag, label="Imported TS")
-        axp.semilogx(f, measured_phase, label="Imported TS")
-        if self._is_complete_loop():
-            ax.semilogx(fp, plant_mag, label="Equivalent Plant = TS / C_old")
-            axp.semilogx(fp, plant_phase, label="Equivalent Plant = TS / C_old")
-        else:
-            ax.semilogx(fp, plant_mag, label="Plant")
-            axp.semilogx(fp, plant_phase, label="Plant")
+        if measured is not None:
+            ax.semilogx(measured_f, measured_mag, label="Imported TS")
+            axp.semilogx(measured_f, measured_phase, label="Imported TS")
+        plant_label = "Identified plant model" if self._identified_plant_active() else (
+            "Equivalent Plant = TS / C_old" if self._is_complete_loop() else "Plant"
+        )
+        ax.semilogx(fp, plant_mag, label=plant_label)
+        axp.semilogx(fp, plant_phase, label=plant_label)
         ctrl_label = "Quick-Tuned Controller" if self._is_quick_tune() else "New Controller"
         ax.semilogx(fu, ctrl_mag, "--", label=ctrl_label)
         axp.semilogx(fu, ctrl_phase, "--", label=ctrl_label)
@@ -677,6 +971,8 @@ class FRALoopDesignerWindow(QMainWindow):
         ]
         if metrics.gain_margin_db is None:
             summary_lines.append("GM evidence     phase crossover not observed in usable FRA range")
+        if step_lines:
+            summary_lines += ["", *step_lines]
         if self.current_deembed is not None:
             summary_lines += [
                 "",
@@ -692,9 +988,12 @@ class FRALoopDesignerWindow(QMainWindow):
         details = [
             "FRA LOOP DESIGN DETAILS",
             "=" * 72,
-            f"File: {self.measurement.source_path}",
-            f"Format: {self.measurement.source_format.value}",
-            f"TS type: {self.measurement_kind.currentData().value}",
+            f"File: {self.measurement.source_path if self.measurement is not None else '(no imported FRA)'}",
+            f"Format: {self.measurement.source_format.value if self.measurement is not None else 'identified model'}",
+            # Qt returns the enum's str value, not the enum member, for
+            # str-derived Enums stored as item data.
+            f"TS type: {FRAMeasurementKind(self.measurement_kind.currentData()).value}",
+            f"Plant source: {self.plant_source.currentData()}",
             f"Tuning mode: {mode_text}",
             f"Points: {len(f)}",
             f"Frequency: {f[0]:.8g} Hz -> {f[-1]:.8g} Hz",
@@ -702,6 +1001,13 @@ class FRALoopDesignerWindow(QMainWindow):
             f"Loop-analysis upper limit: {valid_limit:.8g} Hz (0.49 x relevant controller Fs)",
             "",
         ]
+        if self.identified_plant is not None and self.identified_plant_band is not None:
+            details.append(
+                f"Identified plant model: order={getattr(self.identified_plant, 'order', '?')}, "
+                f"band={self.identified_plant_band[0]:.8g}..{self.identified_plant_band[1]:.8g} Hz, "
+                f"confidence={self.identified_plant_confidence}"
+            )
+            details.append("")
         if np.any(~usable):
             details.append("WARNING: imported data above the controller Nyquist design limit is shown as measurement context but excluded from stability margins.")
             details.append("")

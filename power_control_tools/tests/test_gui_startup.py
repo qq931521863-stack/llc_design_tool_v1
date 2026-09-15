@@ -111,3 +111,234 @@ def test_launcher_exposes_fra_loop_designer_as_top_level_workspace():
 
     dialog.close()
     app.processEvents()
+
+
+def _plant_measurement():
+    """Synthetic Equivalent Plant with one pole and 5 us of pure delay."""
+    from power_control_tools.fra.models import FRAMeasurement, FRASourceFormat
+
+    f = np.geomspace(10.0, 15_000.0, 360)
+    plant = 2.0 / (1.0 + 1j * f / 300.0) * np.exp(-1j * 2.0 * np.pi * f * 5e-6)
+    return FRAMeasurement(
+        f,
+        20.0 * np.log10(np.abs(plant)),
+        np.degrees(np.angle(plant)),
+        FRASourceFormat.GENERIC,
+        source_path="synthetic.csv",
+    ), plant
+
+
+def test_fra_loop_designer_offers_the_full_toolbox_controller_catalogue():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
+    from power_control_tools.controllers import CONTROLLER_LABELS, EXACT_CONTROLLER
+    from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
+    from power_control_tools.models import ControllerKind
+
+    app = _app(qt_widgets)
+    window = FRALoopDesignerWindow()
+
+    offered = [window.new_kind.itemData(index) for index in range(window.new_kind.count())]
+    for kind in ControllerKind:
+        assert kind in offered, f"FRA designer is missing {kind}"
+    assert EXACT_CONTROLLER in offered
+    # The Control Tools panel must present the same catalogue and labels.
+    for kind, label in CONTROLLER_LABELS.items():
+        assert window.new_kind.findData(kind) >= 0
+        assert window.new_kind.itemText(window.new_kind.findData(kind)) == label
+
+    window.close()
+    app.processEvents()
+
+
+def test_fra_custom_hz_mode_uses_the_exact_coefficients():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
+    from power_control_tools.controllers import EXACT_CONTROLLER
+    from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
+
+    app = _app(qt_widgets)
+    window = FRALoopDesignerWindow()
+
+    window.new_kind.setCurrentIndex(window.new_kind.findData(EXACT_CONTROLLER))
+    window.new_fs.setValue(40_000.0)
+    window.new_exact_b.setText("0.1, -0.09")
+    window.new_exact_a.setText("1, -1.9, 0.91")
+    controller = window._new_structure_controller()
+    np.testing.assert_allclose(controller.b, (0.1, -0.09))
+    np.testing.assert_allclose(controller.a, (1.0, -1.9, 0.91))
+    assert controller.sample_rate_hz == 40_000.0
+
+    window.close()
+    app.processEvents()
+
+
+def test_identified_plant_model_can_be_used_for_loop_bode_and_step():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
+    from power_control_tools.fra.fitting import fit_rational_frequency_response
+    from power_control_tools.fra.loop_link import STEP_OK
+    from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
+    from power_control_tools.models import ControllerKind
+
+    app = _app(qt_widgets)
+    window = FRALoopDesignerWindow()
+    measurement, plant = _plant_measurement()
+    window.measurement = measurement
+
+    index = window.new_mode.findData("structure")
+    window.new_mode.setCurrentIndex(index)
+    window.new_kind.setCurrentIndex(window.new_kind.findData(ControllerKind.PI))
+    window.new_fs.setValue(40_000.0)
+    window.new_kp.setValue(0.4)
+    window.new_ti.setValue(1.0 / (2.0 * np.pi * 80.0))
+    window.recalculate()
+    # A rendered analysis must not silently degrade into the ERROR path.
+    assert not window.summary.toPlainText().startswith("ERROR"), window.summary.toPlainText()
+    assert not window.details.toPlainText().startswith("ERROR"), window.details.toPlainText()
+    assert "TS type: plant" in window.details.toPlainText()
+    measured_bode_loop = np.asarray(window.current_loop).copy()
+    assert measured_bode_loop.size
+
+    fit = fit_rational_frequency_response(
+        measurement.frequency_hz, plant, max_poles=3, focus_hz=1_000.0, fit_delay=True
+    )
+    assert fit.metrics.confidence in ("GOOD", "FAIR")
+
+    window.set_identified_plant(fit.model, (float(measurement.frequency_hz[0]), float(measurement.frequency_hz[-1])), fit.metrics.confidence)
+    assert window.plant_source.currentData() == "identified"
+    assert window.current_plant is not None
+    assert window.current_metrics is not None
+    # The plant used for the loop must now be the identified model response.
+    np.testing.assert_allclose(
+        window.current_plant,
+        fit.model.frequency_response(window.current_frequency_hz),
+        rtol=1e-9,
+    )
+    # The identified plant must reproduce the measured-plant loop closely:
+    # this is the whole point of linking the model to the controller.
+    np.testing.assert_allclose(window.current_loop, measured_bode_loop, rtol=5e-2)
+
+    window.step_enable.setChecked(True)
+    window.recalculate()
+    assert not window.summary.toPlainText().startswith("ERROR"), window.summary.toPlainText()
+    assert window.current_step_status == STEP_OK
+    assert window.current_step is not None and window.current_step.stable
+    assert np.all(np.isfinite(window.current_step.response))
+    assert window.current_step.final_value > 0.0
+
+    window.close()
+    app.processEvents()
+
+
+def test_model_id_dialog_hands_the_plant_model_to_the_loop_designer(monkeypatch):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
+    from power_control_tools.fra.fitting import fit_rational_frequency_response
+    from power_control_tools.gui.fra_advanced import FRAModelFitDialog
+    from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
+
+    app = _app(qt_widgets)
+    window = FRALoopDesignerWindow()
+    measurement, plant = _plant_measurement()
+    window.measurement = measurement
+    dialog = FRAModelFitDialog(window)
+    dialog.target.setCurrentIndex(dialog.target.findData("plant"))
+    dialog.focus.setValue(1_000.0)
+    dialog.run_fit()
+    assert dialog.result is not None
+    assert dialog.use_for_loop.isEnabled()
+    assert dialog.fit_band is not None
+
+    monkeypatch.setattr(qt_widgets.QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    dialog.send_plant_to_host()
+    assert window.identified_plant is not None
+    assert window.plant_source.currentData() == "identified"
+
+    dialog.close()
+    window.close()
+    app.processEvents()
+
+
+def test_fra_new_structure_builds_every_toolbox_controller_kind():
+    """Every Control Tools controller must be selectable *and constructible* here."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
+    from power_control_tools.controllers import controller_parameter_keys
+    from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
+    from power_control_tools.models import ControllerKind
+
+    app = _app(qt_widgets)
+    window = FRALoopDesignerWindow()
+    inverse = {widget: key for key, widget in window.new_field_widgets.items()}
+
+    for kind in ControllerKind:
+        window.new_kind.setCurrentIndex(window.new_kind.findData(kind))
+        if kind in (ControllerKind.TYPE_II, ControllerKind.TYPE_III):
+            window.new_type_input_mode.setCurrentIndex(window.new_type_input_mode.findData("pz"))
+        window._update_visibility()
+        shown = {inverse[w] for w in window.new_fields if not w.isHidden() and w in inverse}
+        expected = set(controller_parameter_keys(kind))
+        assert shown == expected, f"{kind}: shown={sorted(shown)} expected={sorted(expected)}"
+        controller = window._new_structure_controller()
+        assert controller.sample_rate_hz == window.new_fs.value()
+        assert len(controller.a) >= 2
+
+    # The exact-H(z) entry mode bypasses structure derivation entirely.
+    from power_control_tools.controllers import EXACT_CONTROLLER
+    window.new_kind.setCurrentIndex(window.new_kind.findData(EXACT_CONTROLLER))
+    window._update_visibility()
+    assert not window.new_exact_b.isHidden() and not window.new_exact_a.isHidden()
+
+    window.close()
+    app.processEvents()
+
+
+def test_auto_design_power_template_applies_as_exact_hz(monkeypatch):
+    """Power 2P2Z/3P3Z must be transferable without silent parameter remapping."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
+    from power_control_tools.controllers import EXACT_CONTROLLER, design_controller
+    from power_control_tools.discretize import discretize_transfer_function
+    from power_control_tools.fra.analysis import LoopStabilityResult
+    from power_control_tools.fra.auto_design import AutoDesignCandidate, AutoDesignResult
+    from power_control_tools.gui.fra_advanced import FRAAutoDesignDialog
+    from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
+    from power_control_tools.models import ControllerKind, DiscretizationMethod
+
+    app = _app(qt_widgets)
+    window = FRALoopDesignerWindow()
+    dialog = FRAAutoDesignDialog(window)
+
+    power = discretize_transfer_function(
+        design_controller(
+            ControllerKind.TWO_P_TWO_Z, gain=0.5,
+            fz1_hz=200.0, fz2_hz=1_000.0, fp1_hz=6_000.0, fp2_hz=20_000.0,
+        ),
+        50_000.0,
+        DiscretizationMethod.TUSTIN,
+    )
+    metrics = LoopStabilityResult(
+        (), (), 3_000.0, 60.0, 10.0, 60.0, 10.0, 1.2, 1.1,
+        np.asarray([1.0 + 0j]), np.asarray([0.5 + 0j]), "PASS",
+    )
+    candidate = AutoDesignCandidate(
+        3_000.0, 3_000.0, 60.0, 10.0, 1.2, 1.1, power,
+        ControllerKind.TWO_P_TWO_Z, {"gain": 0.5}, metrics, True, 0.0, "accepted",
+    )
+    dialog.result = AutoDesignResult(3_000.0, 60.0, candidate, (candidate,), False, "PASS", "ok")
+
+    monkeypatch.setattr(qt_widgets.QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    dialog.apply_result()
+
+    assert window.new_kind.currentData() == EXACT_CONTROLLER
+    applied = window._new_structure_controller()
+    # The GUI transfers coefficients as 12-significant-digit text, so the
+    # round-trip is exact to roughly 1e-11 relative precision.
+    np.testing.assert_allclose(applied.b, power.normalized().b, rtol=1e-10)
+    np.testing.assert_allclose(applied.a, power.normalized().a, rtol=1e-10)
+    assert applied.sample_rate_hz == 50_000.0
+
+    dialog.close()
+    window.close()
+    app.processEvents()

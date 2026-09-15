@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
+from power_control_tools.controllers import EXACT_CONTROLLER
 from power_control_tools.fra.analysis import magnitude_phase
 from power_control_tools.fra.auto_design import AutoDesignResult, auto_design_controller
 from power_control_tools.fra.fitting import (
@@ -30,6 +31,7 @@ from power_control_tools.fra.fitting import (
     fit_rational_frequency_response,
     validate_fitted_open_loop,
 )
+from power_control_tools.gui.fra_loop_designer import EXACT_CONTROLLER
 from power_control_tools.models import ControllerKind, DiscretizationMethod
 
 
@@ -41,11 +43,11 @@ _AUTO_KINDS = (
     ControllerKind.THREE_P_THREE_Z,
 )
 
-# PI/PIF/PID can be reconstructed exactly by the current New Structure GUI
-# parameters. Power 2P2Z/3P3Z Auto Design now uses an integrator-pole topology,
-# which is intentionally different from the legacy generic equal-order GUI
-# builder. Until the host has an exact-H(z) auto-result mode, do not silently
-# translate those candidates into a different controller.
+# PI/PIF/PID can be reconstructed exactly by the current New Structure slider
+# parameters, so Auto Design writes them back as tunable parameters.  Anything
+# else (Power 2P2Z / Power 3P3Z with an integrator pole, or a future structure)
+# is transferred as exact H(z) coefficients instead; translating it into the
+# generic sliders would silently produce a different controller.
 _GUI_RECONSTRUCTABLE_AUTO_KINDS = {
     ControllerKind.PI,
     ControllerKind.PIF,
@@ -158,13 +160,11 @@ class FRAAutoDesignDialog(QDialog):
             )
             self.result = result
             selected = result.selected
-            reconstructable = selected is not None and selected.controller_kind in _GUI_RECONSTRUCTABLE_AUTO_KINDS
             self.apply_button.setEnabled(
                 result.status == "PASS"
                 and selected is not None
                 and selected.accepted
                 and selected.controller.implementable
-                and reconstructable
             )
             lines = [
                 "FRA AUTO DESIGN",
@@ -199,8 +199,9 @@ class FRAAutoDesignDialog(QDialog):
                 if c.controller_kind not in _GUI_RECONSTRUCTABLE_AUTO_KINDS:
                     lines += [
                         "",
-                        "NOTE: this Power 2P2Z/3P3Z result uses an integrator-pole power compensator topology.",
-                        "The current legacy generic P/Z sliders do not reconstruct the same H(z), so Apply is intentionally disabled until an exact-H(z) host mode is added.",
+                        "NOTE: this result uses an integrator-pole power compensator topology whose parameterisation",
+                        "differs from the legacy generic P/Z sliders. Apply therefore transfers the exact H(z)",
+                        "coefficients into the host's Custom H(z) mode instead of silently mapping parameters.",
                     ]
                 if result.status != "PASS":
                     lines += ["", "NOTE: REVIEW candidates are shown for diagnosis only and cannot be one-click applied."]
@@ -226,18 +227,29 @@ class FRAAutoDesignDialog(QDialog):
             QMessageBox.warning(self, "Auto Design 未通过", "当前结果没有满足完整的 Fc/PM/GM/Ms 约束，禁止一键应用。")
             return
         selected = self.result.selected
-        if selected.controller_kind not in _GUI_RECONSTRUCTABLE_AUTO_KINDS:
-            QMessageBox.warning(
-                self,
-                "需要 Exact H(z) 模式",
-                "Power 2P2Z/3P3Z 自动设计使用积分极点拓扑；当前 New Structure 的通用 P/Z Slider 语义不同。为避免把正确结果转换成错误控制器，本版本禁止自动回写。Exact H(z) 系数已显示，可在下一步 exact-controller host 模式接入后直接使用。",
-            )
-            return
         host = self.host
         if hasattr(host, "new_mode"):
             index = host.new_mode.findData("structure")
             if index >= 0:
                 host.new_mode.setCurrentIndex(index)
+        if selected.controller_kind not in _GUI_RECONSTRUCTABLE_AUTO_KINDS:
+            # Exact-H(z) host mode: transfer the coefficients verbatim.
+            index = host.new_kind.findData(EXACT_CONTROLLER)
+            if index >= 0:
+                host.new_kind.setCurrentIndex(index)
+            host.new_fs.setValue(selected.controller.sample_rate_hz)
+            exact = selected.controller.normalized()
+            host.new_exact_b.setText(", ".join(f"{v:.12g}" for v in exact.b))
+            host.new_exact_a.setText(", ".join(f"{v:.12g}" for v in exact.a))
+            host.recalculate()
+            QMessageBox.information(
+                self,
+                "Auto Design 已应用（Exact H(z)）",
+                "严格 PASS 的自动设计结果已按精确 H(z) 系数回写到 Custom H(z) 模式。\n"
+                "这是积分极点型 Power 模板，不能用 legacy 通用 P/Z Slider 等价表示。\n"
+                "可继续修改系数或直接导出 C99。",
+            )
+            return
         index = host.new_kind.findData(selected.controller_kind)
         if index >= 0:
             host.new_kind.setCurrentIndex(index)
@@ -261,6 +273,7 @@ class FRAModelFitDialog(QDialog):
         super().__init__(host)
         self.host = host
         self.result: FRAFitResult | None = None
+        self.fit_band: tuple[float, float] | None = None
         self.setWindowTitle("FRA Model Identification — Rational Fit")
         self.resize(1250, 900)
 
@@ -287,10 +300,13 @@ class FRAModelFitDialog(QDialog):
 
         row = QHBoxLayout()
         run = QPushButton("FIT MODEL")
+        self.use_for_loop = QPushButton("用于环路设计（回传 FRA Loop Designer）")
+        self.use_for_loop.setEnabled(False)
         close = QPushButton("关闭")
         run.clicked.connect(self.run_fit)
+        self.use_for_loop.clicked.connect(self.send_plant_to_host)
         close.clicked.connect(self.accept)
-        row.addWidget(run); row.addWidget(close)
+        row.addWidget(run); row.addWidget(self.use_for_loop); row.addWidget(close)
         root.addLayout(row)
 
         tabs = QTabWidget()
@@ -340,6 +356,29 @@ class FRAModelFitDialog(QDialog):
             raise ValueError("拟合频带内至少需要 8 个有效 FRA 点。")
         return f[mask], response[mask], name
 
+    def send_plant_to_host(self) -> None:
+        """Hand the identified plant model to the FRA Loop Designer."""
+        if self.result is None or self.target.currentData() != "plant" or self.fit_band is None:
+            QMessageBox.information(
+                self, "仅限被控对象模型", "请将 Fit Target 设为 Equivalent Plant 并先执行 FIT MODEL。"
+            )
+            return
+        if not hasattr(self.host, "set_identified_plant"):
+            QMessageBox.warning(self, "当前工作区不支持", "宿主窗口没有辨识模型回传接口。")
+            return
+        try:
+            self.host.set_identified_plant(self.result.model, self.fit_band, self.result.metrics.confidence)
+        except Exception as exc:
+            QMessageBox.critical(self, "回传失败", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "已回传辨识模型",
+            "Plant Source 已切换为 Identified model。\n"
+            "现在可在 FRA Loop Designer 的 New Structure 中选择完整控制器库中的任意类型，"
+            "查看开环 Bode、裕度与闭环 Step；勾选“计算闭环 Step”即可。",
+        )
+
     def run_fit(self) -> None:
         try:
             f, measured, name = self._target_arrays()
@@ -353,6 +392,8 @@ class FRAModelFitDialog(QDialog):
                 fit_target=name,
             )
             self.result = result
+            self.fit_band = (float(f[0]), float(f[-1]))
+            self.use_for_loop.setEnabled(self.target.currentData() == "plant")
             fitted = result.fitted_response
             mm, mp = magnitude_phase(measured)
             fm, fp = magnitude_phase(fitted)
@@ -368,7 +409,13 @@ class FRAModelFitDialog(QDialog):
             ax.grid(True, which="both"); ap.grid(True, which="both"); ax.legend(); ap.legend(); self.fit_fig.tight_layout(); self.fit_canvas.draw_idle()
 
             validation = None
-            step_text = "Step is only defined here when fitting the New Open Loop."
+            is_plant_fit = self.target.currentData() != "loop"
+            step_text = (
+                "被控对象模型本身不含控制器，无法给出闭环 Step；"
+                "请点击“用于环路设计”回传后，在 FRA Loop Designer 中选择控制器并计算闭环 Step。"
+                if is_plant_fit
+                else "Step is only defined here when fitting the New Open Loop."
+            )
             self.step_fig.clear(); sax = self.step_fig.add_subplot(111)
             if self.target.currentData() == "loop":
                 validation = validate_fitted_open_loop(f, measured, result)
@@ -440,6 +487,8 @@ class FRAModelFitDialog(QDialog):
             self.details.setPlainText("\n".join(lines))
         except Exception as exc:
             self.result = None
+            self.fit_band = None
+            self.use_for_loop.setEnabled(False)
             QMessageBox.critical(self, "Model Fit 失败", str(exc))
 
 
