@@ -10,6 +10,10 @@ dist/
 .venv/
 .worktrees/
 
+# Build/package artifacts
+artifacts/
+*.whl
+
 # Outputs (regenerable calculation results)
 output/
 
