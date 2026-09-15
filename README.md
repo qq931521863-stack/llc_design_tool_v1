@@ -56,7 +56,6 @@ Legend: 🚀 Feature · 🐛 Bugfix · 🎨 GUI/UX · 🧪 Test/CI/Build
 | 2026-09-15 / V9.2.0 | 🐛 | 修复 LEAD / LAG / 1P1Z / Modified PI 在 FRA 界面下 `fz_hz` / `fp_hz` 未映射而静默使用引擎默认值；补齐 Type-II/III 的 `fp0` |
 | 2026-09-15 / V9.2.0 | 🧪 | **阶跃门控统一**：拟合环路与辨识被控对象两条 Step 路径共用同一带宽覆盖判据（`Fc/Fmin ≥ 10`、`Fmax/Fc ≥ 5`），置信度 LOW / 模型含右半平面极点 / 环路裕度 FAIL / 闭环不稳定时一律不给 Step 并说明原因 |
 | 2026-09-15 / V9.2.0 | 🧪 | 新增 FRA 深度审计报告与回归：多圈相位与重复穿越裕度、Bode100 实测夹具列一致性、Auto Power 2P2Z 精确 H(z) 导出并与 float32 C99 数值对照、控制工具全类型可构造性 |
-| 2026-09-15 / V9.2.0 | 🐛 | 修复 CI 依赖：`httpx2` 提供的是 `httpx2` 模块，而 `fastapi.testclient` 需要 `httpx`，导致 webapp/backend 测试收集失败、构建与发布任务被跳过 |
 
 本版使用说明与已知限制见 [V9.2.0 发布说明](DC/release_v9.2.0.md)。
 

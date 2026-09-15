@@ -133,8 +133,6 @@ jobs:
             - Complete Loop TS 导入后 summary/details 全部变成 ERROR（PySide6 str-Enum itemData 还原为 str）
             - LEAD / LAG / 1P1Z / Modified PI 的 fz_hz / fp_hz 未映射而静默使用引擎默认值；补齐 Type-II/III 的 fp0
             - 导出按钮在无有效计算时置灰；清空 log 轴前复位尺度以消除 matplotlib 噪声警告
-            - CI 依赖：httpx2 提供的是 httpx2 模块，而 fastapi.testclient 需要 httpx，
-              导致 webapp/backend 测试收集失败、构建与发布被跳过
 
             ## 完整说明
             使用方式、Step 授权边界、已声明假设与已知限制：

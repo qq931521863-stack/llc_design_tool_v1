@@ -126,10 +126,13 @@ Modified PI、Lead、Lag、1P1Z、2P2Z、3P3Z、General H(s)，外加 **Custom H
 
 ## 5. 构建与 CI
 
-- `dev` 依赖中的 `httpx2` 提供的是 `httpx2` 模块，而 `fastapi.testclient` 需要 `httpx`，
-  导致 `webapp/tests` 与 `backend/tests` 收集失败、`test` 任务失败、`build` 与 Release 发布被跳过。
-  本版改为 `httpx>=0.27,<1`。
 - 版本号统一为 9.2.0（`pyproject.toml`、`llc_design/__init__.py`、版本一致性测试）。
+- 说明：`dev` 依赖中的 `httpx2` **是有意为之**，不是笔误。`starlette.testclient`
+  会优先 `import httpx2 as httpx`，仅在缺失时才回退到 `httpx` 并发出弃用警告。因此
+  `httpx2>=2.12,<3` 保持不变。
+- 此前 `main` 分支 CI 的失败与依赖无关，而是 `ca21040` 时仍存在的过期测试
+  `test_auto_design_pi_hits_requested_fc_and_pm_on_simple_plant`（GM 证据门控加入后未同步），
+  该测试已随审计分支合并修正。
 
 ## 6. 已知限制
 
