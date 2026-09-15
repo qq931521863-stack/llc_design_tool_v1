@@ -36,6 +36,8 @@ The software immediately rebuilds the original loop:
 
 and reports magnitude/phase reconstruction error.
 
+**Important validation boundary:** this reconstruction check is an algebraic/software consistency check. It verifies the complex division/multiplication chain and numerical implementation. It cannot prove that the controller parameters entered by the user are the same parameters actually running in the measured hardware; a wrong `C_old` will mathematically divide out and multiply back in. Hardware controller provenance therefore remains a required engineering input.
+
 ## Existing controller input
 
 V1 supports:
@@ -48,6 +50,8 @@ Canonical coefficient convention:
 `H(z) = (b0 + b1 z^-1 + ...)/(1 + a1 z^-1 + ...)`
 
 `y[n] = sum(b[k] x[n-k]) - sum(a[k] y[n-k])`
+
+If firmware stores the recurrence as `y[n] = sum(b[k]x[n-k]) + sum(A[k]y[n-k])`, convert feedback coefficients before entry: `a[k] = -A[k]`. V1 does not silently guess the sign convention.
 
 ## New controller design
 
@@ -81,6 +85,8 @@ Multiple gain crossovers are reported explicitly as a warning condition.
 ## Bode100 phase convention
 
 The Bode100 importer preserves the raw phase and defaults to a `-180 deg` loop-injection correction. The GUI exposes the phase offset so the user can override the convention when required by a different injection setup.
+
+The provided hardware sample is used as a regression anchor around its measured cursor: approximately `296.591 Hz / 0 dB / +86.325 deg` raw Bode100 phase. After the default `-180 deg` convention correction, the loop phase is approximately `-93.675 deg` and PM remains approximately `86.325 deg`.
 
 ## Digital-frequency limit
 
