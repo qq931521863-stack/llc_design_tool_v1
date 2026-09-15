@@ -1,7 +1,7 @@
 """Minimal, typed wrapper around ngspice's shared-library API.
 
-This module is the production path for future digital closed-loop co-simulation.
-The public declarations mirror ``sharedspice.h`` closely enough to support:
+This module is the production path for digital closed-loop co-simulation. The
+public declarations mirror ``sharedspice.h`` closely enough to support:
 
 - in-memory circuit loading via ``ngSpice_Circ``;
 - commands and vector extraction;
@@ -9,7 +9,7 @@ The public declarations mirror ``sharedspice.h`` closely enough to support:
 - external voltage/current sources;
 - transient time-step synchronization.
 
-No controller algorithm lives here.  Existing ``power_sim.digital_control``
+No controller algorithm lives here. Existing ``power_sim.digital_control``
 remains the single source of truth for ADC/controller/FM behaviour.
 """
 from __future__ import annotations
@@ -19,6 +19,7 @@ from ctypes.util import find_library
 from pathlib import Path
 import os
 import sys
+import time
 from typing import Callable, Sequence
 
 import numpy as np
@@ -261,9 +262,11 @@ class NgSpiceSharedLibrary:
             return 0
 
         @BGThreadRunningCB
-        def bg_running(running, ident, userdata):
+        def bg_running(not_running, ident, userdata):
             del ident, userdata
-            self.background_running = bool(running)
+            # sharedspice.h names this argument ``noruns``: false while the
+            # background simulation is active, true after it stops.
+            self.background_running = not bool(not_running)
             return 0
 
         self._callbacks = [send_char, send_stat, controlled_exit, send_data, send_init_data, bg_running]
@@ -329,6 +332,26 @@ class NgSpiceSharedLibrary:
 
     def set_breakpoint(self, time_s: float) -> bool:
         return bool(self.lib.ngSpice_SetBkpt(float(time_s)))
+
+    def is_running(self) -> bool:
+        """Return shared-ngspice's authoritative background-run state."""
+        return bool(self.lib.ngSpice_running())
+
+    def wait_until_idle(self, *, timeout_s: float = 30.0, poll_s: float = 0.001) -> None:
+        """Wait for a ``bg_run`` simulation to finish or raise TimeoutError."""
+        timeout = float(timeout_s)
+        poll = float(poll_s)
+        if timeout <= 0.0 or poll <= 0.0:
+            raise ValueError("timeout_s and poll_s must be positive")
+        deadline = time.monotonic() + timeout
+        # bg_run starts asynchronously. Give ngspice one poll interval to enter
+        # running state, then rely on ngSpice_running() rather than callback
+        # ordering to determine completion.
+        time.sleep(min(poll, timeout))
+        while self.is_running():
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"shared ngspice did not finish within {timeout:.3g} s")
+            time.sleep(poll)
 
     def vector(self, name: str) -> np.ndarray:
         info_ptr = self.lib.ngGet_Vec_Info(str(name).encode("utf-8"))
