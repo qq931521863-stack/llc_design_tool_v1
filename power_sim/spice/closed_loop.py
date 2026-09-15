@@ -1,10 +1,9 @@
 """Shared-ngspice LLC closed-loop co-simulation.
 
-This is the first continuous-state controller-in-the-loop path. ngspice owns
-the switching circuit state; Power Design Toolkit owns ADC sampling, exact H(z),
-limits and FM/TBPRD logic. Gate voltage sources are supplied through
-shared-ngspice EXTERNAL callbacks and solver timesteps are synchronized to PWM
-and control events.
+ngspice owns the continuous switching-circuit state; Power Design Toolkit owns
+ADC sampling, exact H(z), limits and FM/TBPRD logic. Gate voltage sources are
+supplied through shared-ngspice EXTERNAL callbacks and solver timesteps are
+synchronized to PWM and control events.
 
 V1 scope is deliberately narrow: FULL_BRIDGE LLC, fixed input bus/load and a
 reference step. Vin/load steps are added after this path is numerically proven.
@@ -50,6 +49,7 @@ class NgSpiceClosedLoopConfig:
     output_step_s: float | None = None
     max_step_s: float | None = None
     wall_timeout_s: float = 120.0
+    use_initial_conditions: bool = True
     record_vectors: tuple[str, ...] = (
         "time",
         "v(out)",
@@ -89,16 +89,7 @@ class NgSpiceClosedLoopResult:
 
 
 def _callback_vector(point: dict[str, complex], name: str) -> complex | None:
-    """Resolve a SPICE expression against shared-ngspice callback vector names.
-
-    ``ngGet_Vec_Info('v(out)')`` accepts the expression-style spelling used by
-    netlists and by the batch RAW path.  ``SendData`` does not necessarily use
-    that spelling: for a saved node voltage ngspice emits the internal vector
-    name ``out``; branch currents are commonly emitted as ``lr#branch``.  The
-    closed-loop scheduler therefore normalizes these equivalent spellings at the
-    boundary instead of leaking backend-specific names into the controller and
-    WaveformBundle-facing contracts.
-    """
+    """Resolve expression-style names against shared-ngspice raw vectors."""
     lowered = {str(key).lower(): value for key, value in point.items()}
     key = str(name).strip().lower()
     candidates = [key]
@@ -140,8 +131,8 @@ def run_llc_shared_closed_loop(
 ) -> NgSpiceClosedLoopResult:
     """Run the first real digital-controller/shared-ngspice LLC loop.
 
-    ``controller`` is used directly; no controller re-discretization occurs.
-    This preserves coefficient identity with Control Tools/FRA/C99.
+    ``controller`` is consumed directly. No re-discretization is allowed here,
+    preserving coefficient identity with Control Tools/FRA/C99.
     """
     sampler.validate()
     controller_limits.validate()
@@ -163,8 +154,9 @@ def run_llc_shared_closed_loop(
     shared_spice = replace(spice_config, gate_drive_mode="external")
     circuit = build_ideal_llc_circuit(spec, tank, shared_spice)
     circuit.save_vectors = list(dict.fromkeys(simulation.record_vectors))
+    uic = " uic" if simulation.use_initial_conditions else ""
     circuit.directives.append(
-        f".tran {output_step:.12e} {simulation.duration_s:.12e} 0 {max_step:.12e}"
+        f".tran {output_step:.12e} {simulation.duration_s:.12e} 0 {max_step:.12e}{uic}"
     )
     netlist = render_netlist(circuit)
     circuit_lines = [line for line in netlist.splitlines() if line.strip()]
