@@ -1,11 +1,11 @@
-"""Application launcher separating LLC and PFC into independent workspaces."""
+"""Application launcher for the independent power-design workspaces."""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
-    QHBoxLayout,
+    QGridLayout,
     QLabel,
     QPushButton,
     QVBoxLayout,
@@ -15,17 +15,18 @@ from llc_design.core.spec import LLCDesignSpec
 from llc_design.gui import theme
 from llc_design.gui.main_window import LLCMainWindow
 from pfc_design.gui.main_window import PFCMainWindow
+from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
 from power_control_tools.gui.main_window import ControlToolsMainWindow
 
 
 class WorkspaceSelectionDialog(QDialog):
-    """Initial function selector shown before either engineering workspace."""
+    """Initial function selector shown before an engineering workspace."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.selected_workspace: str | None = None
         self.setWindowTitle("电源设计工具箱 — 选择设计功能")
-        self.setMinimumSize(1120, 440)
+        self.setMinimumSize(1180, 650)
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
         self.setStyleSheet(theme.launcher_stylesheet(theme.active_theme()))
 
@@ -36,34 +37,41 @@ class WorkspaceSelectionDialog(QDialog):
         root.addWidget(title)
 
         subtitle = QLabel(
-            "LLC 与 PFC 使用独立参数区、Bode、波形和控制设计页面，"
-            "进入工作区后可通过工具栏随时切换。"
+            "LLC、PFC、数字控制工具与 FRA Loop Designer 使用独立工作区；"
+            "FRA 工作区可从实测/仿真 Bode 数据剥离当前控制器并实时整定新控制器。"
         )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("font-size: 14px; padding: 4px 30px 20px 30px;")
         root.addWidget(subtitle)
 
-        choices = QHBoxLayout()
-        choices.setSpacing(24)
+        choices = QGridLayout()
+        choices.setHorizontalSpacing(24)
+        choices.setVerticalSpacing(20)
         llc_button = self._choice_button(
             "进入 LLC 设计",
             "谐振腔、磁性器件、损耗、开关波形、小信号与数字电压环",
         )
         pfc_button = self._choice_button(
             "进入 PFC 设计",
-            "单相 TTPL + 三相 Vienna：双环控制、采样链、Bode、AC 周期、开关波形与 PF/THD",
+            "单相 TTPL + 三相 Vienna：控制、采样链、Bode、AC 周期、开关波形与 PF/THD",
         )
         control_button = self._choice_button(
             "进入 Control Tools",
             "S2Z、数字滤波器、Bode、Step/Impulse、P/Z、SOS 与 C99 float32_t 导出",
         )
+        fra_button = self._choice_button(
+            "进入 FRA Loop Designer",
+            "Bode100 / SIMPLIS / Generic：控制器剥离、Equivalent Plant、实时 Fc/PM/GM/S/T 与 C99",
+        )
         llc_button.clicked.connect(lambda: self._select("llc"))
         pfc_button.clicked.connect(lambda: self._select("pfc"))
         control_button.clicked.connect(lambda: self._select("control"))
-        choices.addWidget(llc_button)
-        choices.addWidget(pfc_button)
-        choices.addWidget(control_button)
+        fra_button.clicked.connect(lambda: self._select("fra"))
+        choices.addWidget(llc_button, 0, 0)
+        choices.addWidget(pfc_button, 0, 1)
+        choices.addWidget(control_button, 1, 0)
+        choices.addWidget(fra_button, 1, 1)
         root.addLayout(choices, 1)
 
         cancel = QPushButton("退出")
@@ -74,7 +82,7 @@ class WorkspaceSelectionDialog(QDialog):
     def _choice_button(title: str, description: str) -> QPushButton:
         t = theme.active_theme()
         button = QPushButton(f"{title}\n\n{description}")
-        button.setMinimumSize(320, 180)
+        button.setMinimumSize(500, 170)
         button.setStyleSheet(
             "QPushButton {"
             f"font-size: 16px; font-weight: 600; text-align: center;"
@@ -92,16 +100,18 @@ class WorkspaceSelectionDialog(QDialog):
 
 
 class WorkspaceApplicationController:
-    """Own both top-level windows and switch without destroying user state."""
+    """Own top-level windows and switch without destroying user state."""
 
     def __init__(self, initial_spec: LLCDesignSpec) -> None:
         self.llc_window = LLCMainWindow(initial_spec)
         self.pfc_window = PFCMainWindow()
         self.control_window = ControlToolsMainWindow()
+        self.fra_window = FRALoopDesignerWindow()
         self.active_workspace: str | None = None
         self.llc_window.workspace_switch_requested.connect(self._handle_request)
         self.pfc_window.workspace_switch_requested.connect(self._handle_request)
         self.control_window.workspace_switch_requested.connect(self._handle_request)
+        self.fra_window.workspace_switch_requested.connect(self._handle_request)
         self.control_window.digital_design_updated.connect(self.llc_window.set_external_control_design)
 
     def start(self) -> bool:
@@ -113,13 +123,22 @@ class WorkspaceApplicationController:
         self.show_workspace(dialog.selected_workspace)
         return True
 
-    def show_workspace(self, workspace: str) -> None:
-        if workspace not in {"llc", "pfc", "control"}:
-            raise ValueError(f"unsupported workspace: {workspace}")
+    def _hide_all(self) -> None:
         self.llc_window.hide()
         self.pfc_window.hide()
         self.control_window.hide()
-        target = {"llc": self.llc_window, "pfc": self.pfc_window, "control": self.control_window}[workspace]
+        self.fra_window.hide()
+
+    def show_workspace(self, workspace: str) -> None:
+        if workspace not in {"llc", "pfc", "control", "fra"}:
+            raise ValueError(f"unsupported workspace: {workspace}")
+        self._hide_all()
+        target = {
+            "llc": self.llc_window,
+            "pfc": self.pfc_window,
+            "control": self.control_window,
+            "fra": self.fra_window,
+        }[workspace]
         self.active_workspace = workspace
         target.showMaximized()
         target.raise_()
@@ -133,9 +152,7 @@ class WorkspaceApplicationController:
 
     def _show_selector_again(self) -> None:
         previous = self.active_workspace
-        self.llc_window.hide()
-        self.pfc_window.hide()
-        self.control_window.hide()
+        self._hide_all()
         dialog = WorkspaceSelectionDialog()
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected_workspace:
             self.show_workspace(dialog.selected_workspace)
