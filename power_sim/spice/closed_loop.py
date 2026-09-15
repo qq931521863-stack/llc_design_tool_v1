@@ -88,11 +88,40 @@ class NgSpiceClosedLoopResult:
     circuit_netlist: str
 
 
+def _callback_vector(point: dict[str, complex], name: str) -> complex | None:
+    """Resolve a SPICE expression against shared-ngspice callback vector names.
+
+    ``ngGet_Vec_Info('v(out)')`` accepts the expression-style spelling used by
+    netlists and by the batch RAW path.  ``SendData`` does not necessarily use
+    that spelling: for a saved node voltage ngspice emits the internal vector
+    name ``out``; branch currents are commonly emitted as ``lr#branch``.  The
+    closed-loop scheduler therefore normalizes these equivalent spellings at the
+    boundary instead of leaking backend-specific names into the controller and
+    WaveformBundle-facing contracts.
+    """
+    lowered = {str(key).lower(): value for key, value in point.items()}
+    key = str(name).strip().lower()
+    candidates = [key]
+    if key.startswith("v(") and key.endswith(")"):
+        node = key[2:-1].strip()
+        if node:
+            candidates.append(node)
+    elif key.startswith("i(") and key.endswith(")"):
+        refdes = key[2:-1].strip()
+        if refdes:
+            candidates.extend((f"{refdes}#branch", f"@{refdes}[i]"))
+    for candidate in candidates:
+        value = lowered.get(candidate)
+        if value is not None:
+            return value
+    return None
+
+
 def _lookup(point: dict[str, complex], *names: str) -> float | None:
-    lowered = {key.lower(): value for key, value in point.items()}
     for name in names:
-        if name.lower() in lowered:
-            return float(lowered[name.lower()].real)
+        value = _callback_vector(point, name)
+        if value is not None:
+            return float(value.real)
     return None
 
 
@@ -159,7 +188,7 @@ def run_llc_shared_closed_loop(
         deadtime_s=spec.primary_deadtime_s,
     )
 
-    record_names = {name.lower() for name in simulation.record_vectors}
+    record_names = tuple(dict.fromkeys(name.lower() for name in simulation.record_vectors))
     vector_lists: dict[str, list[float]] = {name: [] for name in record_names}
     samples: list[ClosedLoopSample] = []
     next_sample_s = sampler.sample_phase_s
@@ -233,9 +262,8 @@ def run_llc_shared_closed_loop(
         if vout is not None and math.isfinite(vout):
             latest_vout = vout
 
-        lowered = {key.lower(): value for key, value in point.items()}
         for name in record_names:
-            value = lowered.get(name)
+            value = _callback_vector(point, name)
             if value is not None:
                 vector_lists[name].append(float(value.real))
 
@@ -252,9 +280,6 @@ def run_llc_shared_closed_loop(
     if rc != 0:
         raise RuntimeError(f"ngSpice_Circ failed with status {rc}: {' | '.join(session.messages[-20:])}")
 
-    # sharedspice streams SendData from its background analysis path. Waiting on
-    # the explicit worker start/stop callbacks avoids returning before the first
-    # transient point is accepted on fast simulations.
     session.run_background(timeout_s=simulation.wall_timeout_s)
 
     if session.exit_status not in (None, 0):
@@ -282,6 +307,7 @@ def run_llc_shared_closed_loop(
             "sample_rate_hz": controller.sample_rate_hz,
             "computation_delay_s": simulation.computation_delay_s,
             "pwm_update_delay_s": simulation.pwm_update_delay_s,
+            "shared_senddata_points": session.data_callback_count,
             "final_switching_frequency_hz": timeline.frequency_at(simulation.duration_s),
         },
     )
