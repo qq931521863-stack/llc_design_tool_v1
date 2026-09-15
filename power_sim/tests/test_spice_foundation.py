@@ -153,13 +153,7 @@ def test_live_ngspice_batch_rc_transient_if_installed(tmp_path: Path):
 
 
 def test_live_ngspice_generated_llc_switches_and_carries_tank_current_if_installed(tmp_path: Path):
-    """Execute the generated LLC netlist in real ngspice, not only string-test it.
-
-    This is intentionally a topology/simulator smoke test rather than an
-    efficiency or hardware-correlation claim.  It proves that the FULL_BRIDGE
-    CircuitIR, gate timing, resonant tank, coupled transformer and rectifier are
-    numerically executable together before the shared closed-loop path is used.
-    """
+    """Execute the generated LLC netlist in real ngspice, not only string-test it."""
     engine = NgSpiceBatchEngine()
     if not engine.available:
         pytest.skip("ngspice executable is not installed")
@@ -181,6 +175,7 @@ def test_live_ngspice_generated_llc_switches_and_carries_tank_current_if_install
         stop_time_s=stop_time,
         max_step_s=max_step,
         workdir=tmp_path / "llc_live",
+        use_initial_conditions=True,
     )
 
     assert result.returncode == 0, result.stderr + result.stdout
@@ -204,7 +199,7 @@ def test_live_ngspice_generated_llc_switches_and_carries_tank_current_if_install
     assert float(np.max(np.abs(ilr))) > 0.1
 
     # With Vout precharged to the design target, the smoke run should not
-    # numerically collapse or explode.  Tight regulation/correlation belongs to
+    # numerically collapse or explode. Tight regulation/correlation belongs to
     # later closed-loop/hardware validation, not this ideal fixed-Fs test.
     tail = vout[int(0.75 * len(vout)) :]
     assert 0.25 * spec.vout_v < float(np.mean(tail)) < 2.0 * spec.vout_v
