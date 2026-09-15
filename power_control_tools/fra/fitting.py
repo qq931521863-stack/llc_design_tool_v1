@@ -16,10 +16,9 @@ from power_control_tools.fra.analysis import LoopStabilityResult, analyze_loop_r
 class RationalPlantModel:
     """Stable real-coefficient rational FRA approximation plus pure delay.
 
-    The model is represented in normalized frequency x=s/w_ref to improve
-    polynomial conditioning.  It is an engineering approximation of measured
-    frequency response, not a claim that fitted poles/zeros correspond to
-    physical components in the hardware.
+    The polynomial variable is normalized as x=s/w_ref to improve numerical
+    conditioning.  Fitted poles/zeros are an engineering approximation of the
+    measured complex response, not physical component identification.
     """
 
     numerator_coefficients: tuple[float, ...]  # ascending powers of x
@@ -53,10 +52,9 @@ class RationalPlantModel:
     def normalized_polynomials(self, *, pade_delay: bool = True) -> tuple[np.ndarray, np.ndarray]:
         """Return descending polynomial coefficients in x=s/w_ref.
 
-        Pure delay is represented by first-order Padé only for optional
-        time-domain/root calculations.  Extremely small fitted delays are
-        ignored so numerical optimizer noise cannot create an enormous fake
-        Padé pole/zero pair.
+        Pure delay is represented by first-order Pade only for optional
+        time-domain/root calculations.  Tiny fitted delays are ignored so
+        optimizer noise cannot create an artificial extremely-fast pole/zero.
         """
         wref = 2.0 * math.pi * float(self.reference_frequency_hz)
         den_asc = np.asarray([1.0], dtype=float)
@@ -138,6 +136,9 @@ class FRAFitLoopValidation:
     phase_margin_error_deg: float | None
     gain_margin_error_db: float | None
     fitted_closed_loop_stable: bool
+    time_domain_coverage_ok: bool
+    low_frequency_ratio_to_fc: float | None
+    high_frequency_ratio_to_fc: float | None
     note: str
 
 
@@ -214,7 +215,7 @@ def _fit_structure(
     real_count = int(order) - 2 * pair_count
     if real_count < 0:
         raise ValueError("complex-pair count exceeds rational order")
-    numerator_degree = max(int(order) - 1, 0)  # strictly proper rational part
+    numerator_degree = max(int(order) - 1, 0)
 
     feature_count = real_count + pair_count
     if feature_count:
@@ -305,8 +306,6 @@ def _fit_structure(
     assert best is not None
     cost, vector, coeff = best
     real_hz, pair_hz, damping, delay_s = unpack(vector)
-    # If the delay produces <0.1 degree at the highest fitted frequency it is
-    # below the meaningful resolution of this model and is canonicalized to 0.
     if delay_s > 0.0 and 2.0 * math.pi * float(f[-1]) * delay_s < math.radians(0.1):
         delay_s = 0.0
     real_sorted = tuple(float(v) for v in np.sort(real_hz))
@@ -402,6 +401,17 @@ def fit_rational_frequency_response(
     return best_result
 
 
+def _trim_tf(num: np.ndarray, den: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    num_t = np.trim_zeros(np.asarray(num, dtype=float), "f")
+    den_t = np.trim_zeros(np.asarray(den, dtype=float), "f")
+    if num_t.size == 0:
+        num_t = np.asarray([0.0], dtype=float)
+    if den_t.size == 0 or abs(float(den_t[0])) < 1e-30:
+        raise ValueError("closed-loop polynomial denominator is singular")
+    scale = float(den_t[0])
+    return num_t / scale, den_t / scale
+
+
 def closed_loop_step_from_fitted_loop(
     loop_model: RationalPlantModel,
     *,
@@ -410,7 +420,7 @@ def closed_loop_step_from_fitted_loop(
 ) -> FitClosedLoopStepResult:
     """Approximate closed-loop step from a fitted *open-loop* model.
 
-    Delay is represented by first-order Padé only when numerically meaningful.
+    Delay is represented by first-order Pade only when numerically meaningful.
     This output is fit-derived and must not replace measured transient
     validation.
     """
@@ -418,8 +428,9 @@ def closed_loop_step_from_fitted_loop(
     length = max(len(num), len(den))
     num_pad = np.pad(num, (length - len(num), 0))
     den_pad = np.pad(den, (length - len(den), 0))
-    closed_den = den_pad + num_pad
-    closed_num = num_pad.copy()
+    closed_den_raw = den_pad + num_pad
+    closed_num_raw = num_pad.copy()
+    closed_num, closed_den = _trim_tf(closed_num_raw, closed_den_raw)
     poles_x = np.roots(closed_den).astype(complex) if len(closed_den) > 1 else np.asarray([], dtype=complex)
     wref = 2.0 * math.pi * loop_model.reference_frequency_hz
     poles_s = poles_x * wref
@@ -448,7 +459,7 @@ def closed_loop_step_from_fitted_loop(
     y = np.asarray(y, dtype=float).reshape(-1)
     t_s = np.asarray(t_norm / wref, dtype=float)
 
-    if abs(closed_den[-1]) > 1e-18:
+    if abs(float(closed_den[-1])) > 1e-18:
         final = float(closed_num[-1] / closed_den[-1])
     else:
         final = float(y[-1])
@@ -490,7 +501,7 @@ def closed_loop_step_from_fitted_loop(
         float(overshoot),
         rise,
         settling,
-        "Approximate step from validated rational open-loop fit + first-order Padé delay; validate against hardware before release use.",
+        "Approximate step from validated rational open-loop fit + first-order Pade delay; validate against hardware before release use.",
     )
 
 
@@ -502,13 +513,15 @@ def validate_fitted_open_loop(
     crossover_tolerance_percent: float = 8.0,
     phase_margin_tolerance_deg: float = 5.0,
     gain_margin_tolerance_db: float = 4.0,
+    min_low_frequency_ratio_to_fc: float = 10.0,
+    min_high_frequency_ratio_to_fc: float = 5.0,
 ) -> FRAFitLoopValidation:
     """Check whether an open-loop fit preserves control-critical behavior.
 
-    Low Bode RMS error alone is not enough to authorize time-domain analysis.
-    The fitted loop must preserve gain-crossing count, crossover location and
-    stability margins on the same measured frequency window, and the fitted
-    closed-loop rational model must have no RHP poles.
+    Low Bode RMS error alone is not enough to authorize a time-domain step.
+    The fit must preserve gain-crossing count, Fc/PM/GM, closed-loop pole
+    stability, and must span enough data below/above crossover that a step is
+    not inferred from a narrow local fit with unconstrained DC/HF behavior.
     """
     f = np.asarray(frequency_hz, dtype=float).reshape(-1)
     measured = np.asarray(measured_loop, dtype=complex).reshape(-1)
@@ -536,6 +549,17 @@ def validate_fitted_open_loop(
         else:
             gm_error = abs(float(fit.gain_margin_db) - float(raw.gain_margin_db))
 
+    low_ratio = high_ratio = None
+    coverage_ok = False
+    if raw.main_crossover_hz is not None and raw.main_crossover_hz > 0.0:
+        fc = float(raw.main_crossover_hz)
+        low_ratio = fc / float(f[0])
+        high_ratio = float(f[-1]) / fc
+        coverage_ok = (
+            low_ratio >= float(min_low_frequency_ratio_to_fc)
+            and high_ratio >= float(min_high_frequency_ratio_to_fc)
+        )
+
     step_probe = closed_loop_step_from_fitted_loop(fit_result.model, samples=240)
     closed_stable = step_probe.stable
 
@@ -549,6 +573,7 @@ def validate_fitted_open_loop(
         and gm_evidence_ok
         and (gm_error is None or gm_error <= float(gain_margin_tolerance_db))
         and closed_stable
+        and coverage_ok
     )
     status = "PASS" if passed else "REVIEW"
     note_parts: list[str] = []
@@ -564,7 +589,12 @@ def validate_fitted_open_loop(
         note_parts.append("gain-margin evidence/mismatch")
     if not closed_stable:
         note_parts.append("fitted closed loop is unstable")
-    note = "control-critical fit preserved" if passed else "; ".join(note_parts)
+    if not coverage_ok:
+        note_parts.append(
+            f"insufficient step-model bandwidth coverage (Fc/Fmin={low_ratio if low_ratio is not None else float('nan'):.3g}, "
+            f"Fmax/Fc={high_ratio if high_ratio is not None else float('nan'):.3g})"
+        )
+    note = "control-critical fit and time-domain coverage preserved" if passed else "; ".join(note_parts)
 
     return FRAFitLoopValidation(
         bool(passed),
@@ -576,6 +606,9 @@ def validate_fitted_open_loop(
         pm_error,
         gm_error,
         bool(closed_stable),
+        bool(coverage_ok),
+        low_ratio,
+        high_ratio,
         note,
     )
 
