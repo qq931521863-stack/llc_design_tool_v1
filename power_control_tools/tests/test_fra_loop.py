@@ -14,6 +14,14 @@ from power_control_tools.fra import (
 from power_control_tools.models import DigitalTransferFunction
 
 
+def _bode100_header() -> str:
+    return (
+        'Frequency (Hz);"Trace 1: Gain: Real ";"Trace 1: Gain: Imaginary ";'
+        'Trace 1: Gain: Magnitude (dB);"Trace 2: Gain: Real ";'
+        '"Trace 2: Gain: Imaginary ";Trace 2: Gain: Phase (°)\n'
+    )
+
+
 def test_import_simplis_freq_gain_phase(tmp_path):
     path = tmp_path / "simplis.txt"
     path.write_text(
@@ -33,12 +41,10 @@ def test_import_simplis_freq_gain_phase(tmp_path):
 def test_import_bode100_uses_loop_phase_convention(tmp_path):
     path = tmp_path / "bode100.csv"
     path.write_text(
-        'Frequency (Hz);"Trace 1: Gain: Real ";"Trace 1: Gain: Imaginary ";'
-        'Trace 1: Gain: Magnitude (dB);"Trace 2: Gain: Real ";'
-        '"Trace 2: Gain: Imaginary ";Trace 2: Gain: Phase (°)\n'
-        "100;1;2;12;1;2;100\n"
-        "300;1;2;0;1;2;86\n"
-        "1000;1;2;-10;1;2;40\n",
+        _bode100_header()
+        + "100;1;2;12;1;2;100\n"
+        + "300;1;2;0;1;2;86\n"
+        + "1000;1;2;-10;1;2;40\n",
         encoding="utf-8",
     )
     data = load_fra_file(path, FRASourceFormat.BODE100)
@@ -47,26 +53,43 @@ def test_import_bode100_uses_loop_phase_convention(tmp_path):
     assert np.allclose(data.normalized_phase_deg(), [-80.0, -94.0, -140.0])
 
 
-def test_real_bode100_sample_reproduces_cursor_crossover(tmp_path):
+def test_real_bode100_sample_reproduces_fc_pm_and_gm_cursors(tmp_path):
     """Regression points copied from the provided Bode100 hardware export.
 
-    Bode100 reports +86.325 deg at the 0-dB cursor.  With the importer loop
-    convention correction (-180 deg), this is the canonical -93.675 deg loop
-    phase and therefore an 86.325 deg phase margin.
+    The 0-dB cursor is approximately 296.591 Hz / +86.325 deg raw phase.
+    The raw 0-deg phase cursor is approximately 7.61626 kHz / -27.095 dB,
+    which is the canonical -180-deg phase crossing after the importer offset.
     """
     path = tmp_path / "hardware_bode100.csv"
     path.write_text(
-        'Frequency (Hz);"Trace 1: Gain: Real ";"Trace 1: Gain: Imaginary ";'
-        'Trace 1: Gain: Magnitude (dB);"Trace 2: Gain: Real ";'
-        '"Trace 2: Gain: Imaginary ";Trace 2: Gain: Phase (°)\n'
-        "275.42287;1;1;0.665377440915802;1;1;85.61464981648201\n"
-        "301.995172;1;1;-0.16225722187400488;1;1;86.49824532391638\n",
+        _bode100_header()
+        + "275.42287;1;1;0.665377440915802;1;1;85.61464981648201\n"
+        + "301.995172;1;1;-0.16225722187400488;1;1;86.49824532391638\n"
+        + "7585.77575;1;1;-27.043110321427463;1;1;0.7887431775869405\n"
+        + "8317.637711;1;1;-28.23690138811942;1;1;-17.3247343583817\n",
         encoding="utf-8",
     )
     data = load_fra_file(path, FRASourceFormat.BODE100)
     result = analyze_loop_response(data.frequency_hz, data.complex_response())
     assert len(result.gain_crossovers) == 1
+    assert len(result.phase_crossovers) == 1
     assert abs(result.main_crossover_hz - 296.59103982069337) < 1e-6
+    assert abs(result.phase_margin_deg - 86.32501701589291) < 1e-6
+    assert abs(result.phase_crossovers[0].frequency_hz - 7616.260359844676) < 1e-6
+    assert abs(result.gain_margin_db - 27.095093412882306) < 1e-6
+    assert result.status == "PASS"
+
+
+def test_truncated_bode100_window_does_not_claim_gain_margin(tmp_path):
+    path = tmp_path / "truncated_bode100.csv"
+    path.write_text(
+        _bode100_header()
+        + "275.42287;1;1;0.665377440915802;1;1;85.61464981648201\n"
+        + "301.995172;1;1;-0.16225722187400488;1;1;86.49824532391638\n",
+        encoding="utf-8",
+    )
+    data = load_fra_file(path, FRASourceFormat.BODE100)
+    result = analyze_loop_response(data.frequency_hz, data.complex_response())
     assert abs(result.phase_margin_deg - 86.32501701589291) < 1e-6
     assert result.gain_margin_db is None
     assert result.status == "REVIEW_GM_NOT_OBSERVED"
