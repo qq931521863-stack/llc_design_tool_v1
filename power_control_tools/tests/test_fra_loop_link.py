@@ -27,6 +27,7 @@ from power_control_tools.fra import (
 from power_control_tools.fra.analysis import analyze_loop_response, digital_frequency_response
 from power_control_tools.fra.loop_link import (
     STEP_OK,
+    STEP_WITHHELD_INSUFFICIENT_BANDWIDTH,
     STEP_WITHHELD_LOOP_FAIL,
     STEP_WITHHELD_LOW_CONFIDENCE,
 )
@@ -218,3 +219,29 @@ def test_lead_accepts_canonical_fz1_fp1_names():
     alias = design_controller(ControllerKind.LEAD, gain=2.0, fz_hz=500.0, fp_hz=5_000.0)
     np.testing.assert_allclose(canonical.numerator, alias.numerator, rtol=1e-12)
     np.testing.assert_allclose(canonical.denominator, alias.denominator, rtol=1e-12)
+
+
+def test_step_bandwidth_coverage_matches_the_audit_thresholds():
+    from power_control_tools.fra.loop_link import step_bandwidth_coverage
+
+    # Fc = 300 Hz: 10..15000 Hz gives Fc/Fmin = 30 and Fmax/Fc = 50 -> covered.
+    assert step_bandwidth_coverage(300.0, 10.0, 15_000.0) == (True, 30.0, 50.0)
+    # The narrow local fit called out by the audit (Fc ~ 296.6 Hz, Fmin = 150 Hz).
+    ok, low, high = step_bandwidth_coverage(296.6, 150.0, 15_000.0)
+    assert not ok and low is not None and low < 10.0
+    # No observed crossover -> the control bandwidth is not established at all.
+    assert step_bandwidth_coverage(None, 10.0, 15_000.0) == (False, None, None)
+
+
+def test_link_step_is_withheld_when_the_fit_band_is_too_narrow():
+    """A narrow local fit may report Fc/PM but must not authorize a step."""
+    controller = _pi(kp=0.4, fz_hz=80.0)
+    link = link_plant_model_with_controller(
+        PLANT, controller, f_min_hz=10.0, f_max_hz=15_000.0, fit_confidence="GOOD"
+    )
+    fc = link.metrics.main_crossover_hz
+    assert fc is not None and fc / 10.0 < 10.0  # fails Fc/Fmin >= 10
+    assert link.step is None
+    assert link.step_status == STEP_WITHHELD_INSUFFICIENT_BANDWIDTH
+    # The frequency-domain result stays available; only the step is gated.
+    assert link.metrics.phase_margin_deg is not None

@@ -12,6 +12,7 @@ from power_control_tools.fra import (
     auto_design_controller,
     fit_rational_frequency_response,
     load_fra_file,
+    validate_fitted_open_loop,
 )
 from power_control_tools.fra.analysis import phase_margin_from_unwrapped_phase
 from power_control_tools.models import ControllerKind
@@ -90,12 +91,14 @@ def test_real_bode100_full_band_five_pole_fit_is_rejected_as_low_confidence():
     assert np.all(np.isfinite(result.fitted_response.imag))
 
 
-def test_real_bode100_control_band_can_be_approximated_but_not_called_physical_model():
+def test_real_bode100_control_band_fit_is_close_but_step_is_not_authorized():
     data, loop = _real_bode100()
     mask = (data.frequency_hz >= 150.0) & (data.frequency_hz <= 15_000.0)
+    f_band = data.frequency_hz[mask]
+    loop_band = loop[mask]
     result = fit_rational_frequency_response(
-        data.frequency_hz[mask],
-        loop[mask],
+        f_band,
+        loop_band,
         max_poles=5,
         focus_hz=296.59103982069337,
         fit_delay=True,
@@ -113,6 +116,16 @@ def test_real_bode100_control_band_can_be_approximated_but_not_called_physical_m
     assert result.metrics.focus_magnitude_rms_db < 0.7
     assert result.metrics.focus_phase_rms_deg is not None
     assert result.metrics.focus_phase_rms_deg < 4.0
+
+    # Despite the good local Bode fit, 150 Hz is only about 2x below the
+    # 296.6-Hz crossover. DC/low-frequency dynamics are therefore unconstrained
+    # and a fitted step must remain disabled.
+    validation = validate_fitted_open_loop(f_band, loop_band, result)
+    assert not validation.time_domain_coverage_ok
+    assert validation.low_frequency_ratio_to_fc is not None
+    assert validation.low_frequency_ratio_to_fc < 10.0
+    assert not validation.passed
+    assert validation.status == "REVIEW"
 
 
 def test_real_bode100_auto_design_stress_rejects_pm_only_bad_global_candidate():

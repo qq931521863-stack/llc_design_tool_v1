@@ -39,6 +39,8 @@ from power_control_tools.fra.analysis import (
     digital_frequency_response,
 )
 from power_control_tools.fra.fitting import (
+    DEFAULT_MIN_HIGH_FREQUENCY_RATIO_TO_FC,
+    DEFAULT_MIN_LOW_FREQUENCY_RATIO_TO_FC,
     FitClosedLoopStepResult,
     RationalPlantModel,
     step_result_from_response,
@@ -53,6 +55,7 @@ STEP_WITHHELD_LOW_CONFIDENCE = "WITHHELD_LOW_FIT_CONFIDENCE"
 STEP_WITHHELD_UNSTABLE_PLANT = "WITHHELD_PLANT_MODEL_NOT_STABLE"
 STEP_WITHHELD_LOOP_FAIL = "WITHHELD_LOOP_MARGIN_FAIL"
 STEP_WITHHELD_UNSTABLE_LOOP = "WITHHELD_CLOSED_LOOP_UNSTABLE"
+STEP_WITHHELD_INSUFFICIENT_BANDWIDTH = "WITHHELD_INSUFFICIENT_STEP_BANDWIDTH"
 STEP_DISABLED = "DISABLED"
 STEP_OK = "OK"
 
@@ -227,6 +230,32 @@ def _plant_model_is_stable(model: RationalPlantModel) -> bool:
     return bool(np.all(np.real(poles) < 1e-9))
 
 
+def step_bandwidth_coverage(
+    crossover_hz: float | None,
+    f_min_hz: float,
+    f_max_hz: float,
+    *,
+    min_low_ratio: float = DEFAULT_MIN_LOW_FREQUENCY_RATIO_TO_FC,
+    min_high_ratio: float = DEFAULT_MIN_HIGH_FREQUENCY_RATIO_TO_FC,
+) -> tuple[bool, float | None, float | None]:
+    """Decide whether the analysed band constrains a closed-loop step.
+
+    A good local fit around crossover does not constrain DC or high-frequency
+    behaviour, so a step prediction would be extrapolation.  The thresholds are
+    shared with :func:`validate_fitted_open_loop` (FRA deep audit 7.3) so the
+    fitted-loop and identified-plant step paths cannot drift apart.
+
+    Returns ``(ok, fc_over_fmin, fmax_over_fc)``.
+    """
+    if crossover_hz is None or not math.isfinite(float(crossover_hz)) or float(crossover_hz) <= 0.0:
+        return False, None, None
+    fc = float(crossover_hz)
+    low_ratio = fc / float(f_min_hz)
+    high_ratio = float(f_max_hz) / fc
+    ok = low_ratio >= float(min_low_ratio) and high_ratio >= float(min_high_ratio)
+    return bool(ok), float(low_ratio), float(high_ratio)
+
+
 def link_plant_model_with_controller(
     plant_model: RationalPlantModel,
     controller: DigitalTransferFunction,
@@ -290,19 +319,32 @@ def link_plant_model_with_controller(
             status = STEP_WITHHELD_LOOP_FAIL
             note = "Linked open loop fails its margin check; the step prediction is withheld."
         else:
-            candidate = closed_loop_step_from_plant_and_controller(
-                plant_model,
-                controller,
-                samples=step_samples,
-                extra_delay_samples=extra_delay_samples,
-            )
-            if candidate.stable:
-                step = candidate
-                status = STEP_OK
-                note = candidate.note
+            coverage_ok, low_ratio, high_ratio = step_bandwidth_coverage(metrics.main_crossover_hz, low, limit)
+            if not coverage_ok:
+                status = STEP_WITHHELD_INSUFFICIENT_BANDWIDTH
+                rendered_low = "n/a" if low_ratio is None else f"{low_ratio:.3g}"
+                rendered_high = "n/a" if high_ratio is None else f"{high_ratio:.3g}"
+                note = (
+                    "Analysed band does not constrain the step: requires Fc/Fmin >= "
+                    f"{DEFAULT_MIN_LOW_FREQUENCY_RATIO_TO_FC:g} and Fmax/Fc >= "
+                    f"{DEFAULT_MIN_HIGH_FREQUENCY_RATIO_TO_FC:g} "
+                    f"(got {rendered_low} and {rendered_high}). Widen the identified band; "
+                    "FC/PM from this band are still valid."
+                )
             else:
-                status = STEP_WITHHELD_UNSTABLE_LOOP
-                note = candidate.note
+                candidate = closed_loop_step_from_plant_and_controller(
+                    plant_model,
+                    controller,
+                    samples=step_samples,
+                    extra_delay_samples=extra_delay_samples,
+                )
+                if candidate.stable:
+                    step = candidate
+                    status = STEP_OK
+                    note = candidate.note
+                else:
+                    status = STEP_WITHHELD_UNSTABLE_LOOP
+                    note = candidate.note
 
     return PlantControllerLinkResult(
         f,
@@ -326,8 +368,10 @@ __all__ = [
     "STEP_WITHHELD_LOOP_FAIL",
     "STEP_WITHHELD_UNSTABLE_LOOP",
     "STEP_WITHHELD_UNSTABLE_PLANT",
+    "STEP_WITHHELD_INSUFFICIENT_BANDWIDTH",
     "closed_loop_step_from_plant_and_controller",
     "discretize_plant_model",
     "link_plant_model_with_controller",
     "plant_model_polynomials_rad_s",
+    "step_bandwidth_coverage",
 ]

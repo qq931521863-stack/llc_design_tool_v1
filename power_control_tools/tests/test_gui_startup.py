@@ -23,7 +23,7 @@ def test_control_tools_window_initializes_without_early_tab_signal():
     app.processEvents()
 
 
-def test_fra_loop_designer_window_initializes():
+def test_fra_loop_designer_window_initializes_and_no_data_state_is_safe():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     qt_widgets = pytest.importorskip("PySide6.QtWidgets")
     from power_control_tools.fra.models import FRAMeasurementKind, FRASourceFormat
@@ -36,7 +36,13 @@ def test_fra_loop_designer_window_initializes():
     assert window.measurement_kind.currentData() == FRAMeasurementKind.PLANT
     assert window.new_mode.currentData() == "quick"
     assert window.centralWidget() is not None
+
+    # Explicit no-data calculation must leave the tool in a safe state even
+    # if the button's initial visual enabled state depends on widget creation.
+    window.recalculate()
     assert not window.export_button.isEnabled()
+    assert window.current_new_controller is None
+    assert "请先导入" in window.summary.toPlainText()
 
     window.close()
     app.processEvents()
@@ -91,6 +97,7 @@ def test_fra_advanced_actions_and_dialogs_initialize():
     auto = FRAAutoDesignDialog(window)
     model = FRAModelFitDialog(window)
     assert auto.pm.value() == 60.0
+    assert not auto.apply_button.isEnabled()
     assert model.max_order.value() == 5
 
     auto.close()
@@ -113,11 +120,15 @@ def test_launcher_exposes_fra_loop_designer_as_top_level_workspace():
     app.processEvents()
 
 
-def _plant_measurement():
-    """Synthetic Equivalent Plant with one pole and 5 us of pure delay."""
+def _plant_measurement(low_hz: float = 1.0):
+    """Synthetic Equivalent Plant with one pole and 5 us of pure delay.
+
+    The default band starts far enough below the ~95 Hz crossover that the
+    fitted model satisfies the step bandwidth-coverage gate (audit 7.3).
+    """
     from power_control_tools.fra.models import FRAMeasurement, FRASourceFormat
 
-    f = np.geomspace(10.0, 15_000.0, 360)
+    f = np.geomspace(low_hz, 15_000.0, 360)
     plant = 2.0 / (1.0 + 1j * f / 300.0) * np.exp(-1j * 2.0 * np.pi * f * 5e-6)
     return FRAMeasurement(
         f,

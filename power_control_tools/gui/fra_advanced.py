@@ -469,6 +469,9 @@ class FRAModelFitDialog(QDialog):
                     f"PM error: {validation.phase_margin_error_deg if validation.phase_margin_error_deg is not None else 'N/A'} deg",
                     f"GM error: {validation.gain_margin_error_db if validation.gain_margin_error_db is not None else 'N/A'} dB",
                     f"Fitted closed-loop stable: {validation.fitted_closed_loop_stable}",
+                    f"Step bandwidth coverage: {'OK' if validation.time_domain_coverage_ok else 'INSUFFICIENT'}"
+                    f" (Fc/Fmin={validation.low_frequency_ratio_to_fc if validation.low_frequency_ratio_to_fc is not None else 'N/A'},"
+                    f" Fmax/Fc={validation.high_frequency_ratio_to_fc if validation.high_frequency_ratio_to_fc is not None else 'N/A'})",
                     f"Note: {validation.note}",
                 ]
             lines += [
