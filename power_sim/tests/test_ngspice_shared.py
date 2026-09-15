@@ -39,9 +39,12 @@ def test_shared_ngspice_background_transient_streams_senddata_if_library_install
     points: list[tuple[int, float, float]] = []
 
     def on_data(index: int, values: dict[str, complex]) -> None:
+        # shared-ngspice SendData exposes saved node voltages by their internal
+        # vector name ("out"), while ngGet_Vec_Info accepts expression syntax
+        # ("v(out)").  This test intentionally checks the raw callback contract.
         lowered = {name.lower(): value for name, value in values.items()}
-        if "time" in lowered and "v(out)" in lowered:
-            points.append((index, float(lowered["time"].real), float(lowered["v(out)"].real)))
+        if "time" in lowered and "out" in lowered:
+            points.append((index, float(lowered["time"].real), float(lowered["out"].real)))
 
     session = NgSpiceSharedLibrary(library)
     session.initialize(data_callback=on_data)
@@ -59,15 +62,13 @@ def test_shared_ngspice_background_transient_streams_senddata_if_library_install
     assert rc == 0
     session.run_background(timeout_s=20.0)
 
-    # Independent evidence that transient analysis actually completed. This
-    # separates simulator execution from callback ABI/name-mapping failures.
     time_vector = session.vector("time")
     out_vector = session.vector("v(out)")
     assert len(time_vector) > 20
     assert len(out_vector) == len(time_vector)
 
     diagnostic = (
-        f"SendData callback did not stream usable transient points; "
+        f"SendData transient callback mismatch; "
         f"data_cb={session.data_callback_count}, init_cb={session.init_callback_count}, "
         f"init_names={session.init_vector_names}, last_names={session.last_data_names}, "
         f"plot={session.current_plot()!r}, all_vecs={session.all_vectors()}, "
@@ -75,6 +76,8 @@ def test_shared_ngspice_background_transient_streams_senddata_if_library_install
         f"messages_tail={session.messages[-12:]}"
     )
     assert session.data_callback_count > 20, diagnostic
+    assert session.init_callback_count >= 1, diagnostic
+    assert "out" in {name.lower() for name in session.init_vector_names}, diagnostic
     assert len(points) > 20, diagnostic
 
     times = np.asarray([item[1] for item in points])
