@@ -18,6 +18,7 @@ from llc_design.gui import theme
 from llc_design.gui.help import show_help
 from llc_design.i18n import t
 from llc_design.gui.main_window import LLCMainWindow
+from llc_design.gui.closed_loop_install import install_closed_loop_verification
 from pfc_design.gui.main_window import PFCMainWindow
 from power_control_tools.gui.fra_advanced import install_advanced_fra_actions
 from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
@@ -119,6 +120,9 @@ class WorkspaceApplicationController:
 
     def __init__(self, initial_spec: LLCDesignSpec) -> None:
         self.llc_window = LLCMainWindow(initial_spec)
+        # Closed-loop verification is an LLC design stage, not another top-level
+        # workspace: power design -> exact digital H(z) -> shared-ngspice verify.
+        install_closed_loop_verification(self.llc_window)
         self.pfc_window = PFCMainWindow()
         self.control_window = ControlToolsMainWindow()
         self.fra_window = FRALoopDesignerWindow()
@@ -129,6 +133,9 @@ class WorkspaceApplicationController:
         self.control_window.workspace_switch_requested.connect(self._handle_request)
         self.fra_window.workspace_switch_requested.connect(self._handle_request)
         self.control_window.digital_design_updated.connect(self.llc_window.set_external_control_design)
+        self.control_window.digital_design_updated.connect(
+            lambda digital, label="": self.llc_window.refresh_closed_loop_controller()
+        )
 
     def start(self) -> bool:
         dialog = WorkspaceSelectionDialog()
