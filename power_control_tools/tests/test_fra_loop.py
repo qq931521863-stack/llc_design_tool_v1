@@ -7,7 +7,9 @@ from power_control_tools.fra import (
     analyze_loop_response,
     deembed_controller,
     digital_frequency_response,
+    firmware_feedback_a_to_denominator,
     load_fra_file,
+    scale_digital_controller,
 )
 from power_control_tools.models import DigitalTransferFunction
 
@@ -84,6 +86,64 @@ def test_exact_digital_deembed_rebuilds_measured_loop():
     assert result.magnitude_error_db_max < 1e-10
     assert result.phase_error_deg_max < 1e-10
     assert np.allclose(result.equivalent_plant, plant, rtol=1e-12, atol=1e-12)
+
+
+def test_quick_tune_unity_scales_reproduce_existing_controller_and_loop():
+    f = np.geomspace(20.0, 8_000.0, 160)
+    old = DigitalTransferFunction(
+        b=(0.18, -0.31, 0.14),
+        a=(1.0, -1.72, 0.74),
+        sample_rate_hz=40_000.0,
+        name="existing 2P2Z",
+    )
+    old_h = digital_frequency_response(old, f)
+    plant = 0.8 / ((1.0 + 1j * f / 900.0) * (1.0 + 1j * f / 7000.0))
+    measured = plant * old_h
+    extracted = deembed_controller(measured, old_h).equivalent_plant
+
+    tuned = scale_digital_controller(old)
+    tuned_h = digital_frequency_response(tuned, f)
+    rebuilt = extracted * tuned_h
+
+    assert np.allclose(tuned.b, old.normalized().b, rtol=0.0, atol=1e-15)
+    assert np.allclose(tuned.a, old.normalized().a, rtol=0.0, atol=1e-15)
+    assert np.allclose(rebuilt, measured, rtol=1e-12, atol=1e-12)
+
+
+def test_quick_tune_global_gain_moves_magnitude_without_phase_change():
+    f = np.geomspace(10.0, 10_000.0, 100)
+    base = DigitalTransferFunction(
+        b=(0.25, -0.20),
+        a=(1.0, -0.95),
+        sample_rate_hz=40_000.0,
+        name="existing",
+    )
+    h0 = digital_frequency_response(base, f)
+    h1 = digital_frequency_response(scale_digital_controller(base, gain_scale=2.0), f)
+    ratio = h1 / h0
+    assert np.allclose(np.abs(ratio), 2.0, rtol=1e-12, atol=1e-12)
+    assert np.max(np.abs(np.angle(ratio, deg=True))) < 1e-10
+
+
+def test_quick_tune_individual_ba_scales_are_exact():
+    base = DigitalTransferFunction(
+        b=(1.0, -2.0, 3.0),
+        a=(1.0, -0.8, 0.15),
+        sample_rate_hz=50_000.0,
+        name="2P2Z",
+    )
+    tuned = scale_digital_controller(
+        base,
+        gain_scale=1.5,
+        numerator_scales=(1.0, 0.5, 2.0),
+        denominator_scales=(1.25, 0.5),
+    )
+    assert np.allclose(tuned.b, (1.5, -1.5, 9.0))
+    assert np.allclose(tuned.a, (1.0, -1.0, 0.075))
+
+
+def test_firmware_plus_a_convention_converts_to_canonical_denominator():
+    assert firmware_feedback_a_to_denominator((0.8, -0.15)) == (1.0, -0.8, 0.15)
 
 
 def test_loop_margin_and_sensitivity_from_measured_points():
