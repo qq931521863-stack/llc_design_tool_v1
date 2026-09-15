@@ -51,9 +51,30 @@ Canonical coefficient convention:
 
 `y[n] = sum(b[k] x[n-k]) - sum(a[k] y[n-k])`
 
-If firmware stores the recurrence as `y[n] = sum(b[k]x[n-k]) + sum(A[k]y[n-k])`, convert feedback coefficients before entry: `a[k] = -A[k]`. V1 does not silently guess the sign convention.
+For firmware that stores the recurrence as `y[n] = sum(b[k]x[n-k]) + sum(A[k]y[n-k])`, the GUI provides an explicit `Firmware +A` coefficient convention and converts `a[k] = -A[k]`. The software must never silently guess the feedback sign convention.
 
-## New controller design
+## Controller tuning modes
+
+### Quick Tune — preferred for field/debug work
+
+When Complete Loop TS is selected, the current controller is the baseline. Unity tuning scales reproduce the measured loop exactly within numerical precision.
+
+For exact B/A input, Quick Tune operates directly on the existing digital controller without attempting controller-structure identification:
+
+- Global numerator gain scale `Kx`
+- Per-numerator coefficient scales `b0x ... b3x`
+- Per-feedback coefficient scales `a1x ... a3x`
+
+This is intended for common PI / 2P2Z / 3P3Z firmware controllers up to third order. Coefficient signs are preserved by the normal positive slider range; Expert entry remains available for exact coefficients.
+
+For existing `PI Kp + Ti`, Quick Tune exposes only:
+
+- `Kp / loop-gain scale`
+- `Ti scale`
+
+The same sample rate and discretization method are retained.
+
+### New Structure — controller redesign
 
 Reuse the existing `power_control_tools` controller engine:
 
@@ -82,6 +103,8 @@ For every controller change:
 
 Multiple gain crossovers are reported explicitly as a warning condition.
 
+If the measured frequency range does not contain a phase crossover, gain margin is **not proven**; the result must be marked for review instead of silently treating GM as satisfied.
+
 ## Bode100 phase convention
 
 The Bode100 importer preserves the raw phase and defaults to a `-180 deg` loop-injection correction. The GUI exposes the phase offset so the user can override the convention when required by a different injection setup.
@@ -91,6 +114,8 @@ The provided hardware sample is used as a regression anchor around its measured 
 ## Digital-frequency limit
 
 Controller-based stability analysis is limited to `0.49 * Fs` (and to the lower old/new controller limit during de-embedding). Imported measurement data above this limit remains visible for context but is excluded from computed margins.
+
+For Complete Loop TS, the extracted Equivalent Plant is only presented as valid below the existing controller's `0.49 * Fs` limit. Above that point the imported measurement can still be shown for context, but the controller-divided plant must not be presented as a trusted extracted plant.
 
 ## Output
 
