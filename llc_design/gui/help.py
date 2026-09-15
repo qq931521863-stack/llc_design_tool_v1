@@ -181,7 +181,7 @@ TD（分段时域）
         ("README", "README.md"),
         ("V9 数字控制基线", "V9_DIGITAL_CONTROL_BASELINE.md"),
         ("V8 实现说明", "V8_IMPLEMENTATION_NOTES.md"),
-        ("V9.2.0 发布说明", "DC/release_v9.2.0.md"),
+        ("V9.2.1 发布说明", "DC/release_v9.2.1.md"),
     ),
 )
 
@@ -266,7 +266,7 @@ Vienna（三相）
     ),
     docs=(
         ("README", "README.md"),
-        ("V9.2.0 发布说明", "DC/release_v9.2.0.md"),
+        ("V9.2.1 发布说明", "DC/release_v9.2.1.md"),
         ("PFC 控制台变更", "PFC_CONTROL_LAB_CHANGELOG.txt"),
     ),
 )
@@ -380,7 +380,7 @@ FIR 窗函数、滑动平均与 DC Blocker。
     ),
     docs=(
         ("README", "README.md"),
-        ("V9.2.0 发布说明", "DC/release_v9.2.0.md"),
+        ("V9.2.1 发布说明", "DC/release_v9.2.1.md"),
     ),
 )
 
@@ -554,7 +554,7 @@ Complete Loop 模式下 PWM、ADC、采样/滤波与真实延时不会重复添�
         ("V1.5 / V2 契约", "DC/FRA_LOOP_DESIGNER_V1_5_V2.md"),
         ("FRA 深度审计", "DC/FRA_DEEP_AUDIT_2026-09-15.md"),
         ("审计附加说明", "DC/FRA_DEEP_AUDIT_ADDENDUM_2026-09-15.md"),
-        ("V9.2.0 发布说明", "DC/release_v9.2.0.md"),
+        ("V9.2.1 发布说明", "DC/release_v9.2.1.md"),
     ),
 )
 

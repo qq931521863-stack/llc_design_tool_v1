@@ -1,4 +1,4 @@
-# Power Design Toolkit V9.2.0
+# Power Design Toolkit V9.2.1
 
 Integrated engineering design and control-analysis toolkit for:
 
@@ -56,9 +56,11 @@ Legend: 🚀 Feature · 🐛 Bugfix · 🎨 GUI/UX · 🧪 Test/CI/Build
 | 2026-09-15 / V9.2.0 | 🐛 | 修复 LEAD / LAG / 1P1Z / Modified PI 在 FRA 界面下 `fz_hz` / `fp_hz` 未映射而静默使用引擎默认值；补齐 Type-II/III 的 `fp0` |
 | 2026-09-15 / V9.2.0 | 🧪 | **阶跃门控统一**：拟合环路与辨识被控对象两条 Step 路径共用同一带宽覆盖判据（`Fc/Fmin ≥ 10`、`Fmax/Fc ≥ 5`），置信度 LOW / 模型含右半平面极点 / 环路裕度 FAIL / 闭环不稳定时一律不给 Step 并说明原因 |
 | 2026-09-15 / V9.2.0 | 🧪 | 新增 FRA 深度审计报告与回归：多圈相位与重复穿越裕度、Bode100 实测夹具列一致性、Auto Power 2P2Z 精确 H(z) 导出并与 float32 C99 数值对照、控制工具全类型可构造性 |
-| 2026-09-15 / V9.2.1 | 🚀 | 新增**应用内帮助系统**：四个工作区工具栏各加「帮助」（F1），含快速上手、页面与参数说明、模型边界与已知限制、快捷键与文档链接；功能选择页新增「使用说明 / 帮助 (F1)」。此前应用内只有一段「关于」弹窗 |
+| 2026-09-15 / V9.2.1 | 🚀 | 新增**应用内帮助系统**：四个工作区工具栏各加「帮助」（F1），含快速上手、页面与参数说明、**实现说明**、模型边界与已知限制、快捷键与文档链接；功能选择页新增「使用说明 / 帮助 (F1)」。此前应用内只有一段「关于」弹窗 |
+| 2026-09-15 / V9.2.1 | 🚀 | 帮助与 README 写明**实现原理**：FHA/HB/TD 的求解方式、数字环混合域求值与延时拆分、采样链“采样块/固件块”不重复计数、Tustin/预畸变/后向欧拉映射公式、C99 DF2T/SOS 递推式与系数符号、稳定性判定阈值、FRA 剥离与重建、变量投影有理拟合、ZOH 闭环与系数对齐、Auto Design 综合流程 |
+| 2026-09-15 / V9.2.1 | 🚀 | 新增**联系与支持**（README + 每个工作区帮助）：邮箱 maileyang@qq.com、微信 maileyang、公众号/技术博客「开关电源仿真与实用设计」与二维码；内置“有不懂的直接发邮件”邀请及邮件应附信息清单 |
 
-本版使用说明与已知限制见 [V9.2.0 发布说明](DC/release_v9.2.0.md)。
+本版使用说明与已知限制见 [V9.2.1 发布说明](DC/release_v9.2.1.md)。
 
 ## Install
 
@@ -385,7 +387,7 @@ The source tree includes unit/regression tests covering LLC tank/magnetics/digit
 Current full-suite result (Linux, gcc available, `pip install -e ".[dev,web,gui]"`, `QT_QPA_PLATFORM=offscreen`):
 
 ```text
-376 passed, 2 xfailed
+380 passed, 2 xfailed
 ```
 
 The five `verify_c99_filter` regressions compile and step the generated C against the Python reference, so they only run where a C compiler is on `PATH`; without one those cases fail with `C compiler not found` rather than being skipped.
