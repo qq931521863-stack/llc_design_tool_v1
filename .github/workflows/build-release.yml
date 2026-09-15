@@ -30,7 +30,7 @@ jobs:
       - name: Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk
+          sudo apt-get install -y fonts-noto-cjk libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0
           python -m pip install --upgrade pip
           # Include GUI dependencies so launcher/FRA offscreen smoke tests really run
           # instead of being silently skipped by pytest.importorskip().
@@ -83,6 +83,7 @@ jobs:
           python -m PyInstaller --noconfirm --clean --windowed --name PowerDesignTool \
             --collect-data llc_design --collect-data pfc_design --collect-data power_codegen \
             --collect-submodules llc_design --collect-submodules pfc_design --collect-submodules power_codegen \
+            --collect-submodules power_control_tools \
             packaging/launcher.py
         shell: bash
 
