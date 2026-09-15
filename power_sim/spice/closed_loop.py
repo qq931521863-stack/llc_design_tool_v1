@@ -239,9 +239,6 @@ def run_llc_shared_closed_loop(
             if value is not None:
                 vector_lists[name].append(float(value.real))
 
-        # GetSyncData constrains the transient solver to land on every control
-        # sample. A while loop still makes the callback robust to small floating
-        # tolerance or simulator versions that emit a point just beyond a tick.
         while time_s + tolerance >= next_sample_s and next_sample_s <= simulation.duration_s + tolerance:
             execute_controller(next_sample_s, latest_vout)
 
@@ -255,13 +252,10 @@ def run_llc_shared_closed_loop(
     if rc != 0:
         raise RuntimeError(f"ngSpice_Circ failed with status {rc}: {' | '.join(session.messages[-20:])}")
 
-    # SendData is the streaming callback used by shared-ngspice background
-    # analysis. Synchronous `run` completes the circuit but does not provide the
-    # per-point callback stream required to execute the discrete controller.
-    rc = session.command("bg_run")
-    if rc != 0:
-        raise RuntimeError(f"shared ngspice bg_run failed to start with status {rc}")
-    session.wait_until_idle(timeout_s=simulation.wall_timeout_s)
+    # sharedspice streams SendData from its background analysis path. Waiting on
+    # the explicit worker start/stop callbacks avoids returning before the first
+    # transient point is accepted on fast simulations.
+    session.run_background(timeout_s=simulation.wall_timeout_s)
 
     if session.exit_status not in (None, 0):
         raise RuntimeError(
