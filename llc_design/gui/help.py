@@ -758,7 +758,8 @@ def help_topic(key: str) -> HelpTopic:
 
 
 def topic_titles(key: str) -> list[str]:
-    return [section.title for section in help_topic(key).sections]
+    """Section titles in the active language (source titles stay in the topic)."""
+    return [t(section.title) for section in help_topic(key).sections]
 
 
 def _escape(text: str) -> str:
