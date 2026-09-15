@@ -23,6 +23,7 @@ from .shared import NgSpiceSharedLibrary, find_ngspice_shared_library
 from .llc import LLCSpiceConfig, build_ideal_llc_circuit, default_llc_transient_window
 from .gate import FrequencySegment, FrequencyTimeline, LLCFullBridgeGateScheduler
 from .sync import SyncEvent, LLCCoSimulationSynchronizer
+from .closed_loop import NgSpiceClosedLoopConfig, NgSpiceClosedLoopResult, run_llc_shared_closed_loop
 
 __all__ = [
     "CircuitIR",
@@ -48,4 +49,7 @@ __all__ = [
     "LLCFullBridgeGateScheduler",
     "SyncEvent",
     "LLCCoSimulationSynchronizer",
+    "NgSpiceClosedLoopConfig",
+    "NgSpiceClosedLoopResult",
+    "run_llc_shared_closed_loop",
 ]
