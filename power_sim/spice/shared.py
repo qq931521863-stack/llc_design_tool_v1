@@ -1,7 +1,7 @@
 """Typed wrapper around ngspice's shared-library API.
 
 The shared backend is the continuous-state path for digital closed-loop
-co-simulation.  Controller mathematics deliberately remain in
+co-simulation. Controller mathematics deliberately remain in
 ``power_sim.digital_control``; this module only owns the simulator interface.
 """
 from __future__ import annotations
@@ -150,6 +150,10 @@ class NgSpiceSharedLibrary:
         self.status_messages: list[str] = []
         self.exit_status: int | None = None
         self.background_running = False
+        self.data_callback_count = 0
+        self.init_callback_count = 0
+        self.init_vector_names: tuple[str, ...] = ()
+        self.last_data_names: tuple[str, ...] = ()
         self._data_callback: DataCallback | None = None
         self._vsrc_callback: ExternalSourceCallback | None = None
         self._isrc_callback: ExternalSourceCallback | None = None
@@ -167,8 +171,13 @@ class NgSpiceSharedLibrary:
     def _configure_symbols(self) -> None:
         self.lib.ngSpice_Init.restype = ct.c_int
         self.lib.ngSpice_Init.argtypes = [
-            SendCharCB, SendStatCB, ControlledExitCB, SendDataCB,
-            SendInitDataCB, BGThreadRunningCB, ct.c_void_p,
+            SendCharCB,
+            SendStatCB,
+            ControlledExitCB,
+            SendDataCB,
+            SendInitDataCB,
+            BGThreadRunningCB,
+            ct.c_void_p,
         ]
         self.lib.ngSpice_Command.restype = ct.c_int
         self.lib.ngSpice_Command.argtypes = [ct.c_char_p]
@@ -178,6 +187,10 @@ class NgSpiceSharedLibrary:
         self.lib.ngGet_Vec_Info.argtypes = [ct.c_char_p]
         self.lib.ngSpice_CurPlot.restype = ct.c_char_p
         self.lib.ngSpice_CurPlot.argtypes = []
+        self.lib.ngSpice_AllPlots.restype = ct.POINTER(ct.c_char_p)
+        self.lib.ngSpice_AllPlots.argtypes = []
+        self.lib.ngSpice_AllVecs.restype = ct.POINTER(ct.c_char_p)
+        self.lib.ngSpice_AllVecs.argtypes = [ct.c_char_p]
         self.lib.ngSpice_running.restype = ct.c_bool
         self.lib.ngSpice_running.argtypes = []
         self.lib.ngSpice_SetBkpt.restype = ct.c_bool
@@ -185,13 +198,32 @@ class NgSpiceSharedLibrary:
         if hasattr(self.lib, "ngSpice_Init_Sync"):
             self.lib.ngSpice_Init_Sync.restype = ct.c_int
             self.lib.ngSpice_Init_Sync.argtypes = [
-                GetVSRCDataCB, GetISRCDataCB, GetSyncDataCB,
-                ct.POINTER(ct.c_int), ct.c_void_p,
+                GetVSRCDataCB,
+                GetISRCDataCB,
+                GetSyncDataCB,
+                ct.POINTER(ct.c_int),
+                ct.c_void_p,
             ]
 
     @staticmethod
     def _decode(value: bytes | None) -> str:
         return value.decode("utf-8", errors="replace") if value else ""
+
+    @staticmethod
+    def _decode_null_terminated(array: ct.POINTER(ct.c_char_p) | None) -> tuple[str, ...]:
+        if not array:
+            return ()
+        values: list[str] = []
+        i = 0
+        while True:
+            item = array[i]
+            if not item:
+                break
+            values.append(item.decode("utf-8", errors="replace"))
+            i += 1
+            if i > 100_000:
+                raise RuntimeError("ngspice returned an unterminated string array")
+        return tuple(values)
 
     def initialize(
         self,
@@ -227,7 +259,7 @@ class NgSpiceSharedLibrary:
         @SendDataCB
         def send_data(values_ptr, count, ident, userdata):
             del count, ident, userdata
-            if self._data_callback is None or not values_ptr:
+            if not values_ptr:
                 return 0
             values = values_ptr.contents
             point: dict[str, complex] = {}
@@ -237,23 +269,36 @@ class NgSpiceSharedLibrary:
                     continue
                 item = item_ptr.contents
                 point[self._decode(item.name)] = complex(
-                    item.creal, item.cimag if item.is_complex else 0.0
+                    item.creal,
+                    item.cimag if item.is_complex else 0.0,
                 )
-            self._data_callback(int(values.vecindex), point)
+            self.data_callback_count += 1
+            self.last_data_names = tuple(point.keys())
+            if self._data_callback is not None:
+                self._data_callback(int(values.vecindex), point)
             return 0
 
         @SendInitDataCB
-        def send_init_data(info, ident, userdata):
-            del info, ident, userdata
+        def send_init_data(info_ptr, ident, userdata):
+            del ident, userdata
+            self.init_callback_count += 1
+            if not info_ptr:
+                self.init_vector_names = ()
+                return 0
+            info = info_ptr.contents
+            names: list[str] = []
+            for i in range(int(info.veccount)):
+                item_ptr = info.vecs[i]
+                if item_ptr:
+                    names.append(self._decode(item_ptr.contents.vecname))
+            self.init_vector_names = tuple(names)
             return 0
 
         @BGThreadRunningCB
         def bg_running(exited, ident, userdata):
             del ident, userdata
-            # ngspice's current implementation passes its internal fl_exited:
-            # FALSE when the worker starts, TRUE when it exits. This is opposite
-            # to the historical header comment, so lifecycle handling follows
-            # the implementation and ngSpice_running() rather than the comment.
+            # ngspice currently passes its internal fl_exited value here:
+            # FALSE when the worker starts, TRUE when it exits.
             if bool(exited):
                 self.background_running = False
                 if self._bg_started.is_set():
@@ -264,7 +309,14 @@ class NgSpiceSharedLibrary:
                 self._bg_finished.clear()
             return 0
 
-        self._callbacks = [send_char, send_stat, controlled_exit, send_data, send_init_data, bg_running]
+        self._callbacks = [
+            send_char,
+            send_stat,
+            controlled_exit,
+            send_data,
+            send_init_data,
+            bg_running,
+        ]
         rc = int(self.lib.ngSpice_Init(*self._callbacks, None))
         if rc != 0:
             raise RuntimeError(f"ngSpice_Init failed with status {rc}")
@@ -296,8 +348,11 @@ class NgSpiceSharedLibrary:
                 del ident, userdata
                 if delta_ptr and self._sync_callback is not None:
                     requested = self._sync_callback(
-                        float(time_s), float(delta_ptr[0]), float(old_delta),
-                        int(redostep), int(location)
+                        float(time_s),
+                        float(delta_ptr[0]),
+                        float(old_delta),
+                        int(redostep),
+                        int(location),
                     )
                     if requested is not None and requested > 0.0:
                         delta_ptr[0] = float(requested)
@@ -305,9 +360,15 @@ class NgSpiceSharedLibrary:
 
             self._callbacks.extend([get_vsrc, get_isrc, get_sync])
             ident = ct.c_int(0)
-            rc = int(self.lib.ngSpice_Init_Sync(
-                get_vsrc, get_isrc, get_sync, ct.byref(ident), None
-            ))
+            rc = int(
+                self.lib.ngSpice_Init_Sync(
+                    get_vsrc,
+                    get_isrc,
+                    get_sync,
+                    ct.byref(ident),
+                    None,
+                )
+            )
             if rc != 0:
                 raise RuntimeError(f"ngSpice_Init_Sync failed with status {rc}")
         self._initialized = True
@@ -328,14 +389,24 @@ class NgSpiceSharedLibrary:
     def current_plot(self) -> str:
         return self._decode(self.lib.ngSpice_CurPlot())
 
+    def all_plots(self) -> tuple[str, ...]:
+        return self._decode_null_terminated(self.lib.ngSpice_AllPlots())
+
+    def all_vectors(self, plot_name: str | None = None) -> tuple[str, ...]:
+        plot = plot_name or self.current_plot()
+        if not plot:
+            return ()
+        return self._decode_null_terminated(self.lib.ngSpice_AllVecs(plot.encode("utf-8")))
+
     def set_breakpoint(self, time_s: float) -> bool:
+        # ngSpice_SetBkpt is a timestep breakpoint, not a simulation pause.
         return bool(self.lib.ngSpice_SetBkpt(float(time_s)))
 
     def is_running(self) -> bool:
         return bool(self.lib.ngSpice_running())
 
     def run_background(self, *, timeout_s: float = 30.0, poll_s: float = 0.001) -> None:
-        """Start ``bg_run`` and wait for a confirmed start and stop lifecycle."""
+        """Start ``bg_run`` and wait for confirmed start and completion."""
         timeout = float(timeout_s)
         poll = float(poll_s)
         if timeout <= 0.0 or poll <= 0.0:
@@ -362,6 +433,9 @@ class NgSpiceSharedLibrary:
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"shared ngspice did not finish within {timeout:.3g} s")
             time.sleep(poll)
+        # Ensure the finish callback has had a chance to run before caller reads
+        # callback-side diagnostics. This is not relied on for simulation data.
+        self._bg_finished.wait(timeout=min(0.1, max(poll, 1e-4)))
         self.background_running = False
 
     def wait_until_idle(self, *, timeout_s: float = 30.0, poll_s: float = 0.001) -> None:
@@ -387,9 +461,10 @@ class NgSpiceSharedLibrary:
             return np.ctypeslib.as_array(info.v_realdata, shape=(length,)).astype(float, copy=True)
         if info.v_compdata:
             raw = np.ctypeslib.as_array(info.v_compdata, shape=(length,))
-            return np.asarray([
-                complex(item.cx_real, item.cx_imag) for item in raw
-            ], dtype=complex)
+            return np.asarray(
+                [complex(item.cx_real, item.cx_imag) for item in raw],
+                dtype=complex,
+            )
         return np.asarray([], dtype=float)
 
 
