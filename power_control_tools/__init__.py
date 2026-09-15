@@ -8,6 +8,11 @@ from .discretize import discretize_transfer_function
 from .filters import design_iir_filter, design_fir_filter, design_moving_average, design_dc_blocker
 from .analysis import analyze_digital_filter, ControlResponseAnalysis
 from .codegen import export_c99_filter, verify_c99_filter, render_c99_single_file, C99Verification
+from .fra import (
+    FRAMeasurement, FRAMeasurementKind, FRASourceFormat,
+    load_fra_file, analyze_loop_response, deembed_controller,
+    digital_frequency_response, magnitude_phase,
+)
 
 __all__ = [
     "AnalogTransferFunction", "DigitalTransferFunction", "DiscretizationMethod",
@@ -15,4 +20,6 @@ __all__ = [
     "design_controller", "discretize_transfer_function", "design_iir_filter",
     "design_fir_filter", "design_moving_average", "design_dc_blocker",
     "analyze_digital_filter", "ControlResponseAnalysis", "export_c99_filter", "verify_c99_filter", "render_c99_single_file", "C99Verification",
+    "FRAMeasurement", "FRAMeasurementKind", "FRASourceFormat", "load_fra_file",
+    "analyze_loop_response", "deembed_controller", "digital_frequency_response", "magnitude_phase",
 ]
