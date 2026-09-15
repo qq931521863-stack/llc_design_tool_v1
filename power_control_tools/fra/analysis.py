@@ -81,6 +81,24 @@ def magnitude_phase(response: NDArray[np.complex128] | np.ndarray) -> tuple[np.n
     return mag, phase
 
 
+def phase_margin_from_unwrapped_phase(phase_deg: float) -> float:
+    """Return signed phase margin for an arbitrary unwrapped loop phase.
+
+    FRA records may legitimately unwrap below -360 deg.  The conventional
+    ``180 + phase`` expression is only valid while phase is on the branch near
+    -180 deg.  For later turns the relevant signed angular distance is to the
+    nearest odd-180-degree branch.  Wrapping ``phase + 180`` to [-180, 180)
+    gives that distance while preserving negative margin after a -180 crossing.
+
+    Examples:
+      -138 deg -> +42 deg PM
+      -313 deg -> -133 deg PM
+      -407 deg -> +133 deg PM (nearest branch is -540 deg)
+    """
+    x = float(phase_deg) + 180.0
+    return (x + 180.0) % 360.0 - 180.0
+
+
 def deembed_controller(
     measured_loop: NDArray[np.complex128] | np.ndarray,
     controller_response: NDArray[np.complex128] | np.ndarray,
@@ -172,7 +190,7 @@ def analyze_loop_response(
     gain_crossovers: list[GainCrossover] = []
     for fc in _crossings(f, mag_db, 0.0):
         phase = _interp_logx(f, phase_deg, fc)
-        gain_crossovers.append(GainCrossover(fc, phase, 180.0 + phase))
+        gain_crossovers.append(GainCrossover(fc, phase, phase_margin_from_unwrapped_phase(phase)))
 
     pmin = float(np.min(phase_deg))
     pmax = float(np.max(phase_deg))
@@ -208,8 +226,8 @@ def analyze_loop_response(
     elif worst_pm is None or worst_pm < pm_pass_deg:
         status = "REVIEW_PM"
     elif not phase_crossovers:
-        # GM cannot be claimed from a finite FRA record that never reaches a
-        # -180+360k phase crossing.  Keep the result explicitly unresolved.
+        # GM cannot be claimed from a finite FRA record that never reaches an
+        # odd-180-degree phase crossing. Keep the result explicitly unresolved.
         status = "REVIEW_GM_NOT_OBSERVED"
     elif worst_gm is None or worst_gm < gm_pass_db:
         status = "REVIEW_GM"
@@ -230,3 +248,16 @@ def analyze_loop_response(
         t,
         status,
     )
+
+
+__all__ = [
+    "GainCrossover",
+    "PhaseCrossover",
+    "LoopStabilityResult",
+    "DeembedResult",
+    "digital_frequency_response",
+    "magnitude_phase",
+    "phase_margin_from_unwrapped_phase",
+    "deembed_controller",
+    "analyze_loop_response",
+]
