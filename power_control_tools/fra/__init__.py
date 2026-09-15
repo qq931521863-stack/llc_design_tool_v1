@@ -16,6 +16,7 @@ from .analysis import (
     digital_frequency_response,
     magnitude_phase,
 )
+from .tuning import firmware_feedback_a_to_denominator, scale_digital_controller
 
 __all__ = [
     "FRAMeasurement",
@@ -30,4 +31,6 @@ __all__ = [
     "deembed_controller",
     "digital_frequency_response",
     "magnitude_phase",
+    "scale_digital_controller",
+    "firmware_feedback_a_to_denominator",
 ]
