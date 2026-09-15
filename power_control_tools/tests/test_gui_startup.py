@@ -23,7 +23,7 @@ def test_control_tools_window_initializes_without_early_tab_signal():
     app.processEvents()
 
 
-def test_fra_loop_designer_window_initializes():
+def test_fra_loop_designer_window_initializes_and_no_data_state_is_safe():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     qt_widgets = pytest.importorskip("PySide6.QtWidgets")
     from power_control_tools.fra.models import FRAMeasurementKind, FRASourceFormat
@@ -36,7 +36,13 @@ def test_fra_loop_designer_window_initializes():
     assert window.measurement_kind.currentData() == FRAMeasurementKind.PLANT
     assert window.new_mode.currentData() == "quick"
     assert window.centralWidget() is not None
+
+    # Explicit no-data calculation must leave the tool in a safe state even
+    # if the button's initial visual enabled state depends on widget creation.
+    window.recalculate()
     assert not window.export_button.isEnabled()
+    assert window.current_new_controller is None
+    assert "请先导入" in window.summary.toPlainText()
 
     window.close()
     app.processEvents()
@@ -91,6 +97,7 @@ def test_fra_advanced_actions_and_dialogs_initialize():
     auto = FRAAutoDesignDialog(window)
     model = FRAModelFitDialog(window)
     assert auto.pm.value() == 60.0
+    assert not auto.apply_button.isEnabled()
     assert model.max_order.value() == 5
 
     auto.close()
