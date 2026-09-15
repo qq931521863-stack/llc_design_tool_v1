@@ -45,6 +45,29 @@ def test_import_bode100_uses_loop_phase_convention(tmp_path):
     assert np.allclose(data.normalized_phase_deg(), [-80.0, -94.0, -140.0])
 
 
+def test_real_bode100_sample_reproduces_cursor_crossover(tmp_path):
+    """Regression points copied from the provided Bode100 hardware export.
+
+    Bode100 reports +86.325 deg at the 0-dB cursor.  With the importer loop
+    convention correction (-180 deg), this is the canonical -93.675 deg loop
+    phase and therefore an 86.325 deg phase margin.
+    """
+    path = tmp_path / "hardware_bode100.csv"
+    path.write_text(
+        'Frequency (Hz);"Trace 1: Gain: Real ";"Trace 1: Gain: Imaginary ";'
+        'Trace 1: Gain: Magnitude (dB);"Trace 2: Gain: Real ";'
+        '"Trace 2: Gain: Imaginary ";Trace 2: Gain: Phase (°)\n'
+        "275.42287;1;1;0.665377440915802;1;1;85.61464981648201\n"
+        "301.995172;1;1;-0.16225722187400488;1;1;86.49824532391638\n",
+        encoding="utf-8",
+    )
+    data = load_fra_file(path, FRASourceFormat.BODE100)
+    result = analyze_loop_response(data.frequency_hz, data.complex_response())
+    assert len(result.gain_crossovers) == 1
+    assert abs(result.main_crossover_hz - 296.59103982069337) < 1e-6
+    assert abs(result.phase_margin_deg - 86.32501701589291) < 1e-6
+
+
 def test_exact_digital_deembed_rebuilds_measured_loop():
     f = np.geomspace(10.0, 8_000.0, 120)
     controller = DigitalTransferFunction(
