@@ -56,6 +56,7 @@ Legend: 🚀 Feature · 🐛 Bugfix · 🎨 GUI/UX · 🧪 Test/CI/Build
 | 2026-09-15 / V9.2.0 | 🐛 | 修复 LEAD / LAG / 1P1Z / Modified PI 在 FRA 界面下 `fz_hz` / `fp_hz` 未映射而静默使用引擎默认值；补齐 Type-II/III 的 `fp0` |
 | 2026-09-15 / V9.2.0 | 🧪 | **阶跃门控统一**：拟合环路与辨识被控对象两条 Step 路径共用同一带宽覆盖判据（`Fc/Fmin ≥ 10`、`Fmax/Fc ≥ 5`），置信度 LOW / 模型含右半平面极点 / 环路裕度 FAIL / 闭环不稳定时一律不给 Step 并说明原因 |
 | 2026-09-15 / V9.2.0 | 🧪 | 新增 FRA 深度审计报告与回归：多圈相位与重复穿越裕度、Bode100 实测夹具列一致性、Auto Power 2P2Z 精确 H(z) 导出并与 float32 C99 数值对照、控制工具全类型可构造性 |
+| 2026-09-15 / V9.2.1 | 🚀 | 新增**应用内帮助系统**：四个工作区工具栏各加「帮助」（F1），含快速上手、页面与参数说明、模型边界与已知限制、快捷键与文档链接；功能选择页新增「使用说明 / 帮助 (F1)」。此前应用内只有一段「关于」弹窗 |
 
 本版使用说明与已知限制见 [V9.2.0 发布说明](DC/release_v9.2.0.md)。
 
@@ -328,6 +329,21 @@ llc-design --help
 python -m llc_design model-compare --help
 ```
 
+## 帮助 / HELP
+
+每个工作区工具栏右侧都有 **帮助** 按钮，**F1** 随时打开；功能选择页也有「使用说明 / 帮助 (F1)」。
+帮助内容随程序分发，不依赖浏览器或 PDF，包含：
+
+* **快速上手** — 该工作区的典型操作顺序，以及每个页面/结果页在做什么；
+* **页面与参数说明** — 控制器类型与参数对照、采样链、离散化方法、导出含义；
+* **模型边界与已知限制** — 每个工作区声明的假设与不能用来声称的结论；
+* **快捷键与操作**；
+* **打开文档** — 本地 Markdown 存在时直接打开，打包版本自动回退到 GitHub 上的同名文档。
+
+模型边界是帮助的重点内容，例如：FHA 不能用来声称 ZVS 裕度；PM/GM/Ms/Mt 不是与拓扑无关的
+闭环稳定性证明；采样 `Ms`/`Mt` 不能当作数学上界；有理拟合无法辨识不稳定的开环被控对象；
+辨识模型的 Step 在被扣留时仍然给出 `Fc`/`PM`，但不得当作时域结论。
+
 ## Validation status
 
 The source tree includes unit/regression tests covering LLC tank/magnetics/digital control/Q-ZVS, TTPL sensing/control/waveforms/PF-THD, Vienna nested-loop/midpoint/switching behavior, the Control Tools controller/filter/codegen chain, the FRA Loop Designer (import, de-embedding, margins, Auto Design, rational identification, identified-model × controller link) and the FastAPI web edition.
@@ -335,7 +351,7 @@ The source tree includes unit/regression tests covering LLC tank/magnetics/digit
 Current full-suite result (Linux, gcc available, `pip install -e ".[dev,web,gui]"`, `QT_QPA_PLATFORM=offscreen`):
 
 ```text
-369 passed, 2 xfailed
+376 passed, 2 xfailed
 ```
 
 The five `verify_c99_filter` regressions compile and step the generated C against the Python reference, so they only run where a C compiler is on `PATH`; without one those cases fail with `C compiler not found` rather than being skipped.

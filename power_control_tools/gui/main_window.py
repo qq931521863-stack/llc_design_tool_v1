@@ -22,6 +22,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from llc_design.gui import theme
+from llc_design.gui.help import install_help
 from llc_design.gui.updater import add_toolbar_right_side
 from power_control_tools.analysis import analyze_digital_filter
 from power_control_tools.codegen import export_c99_filter, render_c99_single_file, verify_c99_filter
@@ -97,7 +98,9 @@ class ControlToolsMainWindow(QMainWindow):
         for name, target in [("LLC", "llc"), ("PFC", "pfc"), ("功能选择", "home")]:
             a = QAction(name, self); a.triggered.connect(lambda checked=False, t=target: self.workspace_switch_requested.emit(t)); tb.addAction(a)
         tb.addSeparator(); a = QAction("重新计算", self); a.triggered.connect(self.recalculate); tb.addAction(a)
-        a = QAction("导出单文件 C99", self); a.triggered.connect(self.export_c99); tb.addAction(a); add_toolbar_right_side(tb, self)
+        a = QAction("导出单文件 C99", self); a.triggered.connect(self.export_c99); tb.addAction(a)
+        install_help(self, "control")
+        add_toolbar_right_side(tb, self)
 
     def _hook(self, w):
         if hasattr(w, "valueChanged"): w.valueChanged.connect(lambda *_: self.schedule())

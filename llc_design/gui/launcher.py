@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QVBoxLayout,
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from llc_design.core.spec import LLCDesignSpec
 from llc_design.gui import theme
+from llc_design.gui.help import show_help
 from llc_design.gui.main_window import LLCMainWindow
 from pfc_design.gui.main_window import PFCMainWindow
 from power_control_tools.gui.fra_advanced import install_advanced_fra_actions
@@ -77,7 +80,17 @@ class WorkspaceSelectionDialog(QDialog):
 
         cancel = QPushButton("退出")
         cancel.clicked.connect(self.reject)
-        root.addWidget(cancel, alignment=Qt.AlignmentFlag.AlignCenter)
+        help_button = QPushButton("使用说明 / 帮助 (F1)")
+        help_button.setToolTip("四个工作区分别做什么、如何选择、通用操作与快捷键")
+        help_button.clicked.connect(lambda: show_help(self, "selector"))
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        footer.addWidget(help_button)
+        footer.addWidget(cancel)
+        footer.addStretch(1)
+        root.addLayout(footer)
+        shortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.HelpContents), self)
+        shortcut.activated.connect(lambda: show_help(self, "selector"))
 
     @staticmethod
     def _choice_button(title: str, description: str) -> QPushButton:

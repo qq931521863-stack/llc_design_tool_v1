@@ -68,6 +68,7 @@ from ..multiphase import solve_interleaved_llc
 from ..report.formula_pdf import build_formula_pdf
 from .workers import FunctionWorker
 from .updater import add_toolbar_right_side, check_for_updates
+from .help import install_help
 from . import theme
 
 from .widgets.model_comparison_view import ModelComparisonView
@@ -181,6 +182,7 @@ class LLCMainWindow(QMainWindow):
         about_action.triggered.connect(self.show_about)
         toolbar.addAction(about_action)
 
+        install_help(self, "llc")
         add_toolbar_right_side(toolbar, self)
         QTimer.singleShot(2500, self._auto_check_update)
 
