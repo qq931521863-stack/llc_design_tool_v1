@@ -12,21 +12,24 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QLabel,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
-    QWidget,
 )
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
-from power_control_tools.fra.auto_design import AutoDesignResult, auto_design_controller
-from power_control_tools.fra.fitting import FRAFitResult, closed_loop_step_from_fitted_loop, fit_rational_frequency_response
 from power_control_tools.fra.analysis import magnitude_phase
+from power_control_tools.fra.auto_design import AutoDesignResult, auto_design_controller
+from power_control_tools.fra.fitting import (
+    FRAFitResult,
+    closed_loop_step_from_fitted_loop,
+    fit_rational_frequency_response,
+    validate_fitted_open_loop,
+)
 from power_control_tools.models import ControllerKind, DiscretizationMethod
 
 
@@ -38,9 +41,20 @@ _AUTO_KINDS = (
     ControllerKind.THREE_P_THREE_Z,
 )
 
+# PI/PIF/PID can be reconstructed exactly by the current New Structure GUI
+# parameters. Power 2P2Z/3P3Z Auto Design now uses an integrator-pole topology,
+# which is intentionally different from the legacy generic equal-order GUI
+# builder. Until the host has an exact-H(z) auto-result mode, do not silently
+# translate those candidates into a different controller.
+_GUI_RECONSTRUCTABLE_AUTO_KINDS = {
+    ControllerKind.PI,
+    ControllerKind.PIF,
+    ControllerKind.PID,
+}
+
 
 class FRAAutoDesignDialog(QDialog):
-    """One-click target-Fc/PM controller synthesis on the host's raw FRA plant."""
+    """One-click target-Fc/PM controller synthesis on the host raw FRA plant."""
 
     def __init__(self, host) -> None:
         super().__init__(host)
@@ -56,9 +70,9 @@ class FRAAutoDesignDialog(QDialog):
         labels = {
             ControllerKind.PI: "PI",
             ControllerKind.PIF: "PIF",
-            ControllerKind.PID: "PID",
-            ControllerKind.TWO_P_TWO_Z: "2P2Z",
-            ControllerKind.THREE_P_THREE_Z: "3P3Z",
+            ControllerKind.PID: "PID (ideal derivative; review HF gain)",
+            ControllerKind.TWO_P_TWO_Z: "Power 2P2Z — integrator + 2 zeros + HF pole",
+            ControllerKind.THREE_P_THREE_Z: "Power 3P3Z — integrator + 3 zeros + 2 HF poles",
         }
         for item in _AUTO_KINDS:
             self.kind.addItem(labels[item], item)
@@ -143,7 +157,15 @@ class FRAAutoDesignDialog(QDialog):
                 max_ms=self.max_ms.value(),
             )
             self.result = result
-            self.apply_button.setEnabled(result.selected is not None and result.selected.controller.implementable)
+            selected = result.selected
+            reconstructable = selected is not None and selected.controller_kind in _GUI_RECONSTRUCTABLE_AUTO_KINDS
+            self.apply_button.setEnabled(
+                result.status == "PASS"
+                and selected is not None
+                and selected.accepted
+                and selected.controller.implementable
+                and reconstructable
+            )
             lines = [
                 "FRA AUTO DESIGN",
                 "=" * 72,
@@ -154,28 +176,42 @@ class FRAAutoDesignDialog(QDialog):
                 f"Message: {result.message}",
                 "",
             ]
-            if result.selected is not None:
-                c = result.selected
+            if selected is not None:
+                c = selected
                 lines += [
                     "SELECTED",
                     f"Trial Fc: {c.requested_crossover_hz:.8g} Hz",
                     f"Achieved Fc: {c.achieved_crossover_hz if c.achieved_crossover_hz is not None else 'N/A'}",
                     f"PM: {c.achieved_phase_margin_deg if c.achieved_phase_margin_deg is not None else 'N/A'} deg",
-                    f"GM: {c.gain_margin_db if c.gain_margin_db is not None else 'not observed'} dB",
+                    f"GM: {c.gain_margin_db if c.gain_margin_db is not None else 'NOT OBSERVED'} dB",
                     f"Ms: {c.ms:.6g}",
                     f"Mt: {c.mt:.6g}",
+                    f"Accepted: {c.accepted}",
                     f"Controller poles: {list(c.controller.poles)}",
                     "Parameters:",
                 ]
                 for key, value in c.parameters.items():
                     lines.append(f"  {key} = {value:.12g}")
+                d = c.controller.normalized()
+                lines += ["", "EXACT DIGITAL H(z)"]
+                lines += [f"  b{i} = {value:+.12e}" for i, value in enumerate(d.b)]
+                lines += [f"  a{i} = {value:+.12e}" for i, value in enumerate(d.a)]
+                if c.controller_kind not in _GUI_RECONSTRUCTABLE_AUTO_KINDS:
+                    lines += [
+                        "",
+                        "NOTE: this Power 2P2Z/3P3Z result uses an integrator-pole power compensator topology.",
+                        "The current legacy generic P/Z sliders do not reconstruct the same H(z), so Apply is intentionally disabled until an exact-H(z) host mode is added.",
+                    ]
+                if result.status != "PASS":
+                    lines += ["", "NOTE: REVIEW candidates are shown for diagnosis only and cannot be one-click applied."]
             lines += ["", "TRIAL SUMMARY"]
             for i, c in enumerate(result.candidates, 1):
                 lines.append(
                     f"#{i:02d} Fc_try={c.requested_crossover_hz:.7g} Hz | "
                     f"Fc={c.achieved_crossover_hz if c.achieved_crossover_hz is not None else float('nan'):.7g} | "
                     f"PM={c.achieved_phase_margin_deg if c.achieved_phase_margin_deg is not None else float('nan'):.5g} | "
-                    f"Ms={c.ms:.4g} | {'PASS' if c.accepted else 'review'}"
+                    f"GM={c.gain_margin_db if c.gain_margin_db is not None else float('nan'):.5g} | "
+                    f"Ms={c.ms:.4g} | {'PASS' if c.accepted else 'review'} | {c.note}"
                 )
             self.output.setPlainText("\n".join(lines))
         except Exception as exc:
@@ -186,10 +222,18 @@ class FRAAutoDesignDialog(QDialog):
     def apply_result(self) -> None:
         if self.result is None or self.result.selected is None:
             return
+        if self.result.status != "PASS" or not self.result.selected.accepted:
+            QMessageBox.warning(self, "Auto Design 未通过", "当前结果没有满足完整的 Fc/PM/GM/Ms 约束，禁止一键应用。")
+            return
         selected = self.result.selected
+        if selected.controller_kind not in _GUI_RECONSTRUCTABLE_AUTO_KINDS:
+            QMessageBox.warning(
+                self,
+                "需要 Exact H(z) 模式",
+                "Power 2P2Z/3P3Z 自动设计使用积分极点拓扑；当前 New Structure 的通用 P/Z Slider 语义不同。为避免把正确结果转换成错误控制器，本版本禁止自动回写。Exact H(z) 系数已显示，可在下一步 exact-controller host 模式接入后直接使用。",
+            )
+            return
         host = self.host
-        # Auto Design always applies as a new explicit controller structure so
-        # the user can continue manual slider refinement after one-click design.
         if hasattr(host, "new_mode"):
             index = host.new_mode.findData("structure")
             if index >= 0:
@@ -206,14 +250,8 @@ class FRAAutoDesignDialog(QDialog):
         if "ti_s" in p: host.new_ti.setValue(p["ti_s"])
         if "td_s" in p: host.new_td.setValue(max(p["td_s"], 1e-9))
         if "lpf_pole_hz" in p: host.new_lpf.setValue(p["lpf_pole_hz"])
-        if "gain" in p: host.new_gain.setValue(p["gain"])
-        for i in range(1, 4):
-            if f"fz{i}_hz" in p:
-                getattr(host, f"new_fz{i}").setValue(p[f"fz{i}_hz"])
-            if f"fp{i}_hz" in p:
-                getattr(host, f"new_fp{i}").setValue(p[f"fp{i}_hz"])
         host.recalculate()
-        QMessageBox.information(self, "Auto Design 已应用", "自动设计参数已回写到 FRA Loop Designer，可继续用 Slider 手动微调并导出 C99。")
+        QMessageBox.information(self, "Auto Design 已应用", "严格 PASS 的自动设计参数已回写，可继续 Slider 微调并导出 C99。")
 
 
 class FRAModelFitDialog(QDialog):
@@ -235,10 +273,16 @@ class FRAModelFitDialog(QDialog):
         self.max_order = QSpinBox(); self.max_order.setRange(1, 5); self.max_order.setValue(5)
         self.fit_delay = QCheckBox("Fit pure delay"); self.fit_delay.setChecked(True)
         self.focus = QDoubleSpinBox(); self.focus.setRange(0.0, 500_000.0); self.focus.setDecimals(2); self.focus.setSuffix(" Hz")
+        self.use_band = QCheckBox("Limit fit frequency band")
+        self.fit_low = QDoubleSpinBox(); self.fit_low.setRange(0.01, 10_000_000.0); self.fit_low.setDecimals(2); self.fit_low.setSuffix(" Hz")
+        self.fit_high = QDoubleSpinBox(); self.fit_high.setRange(0.01, 10_000_000.0); self.fit_high.setDecimals(2); self.fit_high.setSuffix(" Hz")
         form.addRow("Fit Target", self.target)
         form.addRow("Max Poles", self.max_order)
         form.addRow("Delay", self.fit_delay)
         form.addRow("Control Focus", self.focus)
+        form.addRow(self.use_band)
+        form.addRow("Fit Fmin", self.fit_low)
+        form.addRow("Fit Fmax", self.fit_high)
         root.addWidget(settings)
 
         row = QHBoxLayout()
@@ -260,6 +304,13 @@ class FRAModelFitDialog(QDialog):
         self.host.recalculate()
         if self.host.current_metrics is not None and self.host.current_metrics.main_crossover_hz is not None:
             self.focus.setValue(float(self.host.current_metrics.main_crossover_hz))
+        if self.host.measurement is not None:
+            f = self.host.measurement.frequency_hz
+            self.fit_low.setValue(float(f[0]))
+            self.fit_high.setValue(float(f[-1]))
+        else:
+            self.fit_low.setValue(10.0)
+            self.fit_high.setValue(100_000.0)
 
     def _target_arrays(self) -> tuple[np.ndarray, np.ndarray, str]:
         self.host.recalculate()
@@ -270,13 +321,24 @@ class FRAModelFitDialog(QDialog):
             if self.host.current_loop is None or self.host.current_usable_mask is None:
                 raise ValueError("当前没有有效的新开环响应。")
             mask = np.asarray(self.host.current_usable_mask, dtype=bool)
-            return f[mask], np.asarray(self.host.current_loop, dtype=complex)[mask], "New Open Loop"
-        if self.host.current_plant is None:
-            raise ValueError("当前没有有效的 Equivalent Plant。")
-        mask = self.host.current_plant_valid_mask
-        if mask is None:
-            mask = np.ones_like(f, dtype=bool)
-        return f[mask], np.asarray(self.host.current_plant, dtype=complex)[mask], "Equivalent Plant"
+            response = np.asarray(self.host.current_loop, dtype=complex)
+            name = "New Open Loop"
+        else:
+            if self.host.current_plant is None:
+                raise ValueError("当前没有有效的 Equivalent Plant。")
+            mask = self.host.current_plant_valid_mask
+            if mask is None:
+                mask = np.ones_like(f, dtype=bool)
+            response = np.asarray(self.host.current_plant, dtype=complex)
+            name = "Equivalent Plant"
+        if self.use_band.isChecked():
+            low = self.fit_low.value(); high = self.fit_high.value()
+            if high <= low:
+                raise ValueError("Fit Fmax 必须大于 Fit Fmin。")
+            mask = np.asarray(mask, dtype=bool) & (f >= low) & (f <= high)
+        if int(np.count_nonzero(mask)) < 8:
+            raise ValueError("拟合频带内至少需要 8 个有效 FRA 点。")
+        return f[mask], response[mask], name
 
     def run_fit(self) -> None:
         try:
@@ -305,21 +367,27 @@ class FRAModelFitDialog(QDialog):
             ax.set_ylabel("Magnitude (dB)"); ap.set_ylabel("Phase (deg)"); ap.set_xlabel("Frequency (Hz)")
             ax.grid(True, which="both"); ap.grid(True, which="both"); ax.legend(); ap.legend(); self.fit_fig.tight_layout(); self.fit_canvas.draw_idle()
 
+            validation = None
             step_text = "Step is only defined here when fitting the New Open Loop."
             self.step_fig.clear(); sax = self.step_fig.add_subplot(111)
-            if self.target.currentData() == "loop" and result.metrics.confidence != "LOW":
-                step = closed_loop_step_from_fitted_loop(result.model)
-                if step.stable and len(step.time_s):
-                    sax.plot(step.time_s * 1e3, step.response)
-                    sax.set_xlabel("Time (ms)"); sax.set_ylabel("Closed-loop response"); sax.grid(True)
-                    sax.set_title(
-                        f"Fit-derived step | Overshoot={step.overshoot_percent:.3g}% | "
-                        f"Ts={step.settling_time_s*1e3:.4g} ms" if step.settling_time_s is not None else "Fit-derived step"
-                    )
-                    step_text = step.note
+            if self.target.currentData() == "loop":
+                validation = validate_fitted_open_loop(f, measured, result)
+                if validation.passed:
+                    step = closed_loop_step_from_fitted_loop(result.model)
+                    if step.stable and len(step.time_s):
+                        sax.plot(step.time_s * 1e3, step.response)
+                        sax.set_xlabel("Time (ms)"); sax.set_ylabel("Closed-loop response"); sax.grid(True)
+                        title = f"Fit-derived step | Overshoot={step.overshoot_percent:.3g}%"
+                        if step.settling_time_s is not None:
+                            title += f" | Ts={step.settling_time_s*1e3:.4g} ms"
+                        sax.set_title(title)
+                        step_text = step.note
+                    else:
+                        sax.text(0.5, 0.5, step.note, ha="center", va="center", transform=sax.transAxes, wrap=True)
+                        step_text = step.note
                 else:
-                    sax.text(0.5, 0.5, step.note, ha="center", va="center", transform=sax.transAxes, wrap=True)
-                    step_text = step.note
+                    step_text = "Step disabled: fitted open loop did not preserve control-critical measured behavior: " + validation.note
+                    sax.text(0.5, 0.5, step_text, ha="center", va="center", transform=sax.transAxes, wrap=True)
             else:
                 sax.text(0.5, 0.5, step_text, ha="center", va="center", transform=sax.transAxes, wrap=True)
             self.step_fig.tight_layout(); self.step_canvas.draw_idle()
@@ -329,8 +397,9 @@ class FRAModelFitDialog(QDialog):
                 "FRA RATIONAL MODEL IDENTIFICATION",
                 "=" * 72,
                 f"Target: {result.fit_target}",
+                f"Fit band: {f[0]:.8g} .. {f[-1]:.8g} Hz",
                 f"Selected order: {result.selected_order} (max requested {result.requested_max_order})",
-                f"Confidence: {m.confidence}",
+                f"Residual confidence: {m.confidence}",
                 f"Delay: {model.delay_s*1e6:.6g} us",
                 f"Real poles (Hz): {list(model.real_pole_hz)}",
                 f"Complex pole pairs (fn Hz, zeta): {list(model.complex_pole_pairs)}",
@@ -342,6 +411,20 @@ class FRAModelFitDialog(QDialog):
                 f"Phase MAX error: {m.phase_max_deg:.6g} deg",
                 f"Focus Gain RMS: {m.focus_magnitude_rms_db if m.focus_magnitude_rms_db is not None else 'N/A'} dB",
                 f"Focus Phase RMS: {m.focus_phase_rms_deg if m.focus_phase_rms_deg is not None else 'N/A'} deg",
+            ]
+            if validation is not None:
+                lines += [
+                    "",
+                    "CONTROL-CRITICAL FIT VALIDATION",
+                    f"Status: {validation.status}",
+                    f"Gain crossover count match: {validation.crossover_count_match}",
+                    f"Fc error: {validation.crossover_error_percent if validation.crossover_error_percent is not None else 'N/A'} %",
+                    f"PM error: {validation.phase_margin_error_deg if validation.phase_margin_error_deg is not None else 'N/A'} deg",
+                    f"GM error: {validation.gain_margin_error_db if validation.gain_margin_error_db is not None else 'N/A'} dB",
+                    f"Fitted closed-loop stable: {validation.fitted_closed_loop_stable}",
+                    f"Note: {validation.note}",
+                ]
+            lines += [
                 "",
                 "Numerator coefficients in normalized x=s/wref (ascending):",
                 str(model.numerator_coefficients),
@@ -350,7 +433,7 @@ class FRAModelFitDialog(QDialog):
                 result.note,
                 step_text,
                 "",
-                "IMPORTANT: raw FRA remains the stability authority; the fitted model is for interpretation/time-domain approximation.",
+                "IMPORTANT: raw FRA remains the stability authority. Fitted poles/zeros are an engineering approximation, not identified physical components.",
                 "",
                 f"Error arrays: gain RMS={np.sqrt(np.mean(err_mag**2)):.6g} dB, phase RMS={np.sqrt(np.mean(err_phase**2)):.6g} deg",
             ]
@@ -366,8 +449,8 @@ def install_advanced_fra_actions(window) -> None:
     toolbar.setMovable(False)
     auto_action = QAction("Auto Design", window)
     fit_action = QAction("Model ID / Fit", window)
-    auto_action.setToolTip("输入目标 Fc / PM，自动设计控制器；若相位裕量不足自动降低 Fc")
-    fit_action.setToolTip("将 Equivalent Plant 或新开环 FRA 拟合为最高 5 阶稳定有理模型")
+    auto_action.setToolTip("输入目标 Fc / PM，自动设计控制器；不满足全频段稳定性约束时自动降低 Fc")
+    fit_action.setToolTip("最高 5 阶稳定有理近似；Raw FRA 始终是稳定性判据，拟合仅用于解释/近似时域")
     auto_action.triggered.connect(lambda checked=False: FRAAutoDesignDialog(window).exec())
     fit_action.triggered.connect(lambda checked=False: FRAModelFitDialog(window).exec())
     toolbar.addAction(auto_action)
