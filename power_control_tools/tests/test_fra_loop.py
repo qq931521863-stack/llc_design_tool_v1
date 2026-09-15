@@ -68,6 +68,8 @@ def test_real_bode100_sample_reproduces_cursor_crossover(tmp_path):
     assert len(result.gain_crossovers) == 1
     assert abs(result.main_crossover_hz - 296.59103982069337) < 1e-6
     assert abs(result.phase_margin_deg - 86.32501701589291) < 1e-6
+    assert result.gain_margin_db is None
+    assert result.status == "REVIEW_GM_NOT_OBSERVED"
 
 
 def test_exact_digital_deembed_rebuilds_measured_loop():
@@ -156,6 +158,8 @@ def test_loop_margin_and_sensitivity_from_measured_points():
     assert len(result.gain_crossovers) == 1
     assert abs(result.main_crossover_hz - 1000.0) < 1e-6
     assert abs(result.phase_margin_deg - 90.0) < 1e-6
+    assert result.gain_margin_db is None
+    assert result.status == "REVIEW_GM_NOT_OBSERVED"
     assert np.isfinite(result.ms)
     assert np.isfinite(result.mt)
 
