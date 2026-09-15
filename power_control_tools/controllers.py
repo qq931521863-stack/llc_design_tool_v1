@@ -4,6 +4,82 @@ import numpy as np
 from .models import AnalogTransferFunction, ControllerKind
 
 
+# Single source of truth for the controller catalogue shared by every
+# workspace.  Control Tools, the FRA Loop Designer and the FRA model-link
+# analysis must offer the same controller set; the labels live here so the
+# three call sites cannot drift apart again.
+CONTROLLER_LABELS: dict[ControllerKind, str] = {
+    ControllerKind.INTEGRATOR: "Integrator",
+    ControllerKind.PI: "PI — Kp · (1 + 1/(Ti·s))",
+    ControllerKind.PIF: "PIF — PI + 1st-order LPF",
+    ControllerKind.PID: "PID — Kp · (1 + 1/(Ti·s) + Td·s)",
+    ControllerKind.PIDF: "PIDF — PID + 1st-order LPF",
+    ControllerKind.TYPE_II: "Analog Type-II",
+    ControllerKind.TYPE_III: "Analog Type-III",
+    ControllerKind.MODIFIED_PI: "Modified PI",
+    ControllerKind.LEAD: "Lead",
+    ControllerKind.LAG: "Lag",
+    ControllerKind.ONE_P_ONE_Z: "1P1Z",
+    ControllerKind.TWO_P_TWO_Z: "2P2Z",
+    ControllerKind.THREE_P_THREE_Z: "3P3Z",
+    ControllerKind.GENERAL: "General H(s)",
+}
+
+
+# ``exact`` is not a ControllerKind: it is the raw H(z) entry mode that lets an
+# externally designed controller (a power-template Auto Design result, a fitted
+# controller, or a hand-tuned firmware filter) be analysed and exported without
+# being silently re-derived from a different parameterisation.
+EXACT_CONTROLLER = "exact"
+
+
+# Canonical parameter keys per controller structure.  GUIs map these keys to
+# their own widgets, so a new controller type only has to be declared here and
+# in ``design_controller`` instead of being re-implemented in every panel.
+_PARAMETER_KEYS: dict[ControllerKind, tuple[str, ...]] = {
+    ControllerKind.INTEGRATOR: ("gain",),
+    ControllerKind.PI: ("kp", "ti"),
+    ControllerKind.PIF: ("kp", "ti", "lpf_pole"),
+    ControllerKind.PID: ("kp", "ti", "td"),
+    ControllerKind.PIDF: ("kp", "ti", "td", "lpf_pole"),
+    ControllerKind.MODIFIED_PI: ("gain", "fz1", "fp1"),
+    ControllerKind.LEAD: ("gain", "fz1", "fp1"),
+    ControllerKind.LAG: ("gain", "fz1", "fp1"),
+    ControllerKind.ONE_P_ONE_Z: ("gain", "fz1", "fp1"),
+    ControllerKind.TWO_P_TWO_Z: ("gain", "fz1", "fz2", "fp1", "fp2"),
+    ControllerKind.THREE_P_THREE_Z: ("gain", "fz1", "fz2", "fz3", "fp1", "fp2", "fp3"),
+    ControllerKind.GENERAL: ("numerator", "denominator"),
+}
+
+
+# Type-II/III accept either pole/zero frequencies or the physical R/C network.
+_TYPE_II_RC_KEYS: tuple[str, ...] = ("r1", "r2", "c1", "c2")
+_TYPE_III_RC_KEYS: tuple[str, ...] = ("r1", "r2", "r3", "c1", "c2", "c3")
+
+
+def controller_parameter_keys(
+    kind: ControllerKind | str,
+    *,
+    type_input_mode: str = "pz",
+) -> tuple[str, ...]:
+    """Return the canonical parameter keys required by ``kind``.
+
+    Only the keys meaningful for the selected structure are returned, which is
+    what the GUI panels use to hide irrelevant fields.  Type-II/III switch
+    between the pole/zero and the physical R/C parameter sets.
+    """
+    kind = ControllerKind(kind)
+    if kind in (ControllerKind.TYPE_II, ControllerKind.TYPE_III):
+        rc = str(type_input_mode).lower() == "rc"
+        keys = _TYPE_III_RC_KEYS if kind == ControllerKind.TYPE_III else _TYPE_II_RC_KEYS
+        if rc:
+            return ("type_input_mode",) + keys
+        if kind == ControllerKind.TYPE_II:
+            return ("type_input_mode", "fp0", "fz1", "fp1")
+        return ("type_input_mode", "fp0", "fz1", "fz2", "fp1", "fp2")
+    return _PARAMETER_KEYS[kind]
+
+
 def _w(f_hz: float) -> float:
     if f_hz <= 0:
         raise ValueError("frequency must be positive")
@@ -119,12 +195,15 @@ def design_controller(kind: ControllerKind | str, **p: float) -> AnalogTransferF
             return _type3_from_rc(float(p["r1_ohm"]), float(p["r2_ohm"]), float(p["r3_ohm"]), float(p["c1_f"]), float(p["c2_f"]), float(p["c3_f"]))
         return _type3_from_pz(float(p.get("fp0_hz", 100.0)), float(p.get("fz1_hz", 500.0)), float(p.get("fz2_hz", 1_000.0)), float(p.get("fp1_hz", 10_000.0)), float(p.get("fp2_hz", 20_000.0)))
     if kind == ControllerKind.MODIFIED_PI:
-        tz = float(p.get("tz_s", 1.0 / _w(float(p.get("fz_hz", 100.0)))))
-        tp = float(p.get("tp_s", 1.0 / _w(float(p.get("fp_hz", 10_000.0)))))
+        tz = float(p.get("tz_s", 1.0 / _w(float(p.get("fz_hz", p.get("fz1_hz", 100.0))))))
+        tp = float(p.get("tp_s", 1.0 / _w(float(p.get("fp_hz", p.get("fp1_hz", 10_000.0))))))
         if tz <= 0 or tp <= 0: raise ValueError("time constants must be positive")
         return AnalogTransferFunction((k * tz, k), (tz * tp, tz, 0.0), "Modified PI")
     if kind in (ControllerKind.LEAD, ControllerKind.LAG, ControllerKind.ONE_P_ONE_Z):
-        fz = float(p.get("fz_hz", 1_000.0)); fp = float(p.get("fp_hz", 10_000.0))
+        # ``fz1_hz``/``fp1_hz`` are the canonical names; ``fz_hz``/``fp_hz`` are
+        # kept as aliases so existing callers keep working unchanged.
+        fz = float(p.get("fz_hz", p.get("fz1_hz", 1_000.0)))
+        fp = float(p.get("fp_hz", p.get("fp1_hz", 10_000.0)))
         wz, wp = _w(fz), _w(fp)
         num = k * wp / wz * np.array([1.0, wz])
         den = np.array([1.0, wp])

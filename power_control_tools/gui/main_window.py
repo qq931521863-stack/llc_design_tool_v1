@@ -25,7 +25,7 @@ from llc_design.gui import theme
 from llc_design.gui.updater import add_toolbar_right_side
 from power_control_tools.analysis import analyze_digital_filter
 from power_control_tools.codegen import export_c99_filter, render_c99_single_file, verify_c99_filter
-from power_control_tools.controllers import design_controller
+from power_control_tools.controllers import CONTROLLER_LABELS, controller_parameter_keys, design_controller
 from power_control_tools.discretize import discretize_transfer_function
 from power_control_tools.filters import design_iir_filter, design_fir_filter, design_moving_average, design_dc_blocker
 from power_control_tools.models import ControllerKind, DiscretizationMethod, FilterResponse, IIRFamily, StabilityClass
@@ -71,24 +71,6 @@ class SliderSpin(QWidget):
 
     def value(self) -> float: return float(self.spin.value())
     def setValue(self, v: float): self.spin.setValue(float(v)); self.slider.setValue(self._to_slider(float(v)))
-
-
-_CONTROLLER_LABELS = {
-    ControllerKind.INTEGRATOR: "Integrator",
-    ControllerKind.PI: "PI — Kp · (1 + 1/(Ti·s))",
-    ControllerKind.PIF: "PIF — PI + 1st-order LPF",
-    ControllerKind.PID: "PID — Kp · (1 + 1/(Ti·s) + Td·s)",
-    ControllerKind.PIDF: "PIDF — PID + 1st-order LPF",
-    ControllerKind.TYPE_II: "Analog Type-II",
-    ControllerKind.TYPE_III: "Analog Type-III",
-    ControllerKind.MODIFIED_PI: "Modified PI",
-    ControllerKind.LEAD: "Lead",
-    ControllerKind.LAG: "Lag",
-    ControllerKind.ONE_P_ONE_Z: "1P1Z",
-    ControllerKind.TWO_P_TWO_Z: "2P2Z",
-    ControllerKind.THREE_P_THREE_Z: "3P3Z",
-    ControllerKind.GENERAL: "General H(s)",
-}
 
 
 class ControlToolsMainWindow(QMainWindow):
@@ -168,7 +150,7 @@ class ControlToolsMainWindow(QMainWindow):
     def _build_controller_page(self):
         page = QWidget(); f = QFormLayout(page); self.ctrl_form = f
         self.ctrl = QComboBox()
-        for k in ControllerKind: self.ctrl.addItem(_CONTROLLER_LABELS[k], k)
+        for k in ControllerKind: self.ctrl.addItem(CONTROLLER_LABELS[k], k)
         self._hook(self.ctrl); f.addRow("Controller", self.ctrl)
 
         self.type_input_mode = QComboBox(); self.type_input_mode.addItem("Pole / Zero", "pz"); self.type_input_mode.addItem("R / C Components", "rc"); self._hook(self.type_input_mode)
@@ -229,26 +211,24 @@ class ControlToolsMainWindow(QMainWindow):
         for label, widget in fields: f.addRow(label, widget)
         return page
 
+    def _controller_widget_for(self, key: str):
+        """Map a canonical controller parameter key to this panel's widget."""
+        return {
+            "gain": self.gain, "kp": self.kp, "ti": self.ti, "td": self.td,
+            "lpf_pole": self.lpf_pole, "fp0": self.fp0,
+            "fz1": self.fz, "fp1": self.fp, "fz2": self.fz2, "fp2": self.fp2,
+            "fz3": self.fz3, "fp3": self.fp3,
+            "r1": self.r1, "r2": self.r2, "r3": self.r3,
+            "c1": self.c1_nf, "c2": self.c2_nf, "c3": self.c3_nf,
+            "numerator": self.general_num, "denominator": self.general_den,
+            "type_input_mode": self.type_input_mode,
+        }[key]
+
     def _update_dynamic_visibility(self):
         if not hasattr(self, "ctrl_form"): return
-        kind = self.ctrl.currentData(); rc = self.type_input_mode.currentData() == "rc"
-        visible = {self.ctrl}
-        if kind == ControllerKind.INTEGRATOR: visible |= {self.gain}
-        elif kind == ControllerKind.PI: visible |= {self.kp, self.ti}
-        elif kind == ControllerKind.PIF: visible |= {self.kp, self.ti, self.lpf_pole}
-        elif kind == ControllerKind.PID: visible |= {self.kp, self.ti, self.td}
-        elif kind == ControllerKind.PIDF: visible |= {self.kp, self.ti, self.td, self.lpf_pole}
-        elif kind == ControllerKind.TYPE_II:
-            visible |= {self.type_input_mode}
-            visible |= ({self.r1, self.r2, self.c1_nf, self.c2_nf} if rc else {self.fp0, self.fz, self.fp})
-        elif kind == ControllerKind.TYPE_III:
-            visible |= {self.type_input_mode}
-            visible |= ({self.r1, self.r2, self.r3, self.c1_nf, self.c2_nf, self.c3_nf} if rc else {self.fp0, self.fz, self.fz2, self.fp, self.fp2})
-        elif kind == ControllerKind.MODIFIED_PI: visible |= {self.gain, self.fz, self.fp}
-        elif kind in (ControllerKind.LEAD, ControllerKind.LAG, ControllerKind.ONE_P_ONE_Z): visible |= {self.gain, self.fz, self.fp}
-        elif kind == ControllerKind.TWO_P_TWO_Z: visible |= {self.gain, self.fz, self.fz2, self.fp, self.fp2}
-        elif kind == ControllerKind.THREE_P_THREE_Z: visible |= {self.gain, self.fz, self.fz2, self.fz3, self.fp, self.fp2, self.fp3}
-        elif kind == ControllerKind.GENERAL: visible |= {self.general_num, self.general_den}
+        kind = self.ctrl.currentData()
+        keys = controller_parameter_keys(kind, type_input_mode=self.type_input_mode.currentData())
+        visible = {self.ctrl, *(self._controller_widget_for(key) for key in keys)}
         for widget in self.ctrl_fields: self._field_visible(self.ctrl_form, widget, widget in visible)
 
         impl = self.filter_impl.currentText(); response = self.response.currentData()
@@ -357,7 +337,7 @@ class ControlToolsMainWindow(QMainWindow):
             r = analyze_digital_filter(d, analog=a, response_samples=400)
             self.current_analog = a; self.current_digital = d; self.current_analysis = r; self._render()
             if self.design_pages.currentIndex() == 0:
-                label = _CONTROLLER_LABELS.get(self.ctrl.currentData(), str(self.ctrl.currentText()))
+                label = CONTROLLER_LABELS[ControllerKind(self.ctrl.currentData())]
                 self.digital_design_updated.emit(d, label)
             warn = []
             if d.max_pole_radius > 0.995: warn.append("Pole very close to unit circle: float32_t / transient robustness requires review.")
