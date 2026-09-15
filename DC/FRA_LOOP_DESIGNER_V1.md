@@ -123,10 +123,10 @@ For Complete Loop TS, the extracted Equivalent Plant is only presented as valid 
 - B/A coefficients
 - Existing float32_t C99 DF2T/SOS export and host verification
 
-## Explicitly out of V1
+## V1 boundary and later extensions
 
-- Rational/vector plant fitting
-- FRA-derived step response
-- Auto-tune / optimization
-- Thermal model
-- Automatic controller-structure identification from B/A coefficients
+V1 itself remains the measured-FRA de-embedding / manual tuning baseline. The next layers are defined in:
+
+- `DC/FRA_LOOP_DESIGNER_V1_5_V2.md`
+
+V1.5 adds target-Fc/PM automatic controller synthesis with automatic crossover fallback. V2 adds optional 1..5 pole rational identification, fit quality grading and fit-derived advanced analysis. Raw FRA remains the primary stability authority in all versions.
