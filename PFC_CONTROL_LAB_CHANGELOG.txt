@@ -1,0 +1,10 @@
+Compatibility document path retained for Power Design Toolkit V9.2.2 Help/F1.
+
+Current PFC capability and architecture:
+  README.md -> "PFC capability"
+  docs/DIGITAL_CONTROL_ARCHITECTURE.md
+
+Maintained release history:
+  CHANGELOG.md
+
+Historical PFC change details remain available in Git history.
