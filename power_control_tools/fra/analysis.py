@@ -144,8 +144,6 @@ def _crossings(f: np.ndarray, y: np.ndarray, target: float) -> list[float]:
             continue
         if a * b < 0.0 or b == 0.0:
             out.append(_log_interp_frequency(float(f[i]), float(f[i + 1]), float(y[i]), float(y[i + 1]), target))
-    # Avoid duplicate reports where a sample lies exactly on the target and the
-    # next interval reports the same point again.
     dedup: list[float] = []
     for value in out:
         if not dedup or abs(math.log(value / dedup[-1])) > 1e-9:
@@ -200,7 +198,6 @@ def analyze_loop_response(
     main = gain_crossovers[0] if gain_crossovers else None
     worst_pm = min((x.phase_margin_deg for x in gain_crossovers), default=None)
     worst_gm = min((x.gain_margin_db for x in phase_crossovers), default=None)
-    main_gm = phase_crossovers[0].gain_margin_db if phase_crossovers else None
 
     if not gain_crossovers:
         status = "NO_0DB_CROSSING"
@@ -218,7 +215,7 @@ def analyze_loop_response(
         tuple(phase_crossovers),
         main.frequency_hz if main else None,
         main.phase_margin_deg if main else None,
-        main_gm,
+        worst_gm,
         worst_pm,
         worst_gm,
         ms,
