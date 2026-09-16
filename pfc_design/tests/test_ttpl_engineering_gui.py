@@ -42,7 +42,7 @@ def test_ttpl_engineering_workbench_wraps_existing_control_lab_and_applies_sizin
     app.processEvents()
 
 
-def test_pfc_main_window_exposes_ttpl_as_engineering_workspace():
+def test_pfc_main_window_exposes_six_stage_ttpl_engineering_workflow():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     qt_widgets = pytest.importorskip("PySide6.QtWidgets")
 
@@ -50,35 +50,66 @@ def test_pfc_main_window_exposes_ttpl_as_engineering_workspace():
 
     app = qt_widgets.QApplication.instance() or qt_widgets.QApplication([])
     window = PFCMainWindow()
+    workbench = window.control_lab_view
 
     assert "Engineering" in window.subtabs.tabText(0)
-    assert hasattr(window.control_lab_view, "power_stage_view")
-    assert hasattr(window.control_lab_view, "control_lab")
-    assert hasattr(window.control_lab_view, "device_loss_view")
-    assert hasattr(window.control_lab_view, "device_database")
-    assert hasattr(window.control_lab_view, "cap_thermal_view")
-    assert window.control_lab_view.tabs.count() == 4
-    assert "Devices / Loss" in window.control_lab_view.tabs.tabText(1)
-    assert "Capacitor / Thermal" in window.control_lab_view.tabs.tabText(2)
-    assert "Control" in window.control_lab_view.tabs.tabText(3)
-    assert window.control_lab_view.device_loss_view.design is not None
-    assert window.control_lab_view.cap_thermal_view.design is not None
-    assert window.control_lab_view.cap_thermal_view.cap_result is not None
-    assert window.control_lab_view.cap_thermal_view.thermal_result is not None
+    for attribute in (
+        "power_stage_view",
+        "device_loss_view",
+        "device_database",
+        "cap_thermal_view",
+        "ac_performance_view",
+        "switching_validation_view",
+        "control_lab",
+    ):
+        assert hasattr(workbench, attribute)
+
+    assert workbench.tabs.count() == 6
+    expected = (
+        "Power Stage / Sizing",
+        "Devices / Loss",
+        "Capacitor / Thermal",
+        "AC Line / PF / THD",
+        "Switching / Zero Crossing",
+        "Control / Sensing / Bode",
+    )
+    for index, text in enumerate(expected):
+        assert text in workbench.tabs.tabText(index)
+
+    assert workbench.device_loss_view.design is not None
+    assert workbench.cap_thermal_view.design is not None
+    assert workbench.cap_thermal_view.cap_result is not None
+    assert workbench.cap_thermal_view.thermal_result is not None
+
+    # Embedded AC/switching result pages are deliberately removed from the
+    # Control/Bode tab so the product no longer shows duplicate workflows.
+    legacy_titles = {
+        "完整 AC 周期",
+        "AC 控制细节",
+        "局部开关周期",
+        "Zero Crossing Analyzer",
+        "PF / THD / Harmonics",
+    }
+    visible_control_titles = {
+        workbench.control_lab.tabs.tabText(i)
+        for i in range(workbench.control_lab.tabs.count())
+    }
+    assert legacy_titles.isdisjoint(visible_control_titles)
+    assert len(workbench.control_lab._detached_legacy_waveform_pages) == 5
 
     # A selected physical capacitor bank must replace the Phase-1 minimum C in
     # the downstream control plant only after the explicit Apply action.
-    cap_view = window.control_lab_view.cap_thermal_view
+    cap_view = workbench.cap_thermal_view
     cap_result = cap_view.cap_result
     assert cap_result is not None
     cap_view.cap_apply_button.click()
-    assert window.control_lab_view.control_lab.cbus.value() == pytest.approx(
+    assert workbench.control_lab.cbus.value() == pytest.approx(
         cap_result.bank_capacitance_uf, rel=1e-4
     )
-    assert window.control_lab_view.control_lab.cbus_esr.value() == pytest.approx(
+    assert workbench.control_lab.cbus_esr.value() == pytest.approx(
         cap_result.bank_esr_ohm * 1e3, rel=1e-4
     )
-    assert window.control_lab_view.tabs.currentWidget() is window.control_lab_view.control_lab
+    assert workbench.tabs.currentWidget() is workbench.control_lab
 
     window.close()
     app.processEvents()

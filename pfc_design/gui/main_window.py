@@ -37,6 +37,7 @@ from pfc_design.vienna import (
     validate_vienna_switching,
 )
 
+from .ac_switching_install import install_ttpl_ac_switching_stages
 from .cap_thermal_install import install_ttpl_capacitor_thermal_stage
 from .device_loss_install import install_ttpl_device_loss_stage
 from .ttpl_engineering_view import TTPLWorkbenchView
@@ -61,12 +62,13 @@ class PFCMainWindow(QMainWindow):
         self.subtabs.setUsesScrollButtons(True)
         # Keep the historical attribute name as a compatibility surface for
         # tests/callers, but the object is now an engineering workbench whose
-        # later stages contain hardware sizing, device/loss screening and the
-        # original detailed control laboratory.
+        # stages cover power hardware, AC/switching verification and the
+        # detailed digital-control laboratory.
         self.control_lab_view = TTPLWorkbenchView()
         self.vienna_view = ViennaControlLabView()
         install_ttpl_device_loss_stage(self)
         install_ttpl_capacitor_thermal_stage(self)
+        install_ttpl_ac_switching_stages(self)
         self.control_lab_view.analysis_requested.connect(self.run_ttpl_analysis)
         self.vienna_view.analysis_requested.connect(self.run_vienna_analysis)
         self.subtabs.addTab(self.control_lab_view, "Single-Phase TTPL Engineering")
@@ -137,6 +139,8 @@ class PFCMainWindow(QMainWindow):
     def set_busy(self, busy, message=""):
         self.progress.setVisible(busy)
         self.control_lab_view.set_busy(busy)
+        if hasattr(self.control_lab_view, "switching_validation_view"):
+            self.control_lab_view.switching_validation_view.set_busy(busy)
         self.vienna_view.set_busy(busy)
         self.statusBar().showMessage(message if busy else t("PFC 工作区就绪"))
 
@@ -181,7 +185,12 @@ class PFCMainWindow(QMainWindow):
     def _ttpl_ready(self, result):
         try:
             self.result = result
+            # The control page remains the single owner of controller/sensing
+            # configuration, while AC and switching are now first-class
+            # engineering views consuming the exact same solver result tuple.
             self.control_lab_view.set_result(result)
+            self.control_lab_view.ac_performance_view.set_result(result)
+            self.control_lab_view.switching_validation_view.set_result(result)
             analysis, line, _ = result
             current = analysis.current_loop.margins
             voltage = analysis.voltage_loop.margins
@@ -243,10 +252,9 @@ class PFCMainWindow(QMainWindow):
             t("关于 PFC Design"),
             "<h3>PFC Engineering Workspace</h3>"
             "<p>Single-phase TTPL + Three-phase Vienna PFC.</p>"
-            "<p>TTPL now starts from electrical requirements and power-stage sizing, "
-            "continues through MOSFET selection/loss comparison and DC-bus capacitor/thermal design, "
-            "then into inductor design, sensing/ADC, AC-cycle PF/THD, switching workpoints "
-            "and digital current/voltage loops.</p>"
+            "<p>TTPL now follows an explicit engineering flow: electrical requirements and power-stage sizing, "
+            "MOSFET selection/loss comparison, DC-bus capacitor/thermal design, settled AC-line PF/THD, "
+            "switching/zero-crossing validation, then sensing/ADC and digital current/voltage-loop design.</p>"
             "<p>Vienna retains split DC bus, midpoint balance and sector analysis while "
             "its engineering-design layer is upgraded in a later phase.</p>",
         )
