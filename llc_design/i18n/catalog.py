@@ -7,12 +7,16 @@ know which languages exist on disk, and a missing language module degrades to
 
 from __future__ import annotations
 
-from . import en, ja, ko, pfc_engineering, zh_Hans
+from . import en, ja, ko, pfc_engineering, v93_system_design, zh_Hans
 
 
 def _merged(language: str, base: dict[str, str]) -> dict[str, str]:
     """Return one catalogue including feature-scoped translation additions."""
-    return {**base, **pfc_engineering.CATALOGUES.get(language, {})}
+    return {
+        **base,
+        **pfc_engineering.CATALOGUES.get(language, {}),
+        **v93_system_design.CATALOGUES.get(language, {}),
+    }
 
 
 CATALOGUES: dict[str, dict[str, str]] = {
