@@ -66,5 +66,19 @@ def test_pfc_main_window_exposes_ttpl_as_engineering_workspace():
     assert window.control_lab_view.cap_thermal_view.cap_result is not None
     assert window.control_lab_view.cap_thermal_view.thermal_result is not None
 
+    # A selected physical capacitor bank must replace the Phase-1 minimum C in
+    # the downstream control plant only after the explicit Apply action.
+    cap_view = window.control_lab_view.cap_thermal_view
+    cap_result = cap_view.cap_result
+    assert cap_result is not None
+    cap_view.cap_apply_button.click()
+    assert window.control_lab_view.control_lab.cbus.value() == pytest.approx(
+        cap_result.bank_capacitance_uf, rel=1e-4
+    )
+    assert window.control_lab_view.control_lab.cbus_esr.value() == pytest.approx(
+        cap_result.bank_esr_ohm * 1e3, rel=1e-4
+    )
+    assert window.control_lab_view.tabs.currentWidget() is window.control_lab_view.control_lab
+
     window.close()
     app.processEvents()
