@@ -54,6 +54,12 @@ def test_pfc_main_window_exposes_ttpl_as_engineering_workspace():
     assert "Engineering" in window.subtabs.tabText(0)
     assert hasattr(window.control_lab_view, "power_stage_view")
     assert hasattr(window.control_lab_view, "control_lab")
+    assert hasattr(window.control_lab_view, "device_loss_view")
+    assert hasattr(window.control_lab_view, "device_database")
+    assert window.control_lab_view.tabs.count() == 3
+    assert "Devices / Loss" in window.control_lab_view.tabs.tabText(1)
+    assert "Control" in window.control_lab_view.tabs.tabText(2)
+    assert window.control_lab_view.device_loss_view.design is not None
 
     window.close()
     app.processEvents()
