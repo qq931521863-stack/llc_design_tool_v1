@@ -54,10 +54,23 @@ def install_llc_solution_map(host) -> SolutionMapView:
 
     loop_view.set_analysis = MethodType(set_analysis_with_solution_map, loop_view)
 
+    # Guided Design is supposed to finish with a *complete* modeled loop, not
+    # stop after the LLC power-stage calculation.  Once the maintained system
+    # analyzer accepts a guided definition, run the already-populated Digital
+    # Loop page automatically. Expert sessions keep their historical behavior.
+    original_design_ready = host._design_ready
+
+    def design_ready_with_guided_loop(self, analysis) -> None:
+        original_design_ready(analysis)
+        if hasattr(self, "guided_system_definition"):
+            self.digital_loop_view.request_analysis()
+
+    host._design_ready = MethodType(design_ready_with_guided_loop, host)
+
     def apply_selected(loop_key: str, point) -> None:
-        if loop_key != "voltage" or point.kp is None or point.ti_s is None:
+        if loop_key != "voltage" or not point.feasible or point.kp is None or point.ti_s is None:
             return
-        # A Solution Map point is an exact firmware-Tustin PI design.  Applying
+        # A Solution Map point is an exact firmware-Tustin PI design. Applying
         # it returns through the normal LLC Digital Loop request path so the
         # full maintained analysis, z-plane approximation and ngspice handoff
         # are rebuilt from the selected point.
