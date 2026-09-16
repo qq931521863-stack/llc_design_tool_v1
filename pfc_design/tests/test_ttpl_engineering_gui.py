@@ -42,7 +42,7 @@ def test_ttpl_engineering_workbench_wraps_existing_control_lab_and_applies_sizin
     app.processEvents()
 
 
-def test_pfc_main_window_exposes_seven_stage_ttpl_engineering_workflow():
+def test_pfc_main_window_exposes_eight_stage_ttpl_engineering_workflow():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     qt_widgets = pytest.importorskip("PySide6.QtWidgets")
 
@@ -63,10 +63,11 @@ def test_pfc_main_window_exposes_seven_stage_ttpl_engineering_workflow():
         "switching_validation_view",
         "control_lab",
         "exact_hz_view",
+        "ngspice_closed_loop_view",
     ):
         assert hasattr(workbench, attribute)
 
-    assert workbench.tabs.count() == 7
+    assert workbench.tabs.count() == 8
     expected = (
         "Power Stage / Sizing",
         "Devices / Loss",
@@ -75,6 +76,7 @@ def test_pfc_main_window_exposes_seven_stage_ttpl_engineering_workflow():
         "Switching / Zero Crossing",
         "Control / Sensing / Bode",
         "Exact H(z) / C99",
+        "Closed-Loop Verification",
     )
     for index, text in enumerate(expected):
         assert text in workbench.tabs.tabText(index)
@@ -103,11 +105,16 @@ def test_pfc_main_window_exposes_seven_stage_ttpl_engineering_workflow():
     # The old direct C99 entry point is hidden; exact H(z) must be frozen first.
     assert workbench.control_lab.codegen_button.isVisible() is False
     assert workbench.exact_hz_view.analysis is None
+    assert workbench.ngspice_closed_loop_view.analysis is None
     analysis = build_pfc_control_lab_analysis(workbench.control_lab._config())
     workbench.exact_hz_view.set_analysis(analysis)
+    workbench.ngspice_closed_loop_view.set_analysis(analysis)
     assert workbench.exact_hz_view.handoff is not None
     assert workbench.exact_hz_view.export_button.isEnabled()
     assert "PASS" in workbench.exact_hz_view.status.text()
+    # ngspice execution may be unavailable on a developer machine, but the
+    # stage must still consume the same analyzed controller object.
+    assert workbench.ngspice_closed_loop_view.analysis is analysis
 
     # A selected physical capacitor bank must replace the Phase-1 minimum C in
     # the downstream control plant only after the explicit Apply action.

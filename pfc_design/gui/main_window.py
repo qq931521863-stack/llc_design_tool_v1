@@ -23,6 +23,7 @@ from llc_design.gui.workers import FunctionWorker
 from llc_design.i18n import t
 from pfc_design.control import (
     PFCControlLabConfig,
+    build_pfc_control_handoff,
     build_pfc_control_lab_analysis,
     build_pfc_switching_waveforms,
     simulate_pfc_line_cycle,
@@ -36,11 +37,13 @@ from pfc_design.vienna import (
     validate_vienna_line_cycle,
     validate_vienna_switching,
 )
+from power_sim.spice import run_ttpl_shared_closed_loop
 
 from .ac_switching_install import install_ttpl_ac_switching_stages
 from .cap_thermal_install import install_ttpl_capacitor_thermal_stage
 from .device_loss_install import install_ttpl_device_loss_stage
 from .exact_hz_install import install_ttpl_exact_hz_stage
+from .ngspice_closed_loop_install import install_ttpl_ngspice_closed_loop_stage
 from .ttpl_engineering_view import TTPLWorkbenchView
 from .vienna_control_view import ViennaControlLabView
 
@@ -63,14 +66,15 @@ class PFCMainWindow(QMainWindow):
         self.subtabs.setUsesScrollButtons(True)
         # Keep the historical attribute name as a compatibility surface for
         # tests/callers, but the object is now an engineering workbench whose
-        # stages cover power hardware, AC/switching verification, digital-loop
-        # design and exact-H(z) handoff.
+        # stages cover hardware, AC/switching, exact H(z) and circuit-level
+        # shared-ngspice verification.
         self.control_lab_view = TTPLWorkbenchView()
         self.vienna_view = ViennaControlLabView()
         install_ttpl_device_loss_stage(self)
         install_ttpl_capacitor_thermal_stage(self)
         install_ttpl_ac_switching_stages(self)
         install_ttpl_exact_hz_stage(self)
+        install_ttpl_ngspice_closed_loop_stage(self)
         self.control_lab_view.analysis_requested.connect(self.run_ttpl_analysis)
         self.vienna_view.analysis_requested.connect(self.run_vienna_analysis)
         self.subtabs.addTab(self.control_lab_view, "Single-Phase TTPL Engineering")
@@ -145,6 +149,8 @@ class PFCMainWindow(QMainWindow):
             self.control_lab_view.switching_validation_view.set_busy(busy)
         if hasattr(self.control_lab_view, "exact_hz_view"):
             self.control_lab_view.exact_hz_view.set_busy(busy)
+        if hasattr(self.control_lab_view, "ngspice_closed_loop_view"):
+            self.control_lab_view.ngspice_closed_loop_view.set_busy(busy)
         self.vienna_view.set_busy(busy)
         self.statusBar().showMessage(message if busy else t("PFC 工作区就绪"))
 
@@ -190,13 +196,14 @@ class PFCMainWindow(QMainWindow):
         try:
             self.result = result
             # Control/Bode remains the owner of controller/sensing settings.
-            # AC/switching and exact H(z) are downstream consumers of the exact
-            # same analysis result; none of these pages recreates a controller.
+            # AC/switching, exact H(z) and shared-ngspice all consume this exact
+            # analysis result; no downstream stage recreates the controller.
             self.control_lab_view.set_result(result)
             self.control_lab_view.ac_performance_view.set_result(result)
             self.control_lab_view.switching_validation_view.set_result(result)
             analysis, line, _ = result
             self.control_lab_view.exact_hz_view.set_analysis(analysis)
+            self.control_lab_view.ngspice_closed_loop_view.set_analysis(analysis)
             current = analysis.current_loop.margins
             voltage = analysis.voltage_loop.margins
             self.statusBar().showMessage(
@@ -207,6 +214,35 @@ class PFCMainWindow(QMainWindow):
             )
         except Exception:
             self._worker_error("TTPL 结果绘图/GUI 更新失败\n" + traceback.format_exc())
+
+    def run_ttpl_shared_ngspice(self, analysis, scenario, simulation) -> None:
+        """Run the circuit-level TTPL path from the frozen exact-H(z) contract."""
+        def calculate():
+            handoff = build_pfc_control_handoff(analysis)
+            return run_ttpl_shared_closed_loop(
+                analysis,
+                handoff=handoff,
+                scenario=scenario,
+                simulation=simulation,
+            )
+
+        self._run_worker(
+            "正在运行 TTPL shared-ngspice：Exact H(z) → PWM → 四开关功率级…",
+            calculate,
+            self._ttpl_ngspice_ready,
+        )
+
+    def _ttpl_ngspice_ready(self, result) -> None:
+        try:
+            self.control_lab_view.ngspice_closed_loop_view.set_simulation_result(result)
+            m = result.metrics
+            self.statusBar().showMessage(
+                f"TTPL shared-ngspice 完成: Vbus={m.final_bus_voltage_v:.3f} V, "
+                f"Ipk={m.peak_inductor_current_a:.3f} A, "
+                f"duty={m.duty_min:.4f}..{m.duty_max:.4f}"
+            )
+        except Exception:
+            self._worker_error("TTPL shared-ngspice 结果绘图/GUI 更新失败\n" + traceback.format_exc())
 
     def run_vienna_analysis(self, config: ViennaControlLabConfig):
         def calculate():
@@ -257,10 +293,11 @@ class PFCMainWindow(QMainWindow):
             t("关于 PFC Design"),
             "<h3>PFC Engineering Workspace</h3>"
             "<p>Single-phase TTPL + Three-phase Vienna PFC.</p>"
-            "<p>TTPL now follows an explicit engineering flow: electrical requirements and power-stage sizing, "
-            "MOSFET selection/loss comparison, DC-bus capacitor/thermal design, settled AC-line PF/THD, "
-            "switching/zero-crossing validation, sensing/ADC and current/voltage-loop design, then an exact "
-            "H(z)/C99 handoff that is ready for the shared-ngspice closed-loop stage.</p>"
+            "<p>TTPL follows an explicit engineering flow: power-stage sizing, device/loss selection, "
+            "DC-bus capacitor/thermal design, AC PF/THD, switching/zero-crossing, sensing/Bode, exact "
+            "H(z)/C99 handoff, then shared-ngspice digital closed-loop switching verification.</p>"
+            "<p>Exact H(z) remains the linear controller source of truth; the ngspice stage does not rebuild "
+            "Kp/Ti or re-discretize the controller.</p>"
             "<p>Vienna retains split DC bus, midpoint balance and sector analysis while "
             "its engineering-design layer is upgraded in a later phase.</p>",
         )
