@@ -149,6 +149,27 @@ def install_device_library(host, *, user_path=None):
         return spec.clone(sr_device=str(sr_part))
 
     def load_spec_with_devices(self, spec):
+        # A project JSON stores the selected part numbers, while custom device
+        # parameters live in the separate user library.  Never silently replace
+        # a missing custom part with the first built-in device: that would make
+        # a loaded project numerically different without an explicit error.
+        database.refresh()
+        missing: list[str] = []
+        try:
+            database.get_primary(spec.primary_device)
+        except KeyError:
+            missing.append(f"Primary MOSFET '{spec.primary_device}'")
+        try:
+            database.get_sr(spec.sr_device)
+        except KeyError:
+            missing.append(f"SR MOSFET '{spec.sr_device}'")
+        if missing:
+            raise ValueError(
+                "Project references device records that are not available on this machine: "
+                + ", ".join(missing)
+                + ". Import the matching Device Library JSON first, then reload the project."
+            )
+
         refresh_combos(spec.primary_device, spec.sr_device)
         original_load_spec_to_widgets(spec)
         sr_index = self.sr_device_combo.findData(spec.sr_device)
