@@ -22,12 +22,14 @@ from llc_design.i18n import t
 from llc_design.gui.main_window import LLCMainWindow
 from llc_design.gui.closed_loop_install import install_closed_loop_verification
 from llc_design.gui.device_library_install import install_device_library
+from llc_design.gui.solution_map_install import install_llc_solution_map
 from llc_design.gui.system_modeling import (
     SystemModelingDesignDialog,
     apply_definition_to_llc_window,
     apply_definition_to_ttpl_window,
 )
 from pfc_design.gui.main_window import PFCMainWindow
+from pfc_design.gui.solution_map_install import install_ttpl_solution_map
 from power_control_tools.gui.fra_advanced import install_advanced_fra_actions
 from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
 from power_control_tools.gui.main_window import ControlToolsMainWindow
@@ -159,7 +161,9 @@ class WorkspaceApplicationController:
         self.llc_window = LLCMainWindow(initial_spec)
         install_device_library(self.llc_window)
         install_closed_loop_verification(self.llc_window)
+        install_llc_solution_map(self.llc_window)
         self.pfc_window = PFCMainWindow()
+        install_ttpl_solution_map(self.pfc_window)
         self.control_window = ControlToolsMainWindow()
         self.fra_window = FRALoopDesignerWindow()
         install_advanced_fra_actions(self.fra_window)
