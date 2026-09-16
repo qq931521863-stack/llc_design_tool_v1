@@ -37,6 +37,7 @@ from pfc_design.vienna import (
     validate_vienna_switching,
 )
 
+from .cap_thermal_install import install_ttpl_capacitor_thermal_stage
 from .device_loss_install import install_ttpl_device_loss_stage
 from .ttpl_engineering_view import TTPLWorkbenchView
 from .vienna_control_view import ViennaControlLabView
@@ -60,11 +61,12 @@ class PFCMainWindow(QMainWindow):
         self.subtabs.setUsesScrollButtons(True)
         # Keep the historical attribute name as a compatibility surface for
         # tests/callers, but the object is now an engineering workbench whose
-        # later stages contain device/loss screening and the original detailed
-        # control laboratory.
+        # later stages contain hardware sizing, device/loss screening and the
+        # original detailed control laboratory.
         self.control_lab_view = TTPLWorkbenchView()
         self.vienna_view = ViennaControlLabView()
         install_ttpl_device_loss_stage(self)
+        install_ttpl_capacitor_thermal_stage(self)
         self.control_lab_view.analysis_requested.connect(self.run_ttpl_analysis)
         self.vienna_view.analysis_requested.connect(self.run_vienna_analysis)
         self.subtabs.addTab(self.control_lab_view, "Single-Phase TTPL Engineering")
@@ -242,7 +244,7 @@ class PFCMainWindow(QMainWindow):
             "<h3>PFC Engineering Workspace</h3>"
             "<p>Single-phase TTPL + Three-phase Vienna PFC.</p>"
             "<p>TTPL now starts from electrical requirements and power-stage sizing, "
-            "continues through a persistent MOSFET library and device/loss comparison, "
+            "continues through MOSFET selection/loss comparison and DC-bus capacitor/thermal design, "
             "then into inductor design, sensing/ADC, AC-cycle PF/THD, switching workpoints "
             "and digital current/voltage loops.</p>"
             "<p>Vienna retains split DC bus, midpoint balance and sector analysis while "
