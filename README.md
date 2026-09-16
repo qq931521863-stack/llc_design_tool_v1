@@ -10,13 +10,13 @@ LLC · Totem-Pole PFC · Vienna PFC · Digital Control · FRA · C99 `float32_t`
 ![Version](https://img.shields.io/badge/version-9.2.2-informational)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 
-Power Design Toolkit is an engineering-oriented power-electronics design and digital-control platform. It connects **power-stage design, multi-fidelity models, measured FRA data, exact discrete controller H(z), stability analysis, C99 code generation, switching-circuit verification and Agent/API access** in one codebase.
+Power Design Toolkit is an engineering-oriented power-electronics design and digital-control platform. It connects **power-stage design, component/loss screening, multi-fidelity models, measured FRA data, exact discrete controller H(z), stability analysis, C99 code generation, firmware-correlated switching co-simulation and Agent/API access** in one codebase.
 
 The project is built around four rules:
 
 1. **One engineering model, multiple front ends.** Desktop GUI, CLI, Web/API, MCP and code generation reuse shared Python kernels instead of re-implementing equations in each interface.
-2. **Exact digital-control semantics.** A designed discrete transfer function is passed as its real `b/a` coefficients; it is not silently re-fit into a different PI/PID form.
-3. **Model boundaries are explicit.** FHA, HB, switched time-domain, measured FRA, small-signal Bode and ngspice answer different questions.
+2. **Exact digital-control semantics.** A designed discrete transfer function is passed as its real `b/a` coefficients; it is not silently re-fit into a different PI/PID form or re-discretized inside downstream simulation.
+3. **Model boundaries are explicit.** FHA, HB, switched time-domain, measured FRA, small-signal Bode, firmware runtime and ngspice answer different questions.
 4. **Evidence is not collapsed into one word.** Software regression, simulator execution and hardware validation are separate evidence levels.
 
 ![Power Design Toolkit workspace launcher](docs/assets/power-design-toolkit-overview.png)
@@ -28,36 +28,54 @@ The project is built around four rules:
 ```mermaid
 flowchart LR
     A[Requirements / measured FRA] --> B[Power-stage design]
-    B --> C[FHA / HB / switched TD]
-    C --> D[Plant G(s) / G(z)]
+    B --> C[Component / loss / thermal screening]
+    C --> D[Plant G(s) / G(z) or switched model]
     A --> E[Measured G(jw)]
-    D --> F[Control Tools]
+    D --> F[Control Tools / topology control]
     E --> F
     F --> G[Exact controller H(z)]
     G --> H[PM / GM / S / T]
-    G --> I[C99 float32_t\nDF2T / SOS]
-    H --> J[ngspice switching correlation]
-    I --> K[Firmware integration]
-    J --> L[Reference Design evidence]
-    K --> L
-    L --> M[Bench evidence\nUNKNOWN until supplied]
+    G --> I[C99 float32_t]
+    G --> J[Firmware-correlated runtime]
+    J --> K[shared-ngspice switching circuit]
+    I --> L[Firmware integration]
+    K --> M[Reference Design evidence]
+    L --> M
+    M --> N[Bench evidence\nUNKNOWN until supplied]
 ```
 
-A typical LLC path is therefore:
+A typical LLC path is:
 
 ```text
 400 V -> 53 V / 3 kW specification
     -> Lr / Cr / Lm and operating region
+    -> primary / SR device selection and comparison
     -> FHA / HB / switched-TD comparison
     -> digital voltage-loop model
     -> exact H(z) controller
     -> PM / GM / sensitivity checks
     -> C99 float32_t export
-    -> switching correlation
+    -> shared-ngspice switching correlation
     -> traceable evidence matrix
 ```
 
-The first maintained case is [`LLC_400V_53V_3kW`](reference_designs/LLC_400V_53V_3kW/README.md). Its bench status is intentionally `UNKNOWN`; software evidence is not presented as hardware sign-off.
+A typical single-phase TTPL PFC path is:
+
+```text
+Vin / Vbus / Pout / fsw specification
+    -> Lboost / Cbus sizing
+    -> MOSFET / loss / thermal screening
+    -> settled AC line cycle / PF / THD
+    -> switching / zero-crossing verification
+    -> sensing / ADC / current + voltage loop design
+    -> exact current + voltage H(z)
+    -> C99 contract
+    -> float32 sensing / ADC / delay / anti-windup / zero-cross runtime
+    -> shared-ngspice four-switch closed loop
+    -> hardware correlation
+```
+
+The first maintained reference case is [`LLC_400V_53V_3kW`](reference_designs/LLC_400V_53V_3kW/README.md). Its bench status is intentionally `UNKNOWN`; software evidence is not presented as hardware sign-off.
 
 ---
 
@@ -67,8 +85,8 @@ The desktop launcher opens four independent workspaces while preserving state du
 
 | Workspace | Main purpose | Typical outputs |
 | --- | --- | --- |
-| **LLC Design** | Resonant tank, operating region, Q/ZVS, magnetics, SR, interleaving, waveforms, small signal and digital voltage loop | Lr/Cr/Lm, gain map, stress/loss data, FHA/HB/TD comparison, Gvf(s/z), PM/GM, closed-loop verification |
-| **PFC Design** | Single-phase Totem-Pole PFC and three-phase Vienna PFC | Current/voltage-loop Bode, sensing-chain response, AC-cycle waveforms, switching waveforms, PF/THD, inductor design |
+| **LLC Design** | Resonant tank, operating region, Q/ZVS, magnetics, primary/SR devices, interleaving, waveforms, small signal and digital voltage loop | Lr/Cr/Lm, gain map, device/loss comparison, stress data, FHA/HB/TD comparison, Gvf(s/z), exact H(z), PM/GM, shared-ngspice closed-loop verification |
+| **PFC Design** | Single-phase TTPL engineering workflow plus three-phase Vienna PFC | L/C sizing, device/loss/thermal screening, AC PF/THD, zero-crossing and switching waveforms, sensing/ADC, current/voltage H(z), C99, shared-ngspice TTPL closed loop |
 | **Control Tools** | General digital controller/filter design | H(s), exact H(z), Bode, step/impulse, poles/zeros, SOS/DF2T, single-file C99 `float32_t` |
 | **FRA Loop Designer** | Controller design from measured frequency response | Bode100/SIMPLIS import, controller de-embedding, Equivalent Plant, Fc/PM/GM/Ms/Mt, Auto Design, model ID, C99 |
 
@@ -86,6 +104,21 @@ The LLC workspace keeps several model levels instead of forcing one solver to do
 - **shared-ngspice verification** — optional circuit-level switching correlation driven by the toolkit's discrete controller runtime.
 
 The analysis also includes multi-load Q/gain maps, theoretical and engineering ZVS regions, operating trajectories, waveform reconstruction, transformer/resonant-inductor design, synchronous-rectifier timing/loss analysis, and fixed 2-phase/3-phase interleaved LLC analysis.
+
+### Primary / SR device library
+
+The LLC workspace includes built-in engineering-reference MOSFET records for primary and synchronous-rectifier positions, plus a persistent user library.
+
+Current device-library workflow includes:
+
+- Primary MOSFET and SR MOSFET selection;
+- create / edit / clone / delete user records;
+- JSON import/export;
+- built-in reference data kept separate from user data;
+- device comparison using the current LLC operating point;
+- conduction, turn-off, gate, Coss/deadtime and ZVS-margin related screening where the model provides the required data.
+
+Built-in generic/reference devices are not presented as vendor hardware sign-off. Datasheet curves and traceable vendor provenance remain a higher-fidelity data layer.
 
 ### Digital voltage-loop chain
 
@@ -114,17 +147,90 @@ See [ngspice closed-loop architecture](docs/NGSPICE_CLOSED_LOOP.md).
 
 ## 4. PFC capability
 
-### Single-phase Totem-Pole PFC
+### Single-phase TTPL Engineering Workspace
 
-- current inner loop and DC-bus voltage outer loop;
-- explicit voltage/current sensing chains and ADC/digital delay;
-- open-loop Bode and phase-budget inspection;
-- settled AC-line-cycle and zero-crossing analysis;
+The TTPL path is organized as an explicit eight-stage engineering workflow:
+
+```text
+1. Power Stage / Sizing
+        ↓
+2. Devices / Loss
+        ↓
+3. Capacitor / Thermal
+        ↓
+4. AC Line / PF / THD
+        ↓
+5. Switching / Zero Crossing
+        ↓
+6. Control / Sensing / Bode
+        ↓
+7. Exact H(z) / C99
+        ↓
+8. Closed-Loop Verification
+```
+
+#### Power stage / hardware sizing
+
+The deterministic engineering kernel covers specification-to-hardware calculations including:
+
+- low-line input RMS/peak current;
+- duty trajectory over the AC half-cycle;
+- boost-inductor ripple scan and required `Lboost`;
+- twice-line bus-ripple capacitance requirement;
+- hold-up capacitance requirement;
+- physical capacitor-bank selection and ESR transfer into downstream models.
+
+#### Devices / loss / thermal
+
+TTPL device screening includes HF active/synchronous positions and the line-frequency leg. The device database supports packaged records plus persistent user JSON records. Loss/thermal calculations remain engineering screening models; nonlinear vendor Coss/Qrr/Eon/Eoff surfaces and detailed heatsink/airflow correlation are separate fidelity layers.
+
+#### AC line / PF / THD / switching
+
+The time-domain PFC path provides:
+
+- settled AC-line-cycle reconstruction;
+- signed grid current versus rectified inductor current semantics;
+- PF, displacement/distortion factor and integer-harmonic THD;
+- DC-bus ripple and capacitor RMS current;
 - selected-workpoint switching waveforms;
-- PF/THD/integer-harmonic calculation;
-- inductor design with DC-bias and loss checks.
+- minimum-pulse and zero-crossing state-machine observability.
+
+#### Exact H(z) and C99 handoff
+
+The analyzed current and voltage controllers are promoted into a formal `PFCControlHandoff` containing exact normalized `b[]`, `a[]`, sample rates, limits, provenance and nonlinear implementation semantics.
+
+```text
+H(z) = (b0 + b1 z^-1 + ...)/(1 + a1 z^-1 + ...)
+y[n] = sum(b[k] x[n-k]) - sum(a[k] y[n-k])
+```
+
+Downstream PFC simulation consumes those coefficients directly. **No Kp/Ti reconstruction and no second S-to-Z conversion are allowed in the closed-loop handoff.**
+
+The Exact H(z) stage can export the JSON contract and an audited C99 package.
+
+#### Firmware-correlated shared-ngspice closed loop
+
+The TTPL closed-loop verifier now connects the frozen H(z) controllers to a four-switch shared-ngspice power stage. The current fidelity layer includes:
+
+- float32 controller/state execution;
+- PI/PIF conditional-integrator anti-windup derived from the frozen discrete controller identity;
+- 2P2Z clamped-output history semantics;
+- configured analog sensing poles;
+- ADC-resolution quantization in calibrated engineering units;
+- multi-SOC recursive averaging and digital filtering;
+- configured control/computation/PWM timing;
+- PWM shadow-application timing;
+- eight-state TTPL zero-crossing runtime with PI reset and commutation states;
+- line-polarity-aware HF/LF gate scheduling;
+- real `libngspice` continuous inductor/capacitor state between digital events.
+
+This is **firmware-correlated switching co-simulation**, not a claim of instruction-level C2000 bit identity. The current schema does not yet encode board-specific ADC common-mode offset/rail clipping, full MCU peripheral register behavior, vendor nonlinear semiconductor models, layout parasitics or protection-state-machine hardware correlation.
+
+See [PFC Engineering Workspace](docs/PFC_ENGINEERING_WORKSPACE.md), [Exact H(z) handoff](docs/PFC_EXACT_HZ_HANDOFF.md) and [ngspice closed-loop architecture](docs/NGSPICE_CLOSED_LOOP.md).
 
 ### Three-phase Vienna PFC
+
+Vienna currently includes:
 
 - DC-voltage outer loop plus stationary-frame ABC current loops;
 - split-bus midpoint balance loop;
@@ -134,7 +240,7 @@ See [ngspice closed-loop architecture](docs/NGSPICE_CLOSED_LOOP.md).
 - three-level switching waveforms;
 - per-phase PF/THD and power analysis.
 
-The Bode models are local linear models. Saturation, minimum pulse, zero-crossing state transitions, switching-state decisions and protection logic remain time-domain/nonlinear concerns.
+The TTPL engineering architecture is the migration template for the future Vienna hardware-design / exact-H(z) / circuit-level closed-loop path.
 
 ---
 
@@ -204,8 +310,9 @@ Power Design Toolkit distinguishes **software reproducibility**, **model correla
 | Evidence | Current meaning | Hardware verified |
 | --- | --- | ---: |
 | Python regression | Repository baseline reproduces within maintained tolerances | No |
-| Internal FHA/HB/TD comparison | Model implementations can be regression-tested | No |
-| Real ngspice path | Simulator/runtime plumbing executes in CI | No |
+| Internal FHA/HB/TD and PFC time-domain comparison | Model implementations can be regression-tested | No |
+| Real ngspice path | Real simulator/runtime plumbing executes in CI, including shared-library closed-loop paths | No |
+| Firmware-correlated runtime | float32/state/timing semantics can be regression-tested against the software contract | No |
 | Bench measurement | `UNKNOWN` unless raw evidence and conditions are supplied | No by default |
 
 The common rule is:
@@ -213,6 +320,7 @@ The common rule is:
 ```text
 analytical model
  -> higher-fidelity software model
+ -> firmware-correlated runtime
  -> circuit simulation
  -> measured hardware
  -> reviewed release evidence
@@ -350,7 +458,7 @@ Two CI layers are especially important:
 - **build-release** — regression suite, package/version contract, real packaged-app `--self-test`, release artifacts;
 - **ngspice-smoke** — installs real `ngspice` + `libngspice` and exercises switching integration rather than mocking the simulator.
 
-The packaged-app self-test constructs all four Qt workspaces offscreen and validates bundled data provenance. A release no longer passes merely because a PyInstaller directory exists.
+The ngspice smoke suite now covers both LLC and TTPL integration paths. The packaged-app self-test constructs all four Qt workspaces offscreen and validates bundled data provenance. A release no longer passes merely because a PyInstaller directory exists.
 
 A reproducible real launcher screenshot can be generated with:
 
@@ -366,10 +474,10 @@ CI also produces the same screenshot as an artifact; the README should only embe
 
 ```text
 llc_design/            LLC engineering, models, dynamics, control, GUI, reports
-pfc_design/            Totem-Pole PFC + Vienna analysis and GUI
+pfc_design/            TTPL/Vienna engineering, control, firmware runtime and GUI
 power_control_tools/   Generic controller/filter/FRA engine
 power_codegen/         Portable C99 float32_t control-code generation
-power_sim/             Backend-neutral digital runtime + SPICE integration
+power_sim/             Backend-neutral digital runtime + LLC/PFC SPICE integration
 power_agent/           Deterministic Agent wrappers + MCP v2 server
 backend/               Shared backend/control API services
 webapp/                FastAPI application + browser front end
@@ -390,6 +498,8 @@ Start here instead of reading historical version notes:
 - [Documentation index](docs/README.md)
 - [Digital control architecture](docs/DIGITAL_CONTROL_ARCHITECTURE.md)
 - [LLC model hierarchy and boundaries](docs/LLC_MODELING.md)
+- [PFC Engineering Workspace](docs/PFC_ENGINEERING_WORKSPACE.md)
+- [PFC Exact H(z) handoff](docs/PFC_EXACT_HZ_HANDOFF.md)
 - [FRA Loop Designer engineering contract](docs/FRA_LOOP_DESIGNER.md)
 - [ngspice closed-loop architecture](docs/NGSPICE_CLOSED_LOOP.md)
 - [Engineering validation policy](docs/ENGINEERING_VALIDATION.md)
