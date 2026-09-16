@@ -21,6 +21,7 @@ from llc_design.gui.help import show_help
 from llc_design.i18n import t
 from llc_design.gui.main_window import LLCMainWindow
 from llc_design.gui.closed_loop_install import install_closed_loop_verification
+from llc_design.gui.device_library_install import install_device_library
 from pfc_design.gui.main_window import PFCMainWindow
 from power_control_tools.gui.fra_advanced import install_advanced_fra_actions
 from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
@@ -139,6 +140,10 @@ class WorkspaceApplicationController:
 
     def __init__(self, initial_spec: LLCDesignSpec) -> None:
         self.llc_window = LLCMainWindow(initial_spec)
+        # Device selection is a first-class LLC engineering input.  Install the
+        # merged built-in/user library before other verification stages consume
+        # the LLC specification.
+        install_device_library(self.llc_window)
         # Closed-loop verification is an LLC design stage, not another top-level
         # workspace: power design -> exact digital H(z) -> shared-ngspice verify.
         install_closed_loop_verification(self.llc_window)
