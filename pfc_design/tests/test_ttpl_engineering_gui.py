@@ -42,10 +42,11 @@ def test_ttpl_engineering_workbench_wraps_existing_control_lab_and_applies_sizin
     app.processEvents()
 
 
-def test_pfc_main_window_exposes_six_stage_ttpl_engineering_workflow():
+def test_pfc_main_window_exposes_seven_stage_ttpl_engineering_workflow():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     qt_widgets = pytest.importorskip("PySide6.QtWidgets")
 
+    from pfc_design.control import build_pfc_control_lab_analysis
     from pfc_design.gui.main_window import PFCMainWindow
 
     app = qt_widgets.QApplication.instance() or qt_widgets.QApplication([])
@@ -61,10 +62,11 @@ def test_pfc_main_window_exposes_six_stage_ttpl_engineering_workflow():
         "ac_performance_view",
         "switching_validation_view",
         "control_lab",
+        "exact_hz_view",
     ):
         assert hasattr(workbench, attribute)
 
-    assert workbench.tabs.count() == 6
+    assert workbench.tabs.count() == 7
     expected = (
         "Power Stage / Sizing",
         "Devices / Loss",
@@ -72,6 +74,7 @@ def test_pfc_main_window_exposes_six_stage_ttpl_engineering_workflow():
         "AC Line / PF / THD",
         "Switching / Zero Crossing",
         "Control / Sensing / Bode",
+        "Exact H(z) / C99",
     )
     for index, text in enumerate(expected):
         assert text in workbench.tabs.tabText(index)
@@ -96,6 +99,15 @@ def test_pfc_main_window_exposes_six_stage_ttpl_engineering_workflow():
     }
     assert legacy_titles.isdisjoint(visible_control_titles)
     assert len(workbench.control_lab._detached_legacy_waveform_pages) == 5
+
+    # The old direct C99 entry point is hidden; exact H(z) must be frozen first.
+    assert workbench.control_lab.codegen_button.isVisible() is False
+    assert workbench.exact_hz_view.analysis is None
+    analysis = build_pfc_control_lab_analysis(workbench.control_lab._config())
+    workbench.exact_hz_view.set_analysis(analysis)
+    assert workbench.exact_hz_view.handoff is not None
+    assert workbench.exact_hz_view.export_button.isEnabled()
+    assert "PASS" in workbench.exact_hz_view.status.text()
 
     # A selected physical capacitor bank must replace the Phase-1 minimum C in
     # the downstream control plant only after the explicit Apply action.
