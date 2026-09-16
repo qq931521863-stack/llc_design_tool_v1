@@ -22,10 +22,16 @@ from llc_design.i18n import t
 from llc_design.gui.main_window import LLCMainWindow
 from llc_design.gui.closed_loop_install import install_closed_loop_verification
 from llc_design.gui.device_library_install import install_device_library
+from llc_design.gui.system_modeling import (
+    SystemModelingDesignDialog,
+    apply_definition_to_llc_window,
+    apply_definition_to_ttpl_window,
+)
 from pfc_design.gui.main_window import PFCMainWindow
 from power_control_tools.gui.fra_advanced import install_advanced_fra_actions
 from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
 from power_control_tools.gui.main_window import ControlToolsMainWindow
+from power_control_tools.system_definition import SystemTopology
 
 
 class WorkspaceSelectionDialog(QDialog):
@@ -35,58 +41,76 @@ class WorkspaceSelectionDialog(QDialog):
         super().__init__(parent)
         self.selected_workspace: str | None = None
         self.setWindowTitle(t("电源设计工具箱 — 选择设计功能"))
-        self.setMinimumSize(1180, 650)
+        self.setMinimumSize(1180, 820)
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
         self.setStyleSheet(theme.launcher_stylesheet(theme.active_theme()))
 
         root = QVBoxLayout(self)
         title = QLabel(t("请选择进入的设计工作区"))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 25px; font-weight: 650; padding: 18px;")
+        title.setStyleSheet("font-size: 25px; font-weight: 650; padding: 14px;")
         root.addWidget(title)
 
         subtitle = QLabel(
-            t("LLC、PFC、数字控制工具与 FRA Loop Designer 使用独立工作区；")
-            + t("FRA 工作区支持控制器剥离、实时整定、目标 Fc/PM 自动设计与低阶模型辨识。")
+            t("V9.3 新增“系统建模与设计”：先逐步定义功率级、采样、ADC/PWM 与数字时序，再进入现有强分析引擎；")
+            + t("Expert 用户仍可直接进入 LLC、PFC、Control Tools 或 FRA 工作区。")
         )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("font-size: 14px; padding: 4px 30px 20px 30px;")
+        subtitle.setStyleSheet("font-size: 14px; padding: 2px 30px 14px 30px;")
         root.addWidget(subtitle)
 
         choices = QGridLayout()
         choices.setHorizontalSpacing(24)
-        choices.setVerticalSpacing(20)
+        choices.setVerticalSpacing(16)
+
+        system_button = self._choice_button(
+            t("系统建模与设计 / Guided System Design"),
+            t("V9.3 主入口：拓扑 → 功率级 → 采样/滤波 → ADC/PWM/延时 → 控制器意图 → 系统复核 → 完整分析"),
+            minimum_height=145,
+        )
+        system_button.setObjectName("guided_system_design_button")
+        system_button.setStyleSheet(
+            system_button.styleSheet()
+            + f"QPushButton#guided_system_design_button {{border: 3px solid {theme.active_theme().accent};}}"
+        )
+        system_button.clicked.connect(lambda: self._select("system_modeling"))
+        choices.addWidget(system_button, 0, 0, 1, 2)
+
         llc_button = self._choice_button(
-            t("进入 LLC 设计"),
+            t("进入 LLC 设计（Expert）"),
             t("谐振腔、磁性器件、损耗、开关波形、小信号与数字电压环"),
+            minimum_height=140,
         )
         pfc_button = self._choice_button(
-            t("进入 PFC 设计"),
-            t("单相 TTPL + 三相 Vienna：控制、采样链、Bode、AC 周期、开关波形与 PF/THD"),
+            t("进入 PFC 设计（Expert）"),
+            t("单相 TTPL + 三相 Vienna：硬件设计、控制、采样链、Bode、AC/开关波形与 PF/THD"),
+            minimum_height=140,
         )
         control_button = self._choice_button(
             t("进入 Control Tools"),
             t("S2Z、数字滤波器、Bode、Step/Impulse、P/Z、SOS 与 C99 float32_t 导出"),
+            minimum_height=140,
         )
         fra_button = self._choice_button(
             t("进入 FRA Loop Designer"),
             t("Bode100 / SIMPLIS / Generic：Equivalent Plant、Auto Design、Model ID、稳定性与 C99"),
+            minimum_height=140,
         )
         llc_button.clicked.connect(lambda: self._select("llc"))
         pfc_button.clicked.connect(lambda: self._select("pfc"))
         control_button.clicked.connect(lambda: self._select("control"))
         fra_button.clicked.connect(lambda: self._select("fra"))
-        choices.addWidget(llc_button, 0, 0)
-        choices.addWidget(pfc_button, 0, 1)
-        choices.addWidget(control_button, 1, 0)
-        choices.addWidget(fra_button, 1, 1)
+        choices.addWidget(llc_button, 1, 0)
+        choices.addWidget(pfc_button, 1, 1)
+        choices.addWidget(control_button, 2, 0)
+        choices.addWidget(fra_button, 2, 1)
         root.addLayout(choices, 1)
 
         cancel = QPushButton(t("退出"))
         cancel.clicked.connect(self.reject)
         help_button = QPushButton(t("使用说明 / 帮助 (F1)"))
-        help_button.setToolTip(t("四个工作区分别做什么、如何选择、通用操作与快捷键"))
+        help_button.setToolTip(t("系统建模向导与四个 Expert 工作区分别做什么、如何选择"))
         help_button.clicked.connect(lambda: show_help(self, "selector"))
         footer = QHBoxLayout()
         footer.addStretch(1)
@@ -98,35 +122,28 @@ class WorkspaceSelectionDialog(QDialog):
         shortcut.activated.connect(lambda: show_help(self, "selector"))
 
     @staticmethod
-    def _choice_button(title: str, description: str) -> QPushButton:
-        """Create a launcher card whose localized description cannot overflow.
+    def _choice_button(title: str, description: str, *, minimum_height: int = 170) -> QPushButton:
+        """Create a launcher card whose localized description cannot overflow."""
 
-        ``QPushButton`` does not word-wrap automatically.  English/Japanese/
-        Korean launcher text can therefore be wider than the 500 px card even
-        when the Chinese source fits.  Insert explicit line breaks at a bounded
-        character width; ``break_long_words`` also gives CJK text a safe path
-        because those scripts do not necessarily contain spaces.
-        """
-
-        t = theme.active_theme()
+        palette = theme.active_theme()
         wrapped_description = "\n".join(
             textwrap.wrap(
                 description,
-                width=38,
+                width=45,
                 break_long_words=True,
                 break_on_hyphens=False,
             )
         )
         button = QPushButton(f"{title}\n\n{wrapped_description}")
-        button.setMinimumSize(500, 170)
+        button.setMinimumSize(500, minimum_height)
         button.setStyleSheet(
             "QPushButton {"
             f"font-size: 16px; font-weight: 600; text-align: center;"
-            f"padding: 24px; border: 2px solid {t.border_input}; border-radius: 10px;"
-            f"background: {t.surface_alt}; color: {t.text_strong};"
+            f"padding: 20px; border: 2px solid {palette.border_input}; border-radius: 10px;"
+            f"background: {palette.surface_alt}; color: {palette.text_strong};"
             "}"
-            f"QPushButton:hover {{background: {t.hover}; border-color: {t.accent};}}"
-            f"QPushButton:pressed {{background: {t.pressed};}}"
+            f"QPushButton:hover {{background: {palette.hover}; border-color: {palette.accent};}}"
+            f"QPushButton:pressed {{background: {palette.pressed};}}"
         )
         return button
 
@@ -140,12 +157,7 @@ class WorkspaceApplicationController:
 
     def __init__(self, initial_spec: LLCDesignSpec) -> None:
         self.llc_window = LLCMainWindow(initial_spec)
-        # Device selection is a first-class LLC engineering input.  Install the
-        # merged built-in/user library before other verification stages consume
-        # the LLC specification.
         install_device_library(self.llc_window)
-        # Closed-loop verification is an LLC design stage, not another top-level
-        # workspace: power design -> exact digital H(z) -> shared-ngspice verify.
         install_closed_loop_verification(self.llc_window)
         self.pfc_window = PFCMainWindow()
         self.control_window = ControlToolsMainWindow()
@@ -167,6 +179,8 @@ class WorkspaceApplicationController:
             return False
         if dialog.selected_workspace is None:
             return False
+        if dialog.selected_workspace == "system_modeling":
+            return self._run_system_modeling(previous=None)
         self.show_workspace(dialog.selected_workspace)
         return True
 
@@ -177,6 +191,9 @@ class WorkspaceApplicationController:
         self.fra_window.hide()
 
     def show_workspace(self, workspace: str) -> None:
+        if workspace == "system_modeling":
+            self._run_system_modeling(previous=self.active_workspace)
+            return
         if workspace not in {"llc", "pfc", "control", "fra"}:
             raise ValueError(f"unsupported workspace: {workspace}")
         self._hide_all()
@@ -191,6 +208,34 @@ class WorkspaceApplicationController:
         target.raise_()
         target.activateWindow()
 
+    def _run_system_modeling(self, previous: str | None) -> bool:
+        """Run V9.3 guided definition, then hand off to maintained engines."""
+        self._hide_all()
+        wizard = SystemModelingDesignDialog()
+        if wizard.exec() != QDialog.DialogCode.Accepted or wizard.definition is None:
+            if previous is not None:
+                self.show_workspace(previous)
+            return previous is not None
+
+        definition = wizard.definition
+        if definition.topology == SystemTopology.LLC:
+            apply_definition_to_llc_window(self.llc_window, definition)
+            self.show_workspace("llc")
+            # Reuse the mature system analyzer; the wizard never reimplements
+            # the LLC equations.  Digital-loop analysis remains available on
+            # its existing page with the guided sampling/PWM fields populated.
+            self.llc_window.run_design()
+            return True
+        if definition.topology == SystemTopology.TTPL_PFC:
+            config = apply_definition_to_ttpl_window(self.pfc_window, definition)
+            self.pfc_window.subtabs.setCurrentIndex(0)
+            self.show_workspace("pfc")
+            # TTPL already has a single complete analysis entry that builds
+            # Bode + line cycle + switching and hands exact H(z) downstream.
+            self.pfc_window.run_ttpl_analysis(config)
+            return True
+        raise NotImplementedError(f"unsupported V9.3 guided topology: {definition.topology.value}")
+
     def _handle_request(self, workspace: str) -> None:
         if workspace == "home":
             self._show_selector_again()
@@ -202,7 +247,10 @@ class WorkspaceApplicationController:
         self._hide_all()
         dialog = WorkspaceSelectionDialog()
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected_workspace:
-            self.show_workspace(dialog.selected_workspace)
+            if dialog.selected_workspace == "system_modeling":
+                self._run_system_modeling(previous=previous)
+            else:
+                self.show_workspace(dialog.selected_workspace)
         elif previous is not None:
             self.show_workspace(previous)
 
