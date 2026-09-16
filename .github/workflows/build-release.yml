@@ -49,6 +49,69 @@ jobs:
           path: docs/assets/power-design-toolkit-overview.png
           if-no-files-found: error
 
+  tag-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect release-version change
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          current=$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+          print(tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])
+          PY
+          )
+          before="${{ github.event.before }}"
+          if git cat-file -e "${before}^{commit}" 2>/dev/null; then
+            previous=$(git show "${before}:pyproject.toml" | python -c 'import sys, tomllib; print(tomllib.loads(sys.stdin.read())["project"]["version"])')
+          else
+            previous="$current"
+          fi
+          tag="v${current}"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "package version: previous=$previous current=$current"
+          git fetch --tags --force
+          if [ "$current" = "$previous" ]; then
+            echo "create=false" >> "$GITHUB_OUTPUT"
+            echo "package version unchanged; release tag not created"
+          elif git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "create=false" >> "$GITHUB_OUTPUT"
+            echo "$tag already exists; release tag not created"
+          else
+            echo "create=true" >> "$GITHUB_OUTPUT"
+            echo "release version changed; $tag will be created after CI"
+          fi
+
+      - name: Create annotated release tag
+        if: steps.release.outputs.create == 'true'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.release.outputs.tag }}" "$GITHUB_SHA" -m "Power Design Toolkit ${{ steps.release.outputs.tag }}"
+          git push origin "${{ steps.release.outputs.tag }}"
+
+      - name: Dispatch packaging workflow from release tag
+        if: steps.release.outputs.create == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh workflow run build-release.yml --ref "${{ steps.release.outputs.tag }}"
+
   build:
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     needs: test
