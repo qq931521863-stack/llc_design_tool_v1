@@ -7,7 +7,9 @@ as one large control page.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from dataclasses import replace
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
@@ -23,7 +25,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
@@ -255,6 +256,19 @@ class TTPLPowerStageDesignView(QWidget):
         self.canvas.draw_idle()
 
 
+class _EngineeringControlLabView(PFCControlLabView):
+    """Existing control lab with the engineering sizing efficiency propagated."""
+
+    def __init__(self, parent=None) -> None:
+        self.engineering_efficiency = 0.97
+        super().__init__(parent)
+
+    def _config(self):
+        config = super()._config()
+        stage = replace(config.power_stage, efficiency=float(self.engineering_efficiency))
+        return replace(config, power_stage=stage)
+
+
 class TTPLWorkbenchView(QWidget):
     """Structured TTPL engineering workflow with compatibility delegation."""
 
@@ -267,7 +281,7 @@ class TTPLWorkbenchView(QWidget):
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         self.power_stage_view = TTPLPowerStageDesignView()
-        self.control_lab = PFCControlLabView()
+        self.control_lab = _EngineeringControlLabView()
         self.tabs.addTab(self.power_stage_view, "1. Power Stage / Sizing")
         self.tabs.addTab(self.control_lab, "2. Control / Sensing / AC / Switching")
         root.addWidget(self.tabs)
@@ -277,6 +291,7 @@ class TTPLWorkbenchView(QWidget):
 
     def _apply_design_to_control(self, result: TTPLDesignResult) -> None:
         spec = result.spec
+        self.control_lab.engineering_efficiency = spec.efficiency
         self.control_lab.vin_rms.setValue(spec.vin_nom_rms_v)
         self.control_lab.line_hz.setValue(spec.line_frequency_hz)
         self.control_lab.vbus.setValue(spec.bus_voltage_v)
