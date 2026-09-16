@@ -22,6 +22,13 @@ from .config import (
     default_vbus_sense,
     default_voltage_controller,
 )
+from .handoff import (
+    COEFFICIENT_CONVENTION,
+    PFCControlHandoff,
+    PFCControllerArtifact,
+    assert_handoff_matches_analysis,
+    build_pfc_control_handoff,
+)
 from .sensing import (
     SenseChainSummary,
     SenseFrequencyResponse,
@@ -41,12 +48,15 @@ from .autotune import CurrentLoopEnvelopePoint, CurrentLoopTuneResult, tune_pfc_
 
 __all__ = [
     "ADCTimingConfig",
+    "COEFFICIENT_CONVENTION",
     "ControllerConfig",
     "ControllerKind",
     "DigitalFilterConfig",
     "ExternalSenseConfig",
     "LoadModel",
     "LoopResult",
+    "PFCControlHandoff",
+    "PFCControllerArtifact",
     "PFCControlLabAnalysis",
     "PFCControlLabConfig",
     "PFCFirmwareAlgorithmConfig",
@@ -57,6 +67,8 @@ __all__ = [
     "PFCWaveformMetrics",
     "SenseChainSummary",
     "SenseFrequencyResponse",
+    "assert_handoff_matches_analysis",
+    "build_pfc_control_handoff",
     "build_pfc_control_lab_analysis",
     "export_pfc_control_lab",
     "export_pfc_controller_c99",
@@ -72,4 +84,3 @@ __all__ = [
 
     "CurrentLoopEnvelopePoint", "CurrentLoopTuneResult", "tune_pfc_current_loop",
 ]
-
