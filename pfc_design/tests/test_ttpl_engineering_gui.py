@@ -21,6 +21,12 @@ def test_ttpl_engineering_workbench_wraps_existing_control_lab_and_applies_sizin
 
     result = view.power_stage_view.result
     assert result is not None
+    # Exercise a non-default efficiency so the engineering-stage assumption
+    # cannot silently fall back to PFCPowerStageConfig's historical 0.97.
+    view.power_stage_view.efficiency.setValue(0.945)
+    view.power_stage_view.calculate()
+    result = view.power_stage_view.result
+    assert result is not None
     view._apply_design_to_control(result)
 
     assert view.control_lab.vin_rms.value() == pytest.approx(result.spec.vin_nom_rms_v)
@@ -29,6 +35,7 @@ def test_ttpl_engineering_workbench_wraps_existing_control_lab_and_applies_sizin
     assert view.control_lab.fsw.value() == pytest.approx(result.spec.switching_frequency_hz / 1e3)
     assert view.control_lab.inductance.value() == pytest.approx(result.required_inductance_uh, rel=1e-4)
     assert view.control_lab.cbus.value() == pytest.approx(result.recommended_bus_capacitance_uf, rel=1e-4)
+    assert view.control_lab._config().power_stage.efficiency == pytest.approx(result.spec.efficiency)
     assert view.tabs.currentWidget() is view.control_lab
 
     view.close()
