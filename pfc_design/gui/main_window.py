@@ -20,6 +20,7 @@ from llc_design.gui.help import install_help
 from llc_design.gui.i18n_ui import install_language_selector
 from llc_design.gui.updater import add_toolbar_right_side, check_for_updates
 from llc_design.gui.workers import FunctionWorker
+from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
 from pfc_design.control import (
     PFCControlLabConfig,
@@ -165,15 +166,7 @@ class PFCMainWindow(QMainWindow):
         self.thread_pool.start(worker)
 
     def _worker_error(self, error):
-        lines = [line for line in str(error).splitlines() if line.strip()]
-        last = lines[-1] if lines else "Unknown PFC calculation error"
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Critical)
-        box.setWindowTitle("PFC 计算失败")
-        box.setText(last)
-        box.setInformativeText("已保留完整 traceback。点击“显示详细信息”可直接复制给开发者定位。")
-        box.setDetailedText(str(error))
-        box.exec()
+        show_operation_issue(self, t("计算失败"), str(error), critical=True)
 
     def run_ttpl_analysis(self, config: PFCControlLabConfig):
         def calculate():

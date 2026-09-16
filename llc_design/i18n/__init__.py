@@ -13,7 +13,8 @@ incremental: a file only has to be touched where translations exist.
 **Existing English is not translated.**  Strings that are already English in the
 source (``Bode``, ``H(z)``, ``C99``, ``PM``, ``Kp``, ``Summary``, ...) deliberately
 have no entries in any catalogue.  Per project policy they stay as written, in
-every language.  ``zh-Hans`` is therefore an empty catalogue: it is the source.
+every language.  ``zh-Hans`` uses the source wording, with selected user-facing refinements
+in its catalogue. Technical diagnostics may have separate presentation helpers.
 
 **No Qt import here.**  The catalogue is also usable from CLI, report and
 code-generation code, which must keep working without PySide6 installed.

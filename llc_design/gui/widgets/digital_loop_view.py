@@ -7,6 +7,7 @@ keeps the Bode plot large.  The numerical model is unchanged.
 
 from __future__ import annotations
 
+from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
 
 import math
@@ -781,7 +782,7 @@ class DigitalLoopView(QWidget):
                 return
             result = generate_llc_control_code(self.result, Path(directory) / "llc_control_generated")
         except Exception as exc:
-            QMessageBox.warning(self, t("C99 代码生成失败"), str(exc))
+            show_operation_issue(self, t("C99 代码生成失败"), str(exc), critical=False)
             return
         QMessageBox.information(
             self, t("C99 代码生成完成"),
@@ -855,7 +856,7 @@ class DigitalLoopView(QWidget):
                 },
             })
         except Exception as exc:
-            QMessageBox.warning(self, t("数字环路参数错误"), str(exc))
+            show_operation_issue(self, t("数字环路参数错误"), str(exc), critical=False)
 
     def set_analysis(self, result: DigitalLoopAnalysis) -> None:
         self.result = result

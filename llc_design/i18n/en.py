@@ -437,3 +437,5 @@ The two are different, so Auto Design results are written back as exact H(z).
     '显示框图': 'Show block diagram',
     '显示参数': 'Show parameters',
 }
+
+CATALOGUE.update({'设计提醒：': 'Design notes:', '可继续查看和导出已有结果；未满足项与未求解工况仍需复核。': 'Available results can still be viewed and exported; unmet constraints and unsolved operating points need review.'})

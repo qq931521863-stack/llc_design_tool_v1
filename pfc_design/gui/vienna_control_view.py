@@ -42,6 +42,7 @@ from llc_design.gui.widgets.control_block_diagram import (
 )
 from llc_design.gui.widgets.sense_schematic import AnalogSenseSchematic
 from llc_design.gui import theme
+from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
 from pfc_design.control.config import (
     ADCTimingConfig,
@@ -592,7 +593,7 @@ class ViennaControlLabView(QWidget):
             analysis = self.result[0]
             result = generate_vienna_control_code(analysis, Path(directory) / "vienna_control_generated")
         except Exception as exc:
-            QMessageBox.warning(self, t("C99 代码生成失败"), str(exc))
+            show_operation_issue(self, t("C99 代码生成失败"), str(exc), critical=False)
             return
         QMessageBox.information(
             self, t("C99 代码生成完成"),
@@ -605,7 +606,7 @@ class ViennaControlLabView(QWidget):
             config.validate()
             self.analysis_requested.emit(config)
         except Exception as exc:
-            QMessageBox.warning(self, t("Vienna 参数错误"), str(exc))
+            show_operation_issue(self, t("Vienna 参数错误"), str(exc), critical=False)
 
     def set_busy(self, busy):
         self.run_button.setEnabled(not busy)

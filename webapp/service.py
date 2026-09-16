@@ -17,6 +17,7 @@ import numpy as np
 
 from llc_design.core.spec import LLCDesignSpec, PrimaryTopology, TankParameterMode
 from llc_design.core.tank import equivalent_ac_load_ohm, gain_vector, target_gain
+from llc_design.user_messages import design_reason
 from llc_design.models.devices import DeviceDatabase
 from llc_design.models.system import LLCSystemAnalyzer, SystemAnalysis
 
@@ -226,6 +227,7 @@ def analyze_llc(payload: dict[str, Any]) -> dict[str, Any]:
         "feasible": analysis.feasible,
         "warnings": list(analysis.warnings),
         "feasibility_reasons": list(analysis.feasibility_reasons),
+        "design_notes_zh": [design_reason(reason, language="zh-Hans") for reason in analysis.feasibility_reasons],
         "spec": _jsonable(asdict(spec)),
         "summary": {
             "lr_h": analysis.tank.lr_h,

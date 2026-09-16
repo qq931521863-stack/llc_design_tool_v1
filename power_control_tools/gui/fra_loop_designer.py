@@ -41,6 +41,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from llc_design.gui import theme
+from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
 from llc_design.gui.help import install_help
 from llc_design.gui.i18n_ui import install_language_selector
@@ -789,7 +790,7 @@ class FRALoopDesignerWindow(QMainWindow):
             )
             self.recalculate()
         except Exception as exc:
-            QMessageBox.critical(self, t("FRA 导入失败"), str(exc))
+            show_operation_issue(self, t("FRA 导入失败"), str(exc), critical=True)
 
     def copy_existing_pi(self) -> None:
         if not self._is_complete_loop() or self.old_mode.currentData() != "pi":
@@ -1080,7 +1081,7 @@ class FRALoopDesignerWindow(QMainWindow):
                 f"{out.file_path}\n\n{verify.message}\nImpulse error={verify.impulse_max_abs_error:.3e}\nStep error={verify.step_max_abs_error:.3e}",
             )
         except Exception as exc:
-            QMessageBox.critical(self, t("C99 导出失败"), str(exc))
+            show_operation_issue(self, t("C99 导出失败"), str(exc), critical=True)
 
 
 __all__ = ["FRALoopDesignerWindow"]

@@ -40,6 +40,7 @@ from llc_design.control.digital_loop import (
 from llc_design.gui.widgets.control_block_diagram import BlockSpec, ConnectionSpec, ControlBlockDiagram
 from llc_design.gui.widgets.sense_schematic import AnalogSenseSchematic
 from llc_design.gui import theme
+from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
 from llc_design.control.phase_budget import phase_budget
 from llc_design.gui.widgets.bode_cursor import (
@@ -778,7 +779,7 @@ class PFCControlLabView(QWidget):
             analysis = self.result[0]
             result = generate_ttpl_control_code(analysis, Path(directory) / "ttpl_control_generated")
         except Exception as exc:
-            QMessageBox.warning(self, t("C99 代码生成失败"), str(exc))
+            show_operation_issue(self, t("C99 代码生成失败"), str(exc), critical=False)
             return
         QMessageBox.information(
             self, t("C99 代码生成完成"),
@@ -791,7 +792,7 @@ class PFCControlLabView(QWidget):
             config.validate()
             self.analysis_requested.emit(config)
         except Exception as exc:
-            QMessageBox.warning(self, t("PFC Control Lab 参数错误"), str(exc))
+            show_operation_issue(self, t("PFC Control Lab 参数错误"), str(exc), critical=False)
 
     def set_result(self, result) -> None:
         self.result = result

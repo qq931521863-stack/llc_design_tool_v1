@@ -37,6 +37,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 import numpy as np
 
+from llc_design.user_messages import design_reason, design_status, show_operation_issue
 from llc_design.i18n import t
 
 from ..analysis import (
@@ -547,7 +548,7 @@ class LLCMainWindow(QMainWindow):
             if idx >= 0:
                 self.parameter_mode_combo.setCurrentIndex(idx)
         except Exception as exc:
-            QMessageBox.warning(self, t("无法复制参数"), str(exc))
+            show_operation_issue(self, t("无法复制参数"), str(exc), critical=False)
 
     def _update_manual_derived_label(self) -> None:
         if not hasattr(self, "manual_derived_label"):
@@ -650,7 +651,7 @@ class LLCMainWindow(QMainWindow):
             self._load_spec_to_widgets(self.spec)
             self._append_log(f"Loaded: {path}")
         except Exception as exc:
-            QMessageBox.critical(self, t("加载失败"), str(exc))
+            show_operation_issue(self, t("加载失败"), str(exc), critical=True)
 
     def save_json(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "保存 LLC JSON", "llc_project.json", "JSON (*.json)")
@@ -666,7 +667,7 @@ class LLCMainWindow(QMainWindow):
             save_project(self.spec, path, analysis)
             self._append_log(f"Saved: {path}")
         except Exception as exc:
-            QMessageBox.critical(self, t("保存失败"), str(exc))
+            show_operation_issue(self, t("保存失败"), str(exc), critical=True)
 
     def choose_output_directory(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择输出目录", str(self.output_directory))
@@ -686,7 +687,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, t("参数错误"), str(exc))
+            show_operation_issue(self, t("参数错误"), str(exc), critical=False)
             return
         analysis = (
             self.system_analysis
@@ -730,13 +731,13 @@ class LLCMainWindow(QMainWindow):
 
     def _worker_error(self, error: str) -> None:
         self._append_log(error)
-        QMessageBox.critical(self, t("计算失败"), error.splitlines()[-1])
+        show_operation_issue(self, t("计算失败"), error, critical=True)
 
     def run_design(self) -> None:
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, t("参数错误"), str(exc)); return
+            show_operation_issue(self, t("参数错误"), str(exc), critical=False); return
         self._run_worker("正在运行 LLC 完整计算…", lambda: LLCSystemAnalyzer().analyze(self.spec), self._design_ready)
 
     def _design_ready(self, analysis: SystemAnalysis) -> None:
@@ -759,10 +760,12 @@ class LLCMainWindow(QMainWindow):
             "",
             f"标称损耗={nominal.total_loss_w:.5f} W",
             f"标称效率={nominal.efficiency*100:.5f}%",
-            f"状态={'PASS' if analysis.feasible else 'FAIL'}",
+            design_status(analysis.feasible),
         ]
         if analysis.feasibility_reasons:
-            text.extend(["", "不可行原因:"] + [f"- {reason}" for reason in analysis.feasibility_reasons])
+            text.extend(["", t("设计提醒："), t("可继续查看和导出已有结果；未满足项与未求解工况仍需复核。")]
+                        + [f"- {design_reason(reason)}" for reason in analysis.feasibility_reasons])
+            self._append_log("Design diagnostics:\n" + "\n".join(analysis.feasibility_reasons))
         self.summary_text.setPlainText("\n".join(text))
         self._plot_gain(analysis)
         try:
@@ -801,7 +804,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, t("参数错误"), str(exc)); return
+            show_operation_issue(self, t("参数错误"), str(exc), critical=False); return
         if core_input is None:
             core_input = self.transformer_design_view._core_input()
         if settings is None:
@@ -846,7 +849,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, t("参数错误"), str(exc)); return
+            show_operation_issue(self, t("参数错误"), str(exc), critical=False); return
         self._run_worker(
             "正在计算 LLC 多负载 Q / ZVS 工作区域…",
             lambda: build_q_zvs_analysis(self.spec),
@@ -888,7 +891,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, t("参数错误"), str(exc)); return
+            show_operation_issue(self, t("参数错误"), str(exc), critical=False); return
         options = options or {}
         vbus_v = float(options.get("vbus_v", self.spec.vbus_nom_v))
         load_fraction = float(options.get("load_fraction", 1.0))
@@ -940,7 +943,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, t("参数错误"), str(exc)); return
+            show_operation_issue(self, t("参数错误"), str(exc), critical=False); return
         options = options or {}
         vbus = float(options.get("vbus_v", self.spec.vbus_nom_v))
         load = float(options.get("load_fraction", 1.0))
@@ -959,7 +962,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, t("参数错误"), str(exc)); return
+            show_operation_issue(self, t("参数错误"), str(exc), critical=False); return
         options = options or {}
         vbus = float(options.get("vbus_v", self.spec.vbus_nom_v))
         load = float(options.get("load_fraction", 1.0))
@@ -994,7 +997,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, t("参数错误"), str(exc)); return
+            show_operation_issue(self, t("参数错误"), str(exc), critical=False); return
         options = options or {}
         request = LLCAnalysisRequest(
             spec=self.spec,
@@ -1030,7 +1033,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, t("参数错误"), str(exc)); return
+            show_operation_issue(self, t("参数错误"), str(exc), critical=False); return
         options = options or {}
         def calculate():
             small = self._build_small_signal(options)
@@ -1058,7 +1061,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, t("参数错误"), str(exc)); return
+            show_operation_issue(self, t("参数错误"), str(exc), critical=False); return
         self._run_worker("正在建立 LLC 小信号与 ZOH 对象…",
                          lambda: self._build_small_signal(options), self._small_signal_ready)
 
@@ -1074,7 +1077,7 @@ class LLCMainWindow(QMainWindow):
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
-            QMessageBox.warning(self, t("参数错误"), str(exc)); return
+            show_operation_issue(self, t("参数错误"), str(exc), critical=False); return
 
         def calculate():
             small_options = options.get("small_signal", {}) if options else {}

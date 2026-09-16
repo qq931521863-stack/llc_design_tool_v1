@@ -20,6 +20,22 @@ def test_baseline_analysis_matches_engineering_kernel():
     assert len(result["gain_map"]["curves"]) == 5
 
 
+def test_chinese_design_notes_preserve_machine_readable_failure():
+    from llc_design.i18n import current_language, set_language
+
+    previous = current_language()
+    try:
+        set_language("en", notify=False)
+        result = analyze_llc({"bus_capacitance_f": 100e-6})
+        assert current_language() == "en"
+    finally:
+        set_language(previous, notify=False)
+    assert result["status"] == "FAIL"
+    assert result["feasible"] is False
+    assert "installed bus capacitance does not meet requested hold-up time" in result["feasibility_reasons"]
+    assert any("母线保持时间未达到设定要求" in note for note in result["design_notes_zh"])
+
+
 def test_payload_updates_real_spec():
     spec = spec_from_payload({"pout_w": 2500.0, "primary_turns": 28})
     assert isinstance(spec, LLCDesignSpec)

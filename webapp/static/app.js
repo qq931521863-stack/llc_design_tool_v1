@@ -86,9 +86,9 @@ function specFromForm() {
 }
 function renderSummary(r) {
   const s = r.summary;
-  $('statusBadge').textContent = r.status;
-  $('statusBadge').className = `status ${r.feasible ? 'pass' : 'fail'}`;
-  $('statusMessage').textContent = r.feasible ? '设计满足当前模型约束' : '存在不可行约束';
+  $('statusBadge').textContent = r.feasible ? '计算完成' : '请留意设计提醒';
+  $('statusBadge').className = `status ${r.feasible ? 'pass' : 'review'}`;
+  $('statusMessage').textContent = r.feasible ? '已检查项满足当前模型约束' : '计算已完成，部分要求尚未满足；可查看已有结果并按提醒调整';
   $('heroMetrics').innerHTML =
     `<div><span>Nominal η</span><strong>${fmt(s.nominal_efficiency * 100, 3)}%</strong></div>` +
     `<div><span>Nominal fs</span><strong>${fmt(s.nominal_switching_frequency_hz / 1000, 2)} kHz</strong></div>` +
@@ -100,7 +100,7 @@ function renderSummary(r) {
   ].join('');
   // right result rail
   const rail = $('railStatus');
-  rail.textContent = r.status; rail.className = `rail-status ${r.feasible ? 'pass' : 'fail'}`;
+  rail.textContent = r.feasible ? '计算完成' : '需复核'; rail.className = `rail-status ${r.feasible ? 'pass' : 'review'}`;
   $('railEff').textContent = `${fmt(s.nominal_efficiency * 100, 3)}%`;
   $('railTemp').textContent = s.max_hotspot_c != null ? `${fmt(s.max_hotspot_c, 1)} ℃` : '—';
   $('railZvs').textContent = s.nominal_zvs_margin >= s.zvs_required_margin ? 'YES' : 'NO';
@@ -166,11 +166,27 @@ function renderTable(r) {
     `<td>${fmt(p.efficiency * 100, 3)}</td><td>${p.branch}</td></tr>`).join('');
 }
 function renderMessages(r) {
-  const all = [...r.feasibility_reasons.map((x) => ({ x, err: true })), ...r.warnings.map((x) => ({ x, err: false }))];
+  const notes = r.design_notes_zh || r.feasibility_reasons;
+  const all = [...notes, ...r.warnings];
   const p = $('messagesPanel');
+  $('messages').replaceChildren();
   if (!all.length) { p.classList.add('hidden'); return; }
   p.classList.remove('hidden');
-  $('messages').innerHTML = all.map((m) => `<div class="msg ${m.err ? 'error' : ''}">${m.x}</div>`).join('');
+  for (const message of all) {
+    const item = document.createElement('div');
+    item.className = 'msg';
+    item.textContent = message;
+    $('messages').appendChild(item);
+  }
+  if (r.feasibility_reasons.length) {
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = '技术详情（原始校核信息）';
+    const raw = document.createElement('pre');
+    raw.textContent = r.feasibility_reasons.join('\n');
+    details.append(summary, raw);
+    $('messages').appendChild(details);
+  }
 }
 function render(r) {
   const steps = [
@@ -198,7 +214,7 @@ async function runAnalysis() {
   } catch (e) {
     $('errorBox').textContent = e.message; $('errorBox').classList.remove('hidden');
     $('statusBadge').textContent = 'ERR'; $('statusBadge').className = 'status fail';
-    $('statusMessage').textContent = '计算失败';
+    $('statusMessage').textContent = '本次计算尚未完成，请查看错误详情；如持续出现，可将详情反馈给我们';
   } finally {
     $('runBtn').disabled = false; $('runBtn').textContent = '运行完整 LLC 计算';
   }

@@ -748,3 +748,11 @@ footer {
   .btn-row { flex-direction: column; }
   .btn-row .ghost { width: 100%; }
 }
+
+/* Completed calculations with unmet design constraints are review notices. */
+.status.review,
+.rail-status.review {
+  border: 1px solid rgba(242, 184, 75, 0.36);
+  color: var(--warning);
+  background: rgba(242, 184, 75, 0.075);
+}

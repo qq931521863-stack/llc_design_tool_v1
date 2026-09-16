@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
 
 
@@ -221,7 +222,7 @@ class FRAAutoDesignDialog(QDialog):
         except Exception as exc:
             self.result = None
             self.apply_button.setEnabled(False)
-            QMessageBox.critical(self, t("Auto Design 失败"), str(exc))
+            show_operation_issue(self, t("Auto Design 失败"), str(exc), critical=True)
 
     def apply_result(self) -> None:
         if self.result is None or self.result.selected is None:
@@ -372,7 +373,7 @@ class FRAModelFitDialog(QDialog):
         try:
             self.host.set_identified_plant(self.result.model, self.fit_band, self.result.metrics.confidence)
         except Exception as exc:
-            QMessageBox.critical(self, t("回传失败"), str(exc))
+            show_operation_issue(self, t("回传失败"), str(exc), critical=True)
             return
         QMessageBox.information(
             self,
@@ -495,7 +496,7 @@ class FRAModelFitDialog(QDialog):
             self.result = None
             self.fit_band = None
             self.use_for_loop.setEnabled(False)
-            QMessageBox.critical(self, t("Model Fit 失败"), str(exc))
+            show_operation_issue(self, t("Model Fit 失败"), str(exc), critical=True)
 
 
 def install_advanced_fra_actions(window) -> None:
