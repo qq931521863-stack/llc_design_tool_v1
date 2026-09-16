@@ -193,7 +193,9 @@ def _input_work_point(spec: TTPLDesignSpec, label: str, vin_rms_v: float) -> TTP
     )
 
 
-def _bus_capacitance(spec: TTPLDesignSpec) -> tuple[float, float, float, float]:
+def _bus_capacitance(
+    spec: TTPLDesignSpec,
+) -> tuple[float, float, float, float, float]:
     # Twice-line energy pulsation: ΔVpp ~= P/(ω_line*C*Vbus).
     omega_line = 2.0 * math.pi * spec.line_frequency_hz
     c_ripple = spec.output_power_w / (
@@ -216,7 +218,7 @@ def _bus_capacitance(spec: TTPLDesignSpec) -> tuple[float, float, float, float]:
 def analyze_ttpl_design(spec: TTPLDesignSpec) -> TTPLDesignResult:
     """Size the first-order TTPL boost stage from electrical requirements."""
     spec.validate()
-    inductance, ripple_target, ripple_design_angle = _required_inductance(spec)
+    inductance, ripple_target, _ripple_design_angle = _required_inductance(spec)
     nominal = _line_trace(spec, spec.vin_nom_rms_v, inductance)
     low_line = _line_trace(spec, spec.vin_min_rms_v, inductance)
     ripple_index = int(np.argmax(low_line.ripple_pp_a))
