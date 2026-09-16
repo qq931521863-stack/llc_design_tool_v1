@@ -27,21 +27,21 @@ The project is built around four rules:
 
 ```mermaid
 flowchart LR
-    A[Requirements / measured FRA] --> B[Power-stage design]
-    B --> C[Component / loss / thermal screening]
-    C --> D[Plant G(s) / G(z) or switched model]
-    A --> E[Measured G(jw)]
-    D --> F[Control Tools / topology control]
+    A["Requirements / measured FRA"] --> B["Power-stage design"]
+    B --> C["Component / loss / thermal screening"]
+    C --> D["Plant G(s) / G(z) or switched model"]
+    A --> E["Measured G(jw)"]
+    D --> F["Control Tools / topology control"]
     E --> F
-    F --> G[Exact controller H(z)]
-    G --> H[PM / GM / S / T]
-    G --> I[C99 float32_t]
-    G --> J[Firmware-correlated runtime]
-    J --> K[shared-ngspice switching circuit]
-    I --> L[Firmware integration]
-    K --> M[Reference Design evidence]
+    F --> G["Exact controller H(z)"]
+    G --> H["PM / GM / S / T"]
+    G --> I["C99 float32_t"]
+    G --> J["Firmware-correlated runtime"]
+    J --> K["shared-ngspice switching circuit"]
+    I --> L["Firmware integration"]
+    K --> M["Reference Design evidence"]
     L --> M
-    M --> N[Bench evidence\nUNKNOWN until supplied]
+    M --> N["Bench evidence<br/>UNKNOWN until supplied"]
 ```
 
 A typical LLC path is:
@@ -117,7 +117,6 @@ Current device-library workflow includes:
 - built-in reference data kept separate from user data;
 - device comparison using the current LLC operating point;
 - conduction, turn-off, gate, Coss/deadtime and ZVS-margin related screening where the model provides the required data.
-
 Built-in generic/reference devices are not presented as vendor hardware sign-off. Datasheet curves and traceable vendor provenance remain a higher-fidelity data layer.
 
 ### Digital voltage-loop chain
