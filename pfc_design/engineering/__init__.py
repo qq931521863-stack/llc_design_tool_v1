@@ -6,6 +6,15 @@ sizing calculations that should remain usable from GUI, CLI, web and Agent
 front ends.
 """
 
+from .cap_thermal import (
+    CapacitorBankDesignConfig,
+    CapacitorBankResult,
+    CapacitorUnitSpec,
+    TTPLThermalConfig,
+    TTPLThermalResult,
+    design_bus_capacitor_bank,
+    solve_ttpl_semiconductor_thermal,
+)
 from .device_library import PFCDeviceDatabase, default_user_pfc_device_library_path
 from .device_loss import (
     TTPLDeviceComparison,
@@ -24,6 +33,9 @@ from .ttpl_design import (
 )
 
 __all__ = [
+    "CapacitorBankDesignConfig",
+    "CapacitorBankResult",
+    "CapacitorUnitSpec",
     "PFCDeviceDatabase",
     "TTPLDesignResult",
     "TTPLDesignSpec",
@@ -32,9 +44,13 @@ __all__ = [
     "TTPLInputWorkPoint",
     "TTPLLineTrace",
     "TTPLSlowDeviceLoss",
+    "TTPLThermalConfig",
+    "TTPLThermalResult",
     "analyze_ttpl_design",
     "compare_ttpl_devices",
     "default_user_pfc_device_library_path",
+    "design_bus_capacitor_bank",
     "evaluate_hf_device",
     "evaluate_slow_device",
+    "solve_ttpl_semiconductor_thermal",
 ]
