@@ -74,6 +74,7 @@ class SolutionMapView(QWidget):
         header.addWidget(self.run_button)
         self.apply_button = QPushButton("Apply selected PI")
         self.apply_button.setEnabled(False)
+        self.apply_button.setToolTip("Only points classified FEASIBLE can be applied to the maintained loop model.")
         self.apply_button.clicked.connect(self._apply_selected)
         header.addWidget(self.apply_button)
         header.addStretch(1)
@@ -281,7 +282,10 @@ class SolutionMapView(QWidget):
         iy = int(np.argmin(np.abs(result.phase_margin_targets_deg - event.ydata)))
         point = result.point(iy, ix)
         self.selected_point = point
-        self.apply_button.setEnabled(point.kp is not None and point.ti_s is not None)
+        # The map is also a diagnostic surface. Non-feasible points can be
+        # inspected, but only a point that satisfies every configured constraint
+        # may be written back into the maintained controller model.
+        self.apply_button.setEnabled(point.feasible and point.kp is not None and point.ti_s is not None)
         ax = event.inaxes
         if self._selection_artist is not None:
             try:
@@ -316,7 +320,13 @@ class SolutionMapView(QWidget):
 
     def _apply_selected(self) -> None:
         source = self._source()
-        if source is not None and self.selected_point is not None:
+        if (
+            source is not None
+            and self.selected_point is not None
+            and self.selected_point.feasible
+            and self.selected_point.kp is not None
+            and self.selected_point.ti_s is not None
+        ):
             self.controller_selected.emit(source.key, self.selected_point)
 
 
