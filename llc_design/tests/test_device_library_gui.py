@@ -41,5 +41,9 @@ def test_device_library_installs_sr_selector_and_updates_llc_spec(tmp_path):
     assert window.primary_device_combo.currentData() == "USER_GUI_PRIMARY"
     assert "User library" in window.primary_device_details.text()
 
+    missing = spec.clone(primary_device="USER_NOT_INSTALLED")
+    with pytest.raises(ValueError, match="Import the matching Device Library JSON first"):
+        window._load_spec_to_widgets(missing)
+
     window.close()
     app.processEvents()
