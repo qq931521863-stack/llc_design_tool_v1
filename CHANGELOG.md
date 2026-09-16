@@ -2,10 +2,23 @@
 
 This file keeps the **maintained product history**. Detailed debugging notes, one-off migration instructions, CI result snapshots and binary release artifacts are intentionally kept out of the source documentation tree; Git history, Pull Requests, Actions and Releases provide that archive.
 
-## Unreleased / main after 9.2.2
+## 9.2.3 — 2026-09-16
 
-### Added
+### Added — PFC Engineering Workspace V2
 
+- explicit eight-stage single-phase TTPL engineering workflow from power-stage sizing through closed-loop verification;
+- specification-driven `Lboost` and `Cbus` sizing, hold-up/ripple constraints and downstream parameter handoff;
+- persistent PFC MOSFET user library with JSON import/export plus HF/slow-leg device/loss comparison;
+- DC-bus capacitor-bank sizing, ESR/lifetime screening and semiconductor loss↔junction-temperature iteration;
+- standalone AC Line / PF / THD and Switching / Zero Crossing engineering views consuming the maintained time-domain solver;
+- frozen `PFCControlHandoff` exact-H(z) contract for current/voltage loops with no downstream Kp/Ti re-discretization;
+- audited TTPL C99 export artifacts carrying the same normalized `b[]/a[]` coefficients used by analysis;
+- four-switch TTPL shared-libngspice closed-loop co-simulation with line-polarity-aware gate scheduling;
+- firmware-correlated float32 controller runtime including configured sensing poles, ADC quantization, digital filtering, timing, PI/PIF anti-windup and the eight-state TTPL zero-cross machine.
+
+### Added — LLC / platform infrastructure
+
+- LLC Primary/SR user MOSFET library with persistent JSON records and device comparison;
 - evidence-driven `reference_designs/` contract and first `LLC_400V_53V_3kW` machine-readable evidence matrix;
 - common project/provenance JSON schema plus executable provenance validator and regression tests;
 - cross-workspace engineering-data catalog and device/magnetics evidence policy;
@@ -13,23 +26,31 @@ This file keeps the **maintained product history**. Detailed debugging notes, on
 - reproducible real Qt launcher screenshot capture script and CI screenshot artifact;
 - packaged application `--self-test` that constructs all four workspaces offscreen and validates bundled-data provenance;
 - release tag/package-version contract and dynamic release metadata;
-- shared-ngspice circuit-simulation foundation for LLC closed-loop verification;
+- shared-ngspice circuit-simulation foundation for LLC and TTPL closed-loop verification;
 - backend-neutral Circuit IR and deterministic netlist generation;
 - batch ngspice ASCII RAW execution/parser;
 - shared `libngspice` binding with external source callbacks and control/PWM event synchronization;
-- exact discrete H(z) controller execution around a continuous switching LLC circuit;
-- standard `WaveformBundle` adapter for SPICE power/control traces;
+- standard waveform adapters for SPICE power/control traces;
 - real-ngspice CI smoke workflow.
 
 ### Changed
 
 - README/product positioning now presents Power Design Toolkit as an evidence-driven power-electronics CAE + digital-control platform rather than a single LLC calculator;
-- release CI now runs the packaged executable instead of treating directory existence as a smoke test;
+- PFC documentation now reflects the same engineering-workflow depth as the implemented TTPL code path;
+- ngspice documentation now covers both LLC and TTPL shared-library closed-loop architectures;
+- release CI runs the packaged executable instead of treating directory existence as a smoke test;
 - repository-level target name/description/topics are source-controlled in `.github/REPOSITORY_SETTINGS.md` for application through GitHub repository settings.
+
+### Fixed / validated
+
+- exact-H(z) C99 export regression now uses a stable tuned PFC baseline without weakening the production stability gate;
+- sampled-sense regression now respects finite analog front-end settling at the initial ADC instant;
+- README Mermaid workflow syntax is GitHub-renderer compatible;
+- full regression and real `libngspice` smoke paths are required before the release tag is created.
 
 ### Engineering boundary
 
-The ngspice V1 power stage is a switching-correlation model with small physical damping. It is not yet a vendor MOSFET/Coss/Qrr/SR switching-loss model. Agent/MCP outputs remain software-model evidence and do not imply hardware verification. Bench evidence in the first Reference Design remains `UNKNOWN` until traceable raw measurement data are supplied.
+The shared-ngspice power stages are switching-correlation models, not vendor semiconductor sign-off models. TTPL firmware execution is **firmware-correlated**, not C2000 instruction/register-level bit identity. Board-specific ADC rails/offsets, vendor nonlinear Coss/Qrr/Eon/Eoff surfaces, layout parasitics, complete startup/protection state machines and hardware validation remain separate evidence layers.
 
 ## 9.2.2 — 2026-09-15
 
