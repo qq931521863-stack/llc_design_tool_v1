@@ -11,6 +11,7 @@ from pfc_design.control import (
     assert_handoff_matches_analysis,
     build_pfc_control_handoff,
     build_pfc_control_lab_analysis,
+    tune_pfc_current_loop,
 )
 from power_codegen import (
     export_pfc_exact_hz_manifest,
@@ -19,7 +20,18 @@ from power_codegen import (
 
 
 def _analysis():
-    return build_pfc_control_lab_analysis(PFCControlLabConfig())
+    """Use the maintained stable current-loop baseline for export tests.
+
+    Exact-H(z) identity itself does not require a stable closed loop, but C99
+    generation deliberately has a stability gate.  The package/export test
+    must therefore exercise a configuration that is accepted by that gate
+    rather than silently depending on the historical default PI values.
+    """
+    base = PFCControlLabConfig()
+    tuned = tune_pfc_current_loop(base)
+    assert tuned.accepted
+    config = replace(base, current_controller=tuned.controller)
+    return build_pfc_control_lab_analysis(config)
 
 
 def _runtime_response(transfer, frequencies_hz):
