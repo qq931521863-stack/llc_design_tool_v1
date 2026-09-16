@@ -1,55 +1,76 @@
 # PFC Engineering Workspace V2
 
-The PFC workspace is being upgraded from a control-lab-first page into an engineering workflow comparable to the LLC workspace.
+The PFC workspace is being upgraded from a control-lab-first page into an engineering workflow comparable to the LLC workspace. The first implementation target is **single-phase totem-pole PFC (TTPL)**; Vienna reuses the same architecture after the TTPL chain is proven.
 
-## Product workflow
+## Current TTPL workflow
 
 ```text
-Electrical Requirements
+1. Power Stage / Sizing
         ↓
-Power Stage / Sizing
+2. Devices / Loss
         ↓
-Device / Loss Selection
+3. Capacitor / Thermal
         ↓
-Capacitor / Thermal Design
+4. AC Line / PF / THD
         ↓
-AC Line Cycle / PF / THD
+5. Switching / Zero Crossing
         ↓
-Switching Workpoints / Zero Crossing
+6. Control / Sensing / Bode
         ↓
-Sensing / ADC / Bode
+7. Exact H(z) / C99
         ↓
-Current Loop + Voltage Loop
-        ↓
-Exact H(z) / C99
-        ↓
-Switching Closed-Loop Verification
+8. Closed-Loop Verification     (next phase)
 ```
 
-The first implementation target is **single-phase totem-pole PFC (TTPL)**. Vienna will reuse the same workflow after the TTPL architecture is proven.
+The design rule is that each stage owns one engineering question. Later stages consume earlier artifacts instead of rebuilding an alternate model silently.
 
-## Phase 1 — specification to power-stage sizing
+## 1. Power Stage / Sizing
 
-The deterministic `pfc_design.engineering` kernel owns specification-to-hardware sizing. It is intentionally separate from both the historical two-phase PFC loss model and the TTPL control laboratory.
+The deterministic `pfc_design.engineering` kernel owns specification-to-hardware sizing. Inputs include minimum/nominal/maximum AC RMS voltage, line frequency, DC-bus voltage, output power and efficiency estimate, switching frequency, boost-inductor ripple target, twice-line bus-ripple target, hold-up time/end voltage and duty/minimum-pulse limits.
 
-Inputs include minimum / nominal / maximum AC RMS voltage, line frequency, DC-bus voltage, output power and efficiency estimate, switching frequency, boost-inductor ripple target, twice-line bus-ripple target, hold-up time/end voltage and duty/minimum-pulse limits.
+For the first-order unity-PF design model:
 
-Outputs include low/nominal/high-line current stress, required boost inductance, line-cycle duty and current/ripple envelope, high-line boost headroom, DC-bus capacitance from twice-line ripple and hold-up, recommended capacitance and a first-order capacitor twice-line RMS-current estimate.
+```text
+Pin = Pout / eta
+Iin,rms = Pin / Vin,rms
+Iin,pk = sqrt(2) * Iin,rms
+```
 
-`Apply` copies the electrical specification, calculated `Lboost` and recommended `Cbus` into the existing mature control/line-cycle/switching path. Existing Bode, sensing, PF/THD, inductor-design and C99 features are preserved rather than reimplemented.
+Boost ripple is scanned over the low-line half cycle:
 
-## Phase 2 — PFC MOSFET library and TTPL device/loss screening
+```text
+D = 1 - |Vin| / Vbus
+DeltaIL_pp = |Vin| * D / (L * fsw)
+```
 
-`PFCDeviceDatabase` merges the packaged PFC MOSFET data with a persistent user library. User records are stored outside the installed package and can be created, edited, cloned, deleted, imported and exported as JSON. The same database is intended for TTPL, Vienna and future PFC design pages.
+The required `Lboost` is selected so the worst low-line ripple does not exceed the user target.
 
-Built-in PFC MOSFET records are deliberately shown as **Built-in / unverified**. The repository engineering-data catalogue does not yet provide normalized datasheet revision/extraction provenance for those named records, so they are screening inputs rather than hardware-release truth.
+DC-bus capacitance is sized from both twice-line energy ripple and hold-up:
 
-The TTPL device page compares two roles:
+```text
+Cbus,ripple >= Pout / (omega_line * Vbus * DeltaVpp_allowed)
+Cbus,hold   >= 2 * Pout * thold / (Vbus^2 - Vend^2)
+Cbus,recommended = max(Cbus,ripple, Cbus,hold)
+```
 
-- **HF half-bridge** — one candidate MOSFET is evaluated in both active-boost and synchronous-rectifier positions;
-- **line-frequency leg** — the complete two-device slow leg is evaluated from line-current conduction plus gate drive.
+`Apply` transfers the electrical specification, calculated `Lboost`, recommended `Cbus`, efficiency and duty/minimum-pulse settings into the downstream control/time-domain model.
 
-The HF screening model integrates over the selected low/nominal/high-line half-cycle:
+## 2. Devices / Loss
+
+`PFCDeviceDatabase` merges packaged MOSFET records with a persistent user library. User records can be created, edited, cloned, deleted, imported and exported as JSON. The same database is intended for TTPL and Vienna.
+
+Built-in PFC MOSFET records are shown as **Built-in / unverified** because the engineering-data catalogue does not yet contain normalized datasheet revision/extraction provenance for those named records.
+
+The TTPL screening page evaluates:
+
+- HF active switch conduction/switching loss;
+- HF synchronous device conduction/turn-off loss;
+- deadtime reverse-conduction loss;
+- Coss and gate-drive loss;
+- complete line-frequency-leg conduction/gate loss;
+- VDS derating and current-rating checks.
+
+Line-cycle conduction uses:
 
 ```text
 I_local,rms^2(theta) = Iavg(theta)^2 + DeltaIL(theta)^2 / 12
@@ -57,19 +78,17 @@ Pactive,cond = RDS(T) * mean[D * I_local,rms^2]
 PSR,cond     = RDS(T) * mean[(1-D) * I_local,rms^2]
 ```
 
-Switching energy uses the database Eon/Eoff reference point when available:
+When datasheet switching-energy reference points exist:
 
 ```text
-E(V,I) = Eref * (V / Vref) * (I / Iref)
+E(V,I) = Eref * (V/Vref) * (I/Iref)
 ```
 
-and otherwise falls back to the linear `tr/tf` edge estimate. The page also reports active-switch switching loss, SR turn-off loss, deadtime reverse-conduction loss, Coss/gate loss, total loss and VDS/current screening checks.
+Otherwise the model falls back to a linear `tr/tf` estimate. Eoff/Coss overlap remains an explicit modelling risk.
 
-A datasheet Eoff point may already include some output-capacitance energy, so a separate Coss term can overlap that energy. The UI exposes this modelling limitation instead of treating the number as a release-grade loss prediction.
+## 3. Capacitor / Thermal
 
-## Phase 3 — DC-bus capacitor bank and thermal screening
-
-The capacitor page starts from the Phase-1 required bus capacitance and twice-line RMS ripple-current estimate. For an identical-capacitor bank with `Ns` devices in series and `Np` strings in parallel:
+For an identical capacitor bank with `Ns` devices in series and `Np` strings in parallel:
 
 ```text
 Ns = ceil(Vbus / (Vrated * voltage_derating))
@@ -82,124 +101,82 @@ ESRbank = ESRunit * Ns / Np
 Pesr    = Icap,rms^2 * ESRbank
 ```
 
-The page reports bank topology/count, actual capacitance, ESR, total/per-cap ripple current, ESR loss, per-cap voltage, predicted twice-line bus ripple and PASS/FAIL against capacitance, voltage and ripple-current constraints.
+The selected physical bank can be explicitly applied to the downstream plant, transferring **actual Cbank and ESR** instead of leaving the Phase-1 minimum capacitance in the control model.
 
-Per-cap hot-spot temperature is estimated with a lumped thermal resistance:
+Capacitor hot-spot/lifetime screening uses:
 
 ```text
 Tcap = Tamb + Pcap,ESR * Rtheta,cap
-```
-
-and lifetime uses the common empirical 10 °C rule:
-
-```text
 Life = Life_rated * 2^((T_rated - Tcap) / 10)
 ```
 
-This lifetime estimate is deliberately labelled as screening only. Vendor frequency multipliers, ripple-current life equations, electrolyte chemistry and case-specific thermal data remain required for release decisions. Series strings also require an actual voltage-sharing/balancing design; equal voltage sharing is only an engineering assumption here.
+This is an empirical screening rule, not a vendor lifetime model. Series stacks also require a real voltage-sharing/balancing design.
 
-The selected physical capacitor bank can be applied explicitly to the downstream control plant. That action transfers **actual Cbank and ESR**, rather than silently retaining the minimum capacitance calculated during Phase 1.
-
-### Semiconductor loss ↔ temperature fixed point
-
-The thermal page uses selected HF and line-frequency MOSFETs from the shared PFC device library. It iterates semiconductor loss and lumped junction temperature until convergence:
+Semiconductor thermal screening iterates loss and junction temperature:
 
 ```text
 Tj,new = Tamb + Ploss(Tj) * Rtheta_JA
 ```
 
-For the HF half-bridge, active and SR conduction/switching losses are kept separate; common two-device Coss/gate/deadtime terms are divided equally for the thermal estimate. For the two-device slow leg, the total line-leg loss is divided equally between the physical devices.
+It reports active/SR/slow-device loss and temperature, convergence, thermal-limit status and electrical screening status. The thermal network is lumped; interface spreading, heatsink coupling, airflow, transient Zth and CFD/hardware correlation remain external validation tasks.
 
-The result reports active/SR/slow-device loss and junction temperature, fixed-point convergence, thermal-limit PASS/FAIL, semiconductor VDS/current PASS/FAIL and the switching-loss model used.
+## 4. AC Line / PF / THD
 
-The thermal network is intentionally lumped. Junction-to-case, interface spreading, shared heatsink, airflow, transient thermal impedance and CFD/hardware correlation are not inferred from a single Rtheta input.
+This page consumes the exact `PFCLineCycleWaveforms` returned by `simulate_pfc_line_cycle()` and shows the settled final electrical cycle. It reports Vin/Iin, real/apparent power, PF, displacement/distortion factor, current THD, fundamental current, bus average/ripple, bus-capacitor RMS current, duty range, tracking error and minimum-pulse activity.
 
-## Phase 4 — first-class AC/PF/THD and switching validation
+The harmonic spectrum comes from the same solver metrics. The GUI does not introduce a second PF/THD calculation path.
 
-The mature TTPL time-domain solver already produced full AC-cycle, harmonic, local switching and zero-crossing results, but those outputs were historically buried inside the large Control Lab page. Phase 4 changes the **product architecture**, not the solver equations.
+## 5. Switching / Zero Crossing
 
-The TTPL workflow now presents six first-class stages:
+This page consumes the same settled AC result and `build_pfc_switching_waveforms()`. The user can rebuild a local switching workpoint at another electrical angle without running a second AC solver or changing the plant model.
 
-1. `Power Stage / Sizing`
-2. `Devices / Loss`
-3. `Capacitor / Thermal`
-4. `AC Line / PF / THD`
-5. `Switching / Zero Crossing`
-6. `Control / Sensing / Bode`
+It exposes HF/LF gate states, switch-node and inductor voltage, inductor/device currents, boost-output/bus-capacitor current, source time, PWM state, duty and zero-crossing state-machine signals.
 
-### AC Line / PF / THD
+The old embedded AC/switching tabs are removed from the visible Control Lab. Their widgets remain alive internally during this migration tranche because the historical renderer still updates them; those legacy render calls can be deleted after the new pages accumulate regression history.
 
-The AC page consumes the exact `PFCLineCycleWaveforms` returned by `simulate_pfc_line_cycle()` and shows only the settled final electrical cycle. It reports:
+## 6. Control / Sensing / Bode
 
-- Vin RMS, Iin RMS/peak and real/apparent power;
-- PF, displacement factor and distortion factor;
-- current THD and fundamental current;
-- bus average/ripple and bus-capacitor RMS current;
-- duty range, current-error RMS and zero-crossing error RMS;
-- minimum-pulse activity fraction;
-- integer-harmonic spectrum from the same solver metrics.
+The existing detailed PFC control model remains the owner of:
 
-The line-cycle plots expose grid voltage/input current, Vbus/capacitor current, Iref/current tracking and nonlinear duty/zero-crossing constraints. No independent PF/THD calculation path is introduced in the GUI.
+- current inner loop;
+- bus-voltage outer loop;
+- AMC/reference scheduling;
+- duty feedforward and induction compensation;
+- analog sensing/filtering;
+- ADC acquisition/conversion timing;
+- ZOH/computation/PWM update delay;
+- PI/PIF/2P2Z tuning and Bode margins.
 
-### Switching / Zero Crossing
+This stage produces `PFCControlLabAnalysis.current_loop.controller` and `.voltage_loop.controller`, which are already exact discrete transfer functions in the project canonical convention.
 
-The switching page consumes the same settled AC result and `build_pfc_switching_waveforms()` reconstruction. A user may change electrical angle and rebuild the local switching workpoint **without running a second AC solver or changing the plant model**.
+## 7. Exact H(z) / C99
 
-The local view reports/plots:
+Phase 5 promotes those analyzed controller objects into the formal downstream contract. No controller is re-discretized from `Kp/Ti` or analog poles/zeros after analysis.
 
-- HF high/low and LF-polarity gate states;
-- switching-node and inductor voltage;
-- inductor average/ripple current and HF device currents;
-- boost-output and DC-bus capacitor current;
-- source time, PWM state and duty at the selected settled line-cycle point.
-
-The zero-crossing view uses the full final AC cycle and exposes current reference/tracking, current PI reset strobe, effective minimum duty, minimum-pulse activation, PWM state code, zero-crossing-active flag and deadband fraction.
-
-The old embedded AC/switching result tabs are removed from the visible Control Lab UI so the user no longer sees two competing workflows. Their widgets are retained internally for this migration tranche because the historical `set_result()` renderer still updates them; once the new pages have accumulated regression history, those legacy rendering calls can be removed safely.
-
-## Current equations and boundaries
-
-### Input current
-
-For the unity-power-factor first-order design model:
+Canonical convention:
 
 ```text
-Pin = Pout / eta
-Iin,rms = Pin / Vin,rms
-Iin,pk = sqrt(2) * Iin,rms
+H(z) = (b0 + b1 z^-1 + ...)/(1 + a1 z^-1 + ...)
+y[n] = sum(b[k] x[n-k]) - sum(a[k] y[n-k])
 ```
 
-### Boost ripple
+`PFCControlHandoff` stores current/voltage `b[]`, `a[]`, sample rates, limits, provenance and explicit nonlinear implementation semantics. It converts directly to `power_control_tools.models.DigitalTransferFunction` for `power_sim` by copying coefficients only.
 
-For rectified instantaneous input voltage `v`:
+The `Exact H(z) / C99` page verifies frequency-response identity between the analyzed controller and the `power_sim` transfer, displays the difference equations, and exports either a JSON manifest or an audited C99 package.
 
-```text
-D = 1 - v / Vbus
-DeltaIL_pp = v * D / (L * fsw)
-```
+`generate_ttpl_control_code_exact()` adds:
 
-The required inductance is selected so the maximum low-line ripple over the half-line cycle does not exceed the specified fraction of low-line sinusoidal peak current.
+- `exact_hz_manifest.json`;
+- `ttpl_exact_hz_coefficients.h`;
+- `EXACT_HZ_CONTRACT.txt`.
 
-### Twice-line DC-bus ripple
-
-```text
-DeltaVpp ≈ Pout / (omega_line * Cbus * Vbus)
-omega_line = 2*pi*fline
-Cbus,ripple >= Pout / (omega_line * Vbus * DeltaVpp_allowed)
-```
-
-### Hold-up
-
-```text
-Cbus,hold >= 2 * Pout * thold / (Vbus^2 - Vend^2)
-Cbus,recommended = max(Cbus,ripple, Cbus,hold)
-```
+The topology C runtime retains the existing kind-specific PI/PIF/2P2Z saturation and anti-windup/state behavior. **H(z) owns the linear coefficients; H(z) does not define anti-windup.** See [PFC_EXACT_HZ_HANDOFF.md](PFC_EXACT_HZ_HANDOFF.md).
 
 ## Explicit model boundaries
 
-The engineering sizing/device/thermal/time-domain layers are **not** used to hide model limitations. The following remain separate validation stages:
+The engineering layers do not hide model limitations. The following remain separate validation requirements:
 
-- DCM/CRM fidelity around the zero crossing beyond the current averaged-plant approximation;
+- DCM/CRM fidelity around line zero crossing beyond the present averaged-plant assumptions;
 - real gate-driver propagation/skew and parasitic commutation;
 - nonlinear Coss/Qoss/Eoss curves;
 - switching-energy dependence on temperature, gate resistance and commutation path;
@@ -211,6 +188,6 @@ The engineering sizing/device/thermal/time-domain layers are **not** used to hid
 
 ## Next implementation sequence
 
-1. Exact H(z) handoff and one digital-controller source of truth.
-2. TTPL shared-ngspice closed-loop verification.
+1. TTPL shared-ngspice closed-loop verification consuming the exact H(z) handoff.
+2. Remove transitional hidden legacy AC/switching renderers after sufficient regression history.
 3. Apply the same engineering architecture to Vienna, including split-bus and midpoint-balance design.
