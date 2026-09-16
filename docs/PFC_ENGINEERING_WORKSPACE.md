@@ -19,7 +19,7 @@ The PFC workspace is being upgraded from a control-lab-first page into an engine
         ↓
 7. Exact H(z) / C99
         ↓
-8. Closed-Loop Verification     (next phase)
+8. Closed-Loop Verification
 ```
 
 The design rule is that each stage owns one engineering question. Later stages consume earlier artifacts instead of rebuilding an alternate model silently.
@@ -151,7 +151,7 @@ This stage produces `PFCControlLabAnalysis.current_loop.controller` and `.voltag
 
 ## 7. Exact H(z) / C99
 
-Phase 5 promotes those analyzed controller objects into the formal downstream contract. No controller is re-discretized from `Kp/Ti` or analog poles/zeros after analysis.
+The analyzed controller objects are promoted into the formal downstream contract. No controller is re-discretized from `Kp/Ti` or analog poles/zeros after analysis.
 
 Canonical convention:
 
@@ -170,24 +170,143 @@ The `Exact H(z) / C99` page verifies frequency-response identity between the ana
 - `ttpl_exact_hz_coefficients.h`;
 - `EXACT_HZ_CONTRACT.txt`.
 
-The topology C runtime retains the existing kind-specific PI/PIF/2P2Z saturation and anti-windup/state behavior. **H(z) owns the linear coefficients; H(z) does not define anti-windup.** See [PFC_EXACT_HZ_HANDOFF.md](PFC_EXACT_HZ_HANDOFF.md).
+The topology C runtime retains kind-specific PI/PIF/2P2Z saturation and state behavior. **H(z) owns the linear coefficients; H(z) does not by itself define anti-windup, reset ordering or protection-state behavior.** See [PFC_EXACT_HZ_HANDOFF.md](PFC_EXACT_HZ_HANDOFF.md).
+
+## 8. Closed-Loop Verification
+
+The TTPL closed-loop stage is now implemented with real shared `libngspice`. It consumes the frozen `PFCControlHandoff` directly and checks `assert_handoff_matches_analysis()` before transient execution.
+
+The core contract is:
+
+```text
+PFCControlLabAnalysis
+      ↓
+PFCControlHandoff
+      ↓
+Exact current H(z) + exact voltage H(z)
+      ↓
+firmware-correlated sampled runtime
+      ↓
+Duty / PWM / zero-cross gate state
+      ↓
+shared-ngspice four-switch TTPL circuit
+      ↓
+IL / Vbus / switch node / gate vectors
+```
+
+### 8.1 No controller reconstruction
+
+The closed-loop runner does **not** recreate the controller from `Kp`, `Ti`, analog poles/zeros or a second S-to-Z conversion.
+
+The normalized `b[]/a[]` coefficients in `PFCControlHandoff` remain the linear-controller source of truth. Result metadata records the coefficients used and keeps `controller_re_discretized=False`.
+
+### 8.2 Four-switch TTPL circuit
+
+The circuit-level model contains:
+
+- sinusoidal AC source;
+- boost inductor and DCR;
+- HF high/low controlled switches;
+- LF positive/negative controlled switches;
+- antiparallel diode paths;
+- DC-bus capacitor and ESR;
+- resistive load for the present switching-correlation layer;
+- small physical damping/bleeder paths for numerical regularization.
+
+This is a switching-correlation circuit, not a vendor semiconductor sign-off model.
+
+### 8.3 Firmware-correlated controller state
+
+`pfc_design.control.firmware_runtime` adds a float32 execution layer around the exact H(z) contract.
+
+For PI/PIF controllers, the internal Tustin PI state is derived algebraically from the frozen H(z) coefficients. The runtime then applies the explicit nonlinear state semantics used by the project:
+
+- float32 state updates;
+- conditional-integrator freeze on outward saturation;
+- PIF output filtering after PI saturation;
+- 2P2Z execution with clamped output stored in denominator history;
+- explicit reset support for zero-cross transitions.
+
+This does not replace the exact H(z): the decomposition is checked against the frozen coefficients before use.
+
+### 8.4 Sensing and ADC runtime
+
+`PFCSampledSenseRuntime` models the configured measurement path in time domain:
+
+```text
+physical signal
+ -> analog first-order poles
+ -> sampled ADC event
+ -> configured ADC-resolution quantization
+ -> multi-SOC recursive stage
+ -> digital filter
+ -> sampled engineering-unit feedback
+```
+
+The ADC LSB is derived from configured Vref, bit width and raw front-end gain. State/filter arithmetic is float32.
+
+Current limitation: the project schema does not yet carry board-specific ADC common-mode offset, unipolar rail clipping and every MCU ADC peripheral detail. The present quantizer therefore uses calibrated signed engineering units. It is closer to firmware behavior than V1, but should be described as **firmware-correlated**, not absolute MCU-code bit identity.
+
+### 8.5 Timing and PWM application
+
+The shared-ngspice event scheduler keeps continuous electrical state inside ngspice and aligns important discrete events:
+
+- current-loop sample ticks;
+- AMC ticks;
+- voltage-loop ticks;
+- sensing sample events;
+- PWM/deadtime edges;
+- duty-application events.
+
+Coincident control ticks follow deterministic ordering. Duty updates can use PWM shadow-application behavior instead of changing pulse width at an arbitrary adaptive-solver point.
+
+### 8.6 Eight-state zero-cross runtime
+
+The time-domain runtime carries the TTPL commutation sequence:
+
+```text
+positiveHalf
+ -> negativeZeroCrossing1
+ -> negativeZeroCrossing2
+ -> negativeZeroCrossing3
+ -> negativeHalf
+ -> positiveZeroCrossing1
+ -> positiveZeroCrossing2
+ -> positiveZeroCrossing3
+ -> positiveHalf
+```
+
+The zero-cross runtime controls PI reset requests, LF state, HF inhibit/soft-start behavior and target polarity. Gate scheduling consumes the zero-cross state instead of using only the instantaneous sign of Vac.
+
+The implementation is aligned with the maintained PFC waveform-state contract and the TI-style state progression used as the reference for this architecture. Exact register sequencing/deadband counter values still require board/firmware-specific evidence.
+
+### 8.7 Current evidence
+
+The dedicated `ngspice-smoke` CI installs real `ngspice` and `libngspice` and exercises live simulator integration. Software regression covers exact-H(z) identity, float32 controller behavior, sensing quantization/filter state and zero-cross sequencing.
+
+Passing these tests proves architecture/runtime execution. It does not prove hardware accuracy.
 
 ## Explicit model boundaries
 
 The engineering layers do not hide model limitations. The following remain separate validation requirements:
 
-- DCM/CRM fidelity around line zero crossing beyond the present averaged-plant assumptions;
+- DCM/CRM fidelity around line zero crossing beyond the present engineering model;
+- board-specific ADC offsets, rails, calibration and exact C2000 SOC/interrupt timing;
+- full ePWM register/TBPRD/deadband/compare-action bit identity;
+- complete startup/protection/recovery state machines;
 - real gate-driver propagation/skew and parasitic commutation;
 - nonlinear Coss/Qoss/Eoss curves;
 - switching-energy dependence on temperature, gate resistance and commutation path;
 - vendor-specific capacitor lifetime/frequency multipliers;
 - EMI filter interaction;
 - detailed heatsink/airflow/transient thermal correlation;
-- circuit-level closed-loop ngspice execution;
 - hardware validation.
 
 ## Next implementation sequence
 
-1. TTPL shared-ngspice closed-loop verification consuming the exact H(z) handoff.
-2. Remove transitional hidden legacy AC/switching renderers after sufficient regression history.
-3. Apply the same engineering architecture to Vienna, including split-bus and midpoint-balance design.
+1. Add board-specific ADC offset/rail/calibration and explicit C2000 timing semantics where the project schema has sufficient evidence.
+2. Refine PWM/deadband/TBPRD/compare behavior toward peripheral-level correlation.
+3. Integrate startup/protection/recovery state semantics into the TTPL closed-loop harness.
+4. Add higher-fidelity semiconductor/parasitic model options without weakening the current fast engineering mode.
+5. Remove transitional hidden legacy AC/switching renderers after sufficient regression history.
+6. Apply the same engineering architecture to Vienna, including split-bus, midpoint-balance, exact-H(z) handoff and circuit-level verification.
