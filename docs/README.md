@@ -19,6 +19,7 @@ The repository used to accumulate release snapshots, one-off migration notes, te
 | [DIGITAL_CONTROL_ARCHITECTURE.md](DIGITAL_CONTROL_ARCHITECTURE.md) | Exact H(z), mixed-domain loop model, sensing/ADC, FM/PWM, timing and C99 contract |
 | [LLC_MODELING.md](LLC_MODELING.md) | FHA / HB / switched TD / shared-ngspice model hierarchy and appropriate use |
 | [PFC_ENGINEERING_WORKSPACE.md](PFC_ENGINEERING_WORKSPACE.md) | TTPL specification-to-hardware sizing, workflow boundaries and PFC V2 upgrade sequence |
+| [PFC_EXACT_HZ_HANDOFF.md](PFC_EXACT_HZ_HANDOFF.md) | TTPL exact current/voltage H(z), power_sim/C99 handoff, implementation semantics and no-re-discretization contract |
 | [FRA_LOOP_DESIGNER.md](FRA_LOOP_DESIGNER.md) | FRA import semantics, controller de-embedding, stability metrics, Auto Design and model identification |
 | [NGSPICE_CLOSED_LOOP.md](NGSPICE_CLOSED_LOOP.md) | Circuit IR, batch/shared ngspice architecture, exact digital-control execution and model boundary |
 | [ENGINEERING_VALIDATION.md](ENGINEERING_VALIDATION.md) | Evidence levels and what software regression does or does not prove |
