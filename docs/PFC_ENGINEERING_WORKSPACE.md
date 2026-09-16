@@ -28,7 +28,7 @@ Switching Closed-Loop Verification
 
 The first implementation target is **single-phase totem-pole PFC (TTPL)**. Vienna will reuse the same workflow after the TTPL architecture is proven.
 
-## Phase 1 implemented in PR #9
+## Phase 1 — specification to power-stage sizing
 
 The new deterministic `pfc_design.engineering` kernel owns specification-to-hardware sizing. It is intentionally separate from both the historical two-phase PFC loss model and the TTPL control laboratory.
 
@@ -56,12 +56,52 @@ Outputs:
 - first-order capacitor twice-line RMS current estimate;
 - explicit warnings for insufficient boost headroom, hold-up dominance, minimum-pulse limits and zero-current regions.
 
-The GUI now exposes two TTPL stages:
+`Apply` copies the electrical specification, calculated `Lboost` and recommended `Cbus` into the existing mature control/line-cycle/switching path. Existing Bode, sensing, PF/THD, inductor-design and C99 features are preserved rather than reimplemented.
+
+## Phase 2 — PFC MOSFET library and TTPL device/loss screening
+
+The TTPL engineering workflow now contains three stages:
 
 1. `Power Stage / Sizing`
-2. `Control / Sensing / AC / Switching`
+2. `Devices / Loss`
+3. `Control / Sensing / AC / Switching`
 
-`Apply` copies the electrical specification, calculated `Lboost` and recommended `Cbus` into the existing mature control/line-cycle/switching path. Existing Bode, sensing, PF/THD, inductor-design and C99 features are preserved rather than reimplemented.
+`PFCDeviceDatabase` merges the packaged PFC MOSFET data with a persistent user library. User records are stored outside the installed package and can be created, edited, cloned, deleted, imported and exported as JSON. The same database is intended for TTPL, Vienna and future PFC design pages.
+
+Built-in PFC MOSFET records are deliberately shown as **Built-in / unverified**. The repository engineering-data catalogue does not yet provide normalized datasheet revision/extraction provenance for those named records, so they are screening inputs rather than hardware-release truth.
+
+The TTPL device page compares two roles:
+
+- **HF half-bridge** — one candidate MOSFET is evaluated in both active-boost and synchronous-rectifier positions;
+- **line-frequency leg** — the complete two-device slow leg is evaluated from line-current conduction plus gate drive.
+
+The HF screening model integrates over the selected low/nominal/high-line half-cycle:
+
+```text
+I_local,rms^2(theta) = Iavg(theta)^2 + DeltaIL(theta)^2 / 12
+Pactive,cond = RDS(T) * mean[D * I_local,rms^2]
+PSR,cond     = RDS(T) * mean[(1-D) * I_local,rms^2]
+```
+
+Switching energy uses the database Eon/Eoff reference point when available:
+
+```text
+E(V,I) = Eref * (V / Vref) * (I / Iref)
+```
+
+and otherwise falls back to the linear `tr/tf` edge estimate. The page also reports:
+
+- active-switch switching loss;
+- SR turn-off loss;
+- deadtime reverse-conduction loss;
+- two-device Coss loss;
+- two-device gate-drive loss;
+- total HF-leg loss;
+- slow-leg conduction/gate loss;
+- VDS derating PASS/FAIL;
+- temperature-dependent current-rating PASS/FAIL.
+
+This is intentionally a screening layer. A datasheet Eoff point may already include some output-capacitance energy, so a separate Coss term can overlap that energy. The UI exposes this modelling limitation instead of treating the number as a release-grade loss prediction.
 
 ## Current equations and boundaries
 
@@ -115,24 +155,24 @@ The design recommendation is:
 Cbus,recommended = max(Cbus,ripple, Cbus,hold)
 ```
 
-## Explicit non-goals of Phase 1
+## Explicit model boundaries
 
-This sizing layer is **not** used to hide nonlinear behaviour. The following remain later validation stages:
+The engineering sizing/device layers are **not** used to hide nonlinear behaviour. The following remain later validation stages:
 
 - DCM/CRM transition near line zero crossing;
 - minimum-pulse parking and zero-crossing commutation;
-- nonlinear semiconductor capacitances and switching loss;
+- nonlinear Coss/Qoss/Eoss curves;
+- switching-energy dependence on temperature, gate resistance and commutation path;
 - EMI filter interaction;
 - current saturation / duty saturation state-machine behaviour;
-- thermal correlation;
+- thermal-network correlation;
 - circuit-level closed-loop ngspice execution;
 - hardware validation.
 
 ## Next implementation sequence
 
-1. Shared PFC semiconductor library and TTPL device/loss comparison.
-2. Dedicated capacitor and thermal design page.
-3. Split AC/PF/THD and switching views out of the monolithic control page.
-4. Exact H(z) handoff and one digital-controller source of truth.
-5. TTPL shared-ngspice closed-loop verification.
-6. Apply the same architecture to Vienna, including split-bus and midpoint-balance design.
+1. Dedicated capacitor and thermal design page.
+2. Split AC/PF/THD and switching views out of the monolithic control page.
+3. Exact H(z) handoff and one digital-controller source of truth.
+4. TTPL shared-ngspice closed-loop verification.
+5. Apply the same architecture to Vienna, including split-bus and midpoint-balance design.
