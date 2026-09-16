@@ -83,12 +83,22 @@ def test_sampled_sense_runtime_applies_digital_filter_in_float32_state():
 
     cfg = replace(base, timing=replace(base.timing, digital_filter=DigitalFilterConfig(alpha=0.25)))
     sense = PFCSampledSenseRuntime(cfg, initial=0.0)
+    sample_period = 1.0 / cfg.timing.sample_rate_hz
+
+    # At t=0 no analog time has elapsed, so the first ADC event correctly
+    # samples the initial analog state rather than an instantaneous input step.
     sense.advance(4.0, 0.0)
     first = sense.output
-    sense.advance(4.0, 1.0 / cfg.timing.sample_rate_hz)
+    assert first == pytest.approx(0.0, rel=0.0, abs=0.0)
+
+    sense.advance(4.0, sample_period)
     second = sense.output
-    assert 0.0 < first < second < 4.0
-    assert np.float32(second) == np.float32(sense.output)
+    sense.advance(4.0, 2.0 * sample_period)
+    third = sense.output
+
+    assert 0.0 < second < third < 4.0
+    assert sense.snapshot.sample_time_s == pytest.approx(2.0 * sample_period)
+    assert np.float32(third) == np.float32(sense.output)
 
 
 def test_zero_cross_runtime_follows_eight_state_transition_and_pi_reset_contract():
