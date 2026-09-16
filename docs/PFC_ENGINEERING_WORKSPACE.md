@@ -9,15 +9,15 @@ Electrical Requirements
         ↓
 Power Stage / Sizing
         ↓
-Inductor / Capacitor / Device Design
+Device / Loss Selection
         ↓
-Loss / Thermal / Efficiency
+Capacitor / Thermal Design
         ↓
 AC Line Cycle / PF / THD
         ↓
 Switching Workpoints / Zero Crossing
         ↓
-Sensing / ADC
+Sensing / ADC / Bode
         ↓
 Current Loop + Voltage Loop
         ↓
@@ -69,15 +69,6 @@ A datasheet Eoff point may already include some output-capacitance energy, so a 
 
 ## Phase 3 — DC-bus capacitor bank and thermal screening
 
-The TTPL engineering workflow now contains four explicit stages:
-
-1. `Power Stage / Sizing`
-2. `Devices / Loss`
-3. `Capacitor / Thermal`
-4. `Control / Sensing / AC / Switching`
-
-### Capacitor bank auto sizing
-
 The capacitor page starts from the Phase-1 required bus capacitance and twice-line RMS ripple-current estimate. For an identical-capacitor bank with `Ns` devices in series and `Np` strings in parallel:
 
 ```text
@@ -107,6 +98,8 @@ Life = Life_rated * 2^((T_rated - Tcap) / 10)
 
 This lifetime estimate is deliberately labelled as screening only. Vendor frequency multipliers, ripple-current life equations, electrolyte chemistry and case-specific thermal data remain required for release decisions. Series strings also require an actual voltage-sharing/balancing design; equal voltage sharing is only an engineering assumption here.
 
+The selected physical capacitor bank can be applied explicitly to the downstream control plant. That action transfers **actual Cbank and ESR**, rather than silently retaining the minimum capacitance calculated during Phase 1.
+
 ### Semiconductor loss ↔ temperature fixed point
 
 The thermal page uses selected HF and line-frequency MOSFETs from the shared PFC device library. It iterates semiconductor loss and lumped junction temperature until convergence:
@@ -117,16 +110,52 @@ Tj,new = Tamb + Ploss(Tj) * Rtheta_JA
 
 For the HF half-bridge, active and SR conduction/switching losses are kept separate; common two-device Coss/gate/deadtime terms are divided equally for the thermal estimate. For the two-device slow leg, the total line-leg loss is divided equally between the physical devices.
 
-The result reports:
-
-- active / SR / slow-device loss;
-- active / SR / slow junction temperature;
-- fixed-point convergence and iteration count;
-- thermal-limit PASS/FAIL;
-- semiconductor VDS/current-rating PASS/FAIL;
-- the switching-loss model used.
+The result reports active/SR/slow-device loss and junction temperature, fixed-point convergence, thermal-limit PASS/FAIL, semiconductor VDS/current PASS/FAIL and the switching-loss model used.
 
 The thermal network is intentionally lumped. Junction-to-case, interface spreading, shared heatsink, airflow, transient thermal impedance and CFD/hardware correlation are not inferred from a single Rtheta input.
+
+## Phase 4 — first-class AC/PF/THD and switching validation
+
+The mature TTPL time-domain solver already produced full AC-cycle, harmonic, local switching and zero-crossing results, but those outputs were historically buried inside the large Control Lab page. Phase 4 changes the **product architecture**, not the solver equations.
+
+The TTPL workflow now presents six first-class stages:
+
+1. `Power Stage / Sizing`
+2. `Devices / Loss`
+3. `Capacitor / Thermal`
+4. `AC Line / PF / THD`
+5. `Switching / Zero Crossing`
+6. `Control / Sensing / Bode`
+
+### AC Line / PF / THD
+
+The AC page consumes the exact `PFCLineCycleWaveforms` returned by `simulate_pfc_line_cycle()` and shows only the settled final electrical cycle. It reports:
+
+- Vin RMS, Iin RMS/peak and real/apparent power;
+- PF, displacement factor and distortion factor;
+- current THD and fundamental current;
+- bus average/ripple and bus-capacitor RMS current;
+- duty range, current-error RMS and zero-crossing error RMS;
+- minimum-pulse activity fraction;
+- integer-harmonic spectrum from the same solver metrics.
+
+The line-cycle plots expose grid voltage/input current, Vbus/capacitor current, Iref/current tracking and nonlinear duty/zero-crossing constraints. No independent PF/THD calculation path is introduced in the GUI.
+
+### Switching / Zero Crossing
+
+The switching page consumes the same settled AC result and `build_pfc_switching_waveforms()` reconstruction. A user may change electrical angle and rebuild the local switching workpoint **without running a second AC solver or changing the plant model**.
+
+The local view reports/plots:
+
+- HF high/low and LF-polarity gate states;
+- switching-node and inductor voltage;
+- inductor average/ripple current and HF device currents;
+- boost-output and DC-bus capacitor current;
+- source time, PWM state and duty at the selected settled line-cycle point.
+
+The zero-crossing view uses the full final AC cycle and exposes current reference/tracking, current PI reset strobe, effective minimum duty, minimum-pulse activation, PWM state code, zero-crossing-active flag and deadband fraction.
+
+The old embedded AC/switching result tabs are removed from the visible Control Lab UI so the user no longer sees two competing workflows. Their widgets are retained internally for this migration tranche because the historical `set_result()` renderer still updates them; once the new pages have accumulated regression history, those legacy rendering calls can be removed safely.
 
 ## Current equations and boundaries
 
@@ -168,22 +197,20 @@ Cbus,recommended = max(Cbus,ripple, Cbus,hold)
 
 ## Explicit model boundaries
 
-The engineering sizing/device/thermal layers are **not** used to hide nonlinear behaviour. The following remain later validation stages:
+The engineering sizing/device/thermal/time-domain layers are **not** used to hide model limitations. The following remain separate validation stages:
 
-- DCM/CRM transition near line zero crossing;
-- minimum-pulse parking and zero-crossing commutation;
+- DCM/CRM fidelity around the zero crossing beyond the current averaged-plant approximation;
+- real gate-driver propagation/skew and parasitic commutation;
 - nonlinear Coss/Qoss/Eoss curves;
 - switching-energy dependence on temperature, gate resistance and commutation path;
 - vendor-specific capacitor lifetime/frequency multipliers;
 - EMI filter interaction;
-- current saturation / duty saturation state-machine behaviour;
 - detailed heatsink/airflow/transient thermal correlation;
 - circuit-level closed-loop ngspice execution;
 - hardware validation.
 
 ## Next implementation sequence
 
-1. Split AC/PF/THD and switching views out of the monolithic control page.
-2. Exact H(z) handoff and one digital-controller source of truth.
-3. TTPL shared-ngspice closed-loop verification.
-4. Apply the same architecture to Vienna, including split-bus and midpoint-balance design.
+1. Exact H(z) handoff and one digital-controller source of truth.
+2. TTPL shared-ngspice closed-loop verification.
+3. Apply the same engineering architecture to Vienna, including split-bus and midpoint-balance design.
