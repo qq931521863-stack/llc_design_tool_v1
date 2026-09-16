@@ -69,7 +69,9 @@ def install_ttpl_solution_map(pfc_window) -> SolutionMapView:
     control.set_result = MethodType(set_result_with_solution_map, control)
 
     def apply_selected(loop_key: str, point) -> None:
-        if point.kp is None or point.ti_s is None:
+        # Diagnostic/non-feasible points remain inspectable but are never
+        # allowed to overwrite the maintained controller configuration.
+        if not point.feasible or point.kp is None or point.ti_s is None:
             return
         if pfc_window.result is None:
             return
