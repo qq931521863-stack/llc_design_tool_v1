@@ -4,8 +4,8 @@
 
 LLC · Totem-Pole PFC · Vienna PFC · Digital Control · FRA · C99 `float32_t` · ngspice · Web API · MCP
 
-[![Build & Test](https://github.com/yangshuai2022-star/llc_design_tool_v1/actions/workflows/build-release.yml/badge.svg)](https://github.com/yangshuai2022-star/llc_design_tool_v1/actions/workflows/build-release.yml)
-[![ngspice Smoke](https://github.com/yangshuai2022-star/llc_design_tool_v1/actions/workflows/ngspice-smoke.yml/badge.svg)](https://github.com/yangshuai2022-star/llc_design_tool_v1/actions/workflows/ngspice-smoke.yml)
+[![Build & Test](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml)
+[![ngspice Smoke](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml)
 ![Python](https://img.shields.io/badge/Python-%3E%3D3.10-blue)
 ![Version](https://img.shields.io/badge/version-9.2.2-informational)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)

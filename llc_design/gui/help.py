@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (
 from llc_design import __version__
 from llc_design.i18n import catalogue, current_language, t
 
-REPO_SLUG = "yangshuai2022-star/llc_design_tool_v1"
+REPO_SLUG = "yangshuai2022-star/power-design-toolkit"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Single source of truth for how users can reach the author.  Keep in sync with

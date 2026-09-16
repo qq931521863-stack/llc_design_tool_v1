@@ -21,7 +21,7 @@ from llc_design.i18n import t
 
 APP_VERSION = __version__
 
-GITHUB_REPO = "yangshuai2022-star/llc_design_tool_v1"
+GITHUB_REPO = "yangshuai2022-star/power-design-toolkit"
 RELEASES_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_PAGE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest"
 NETWORK_TIMEOUT_S = 10.0
