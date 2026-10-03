@@ -476,11 +476,13 @@ def assess_line_cycle_convergence(
     )
 
 
-def build_line_cycle_result(config: PFCControlLabConfig) -> PFCLineCycleResult:
+def build_line_cycle_result(
+    config: PFCControlLabConfig, *, waveforms: PFCLineCycleWaveforms | None = None,
+) -> PFCLineCycleResult:
     """Run the authoritative closed-loop line-cycle and expose a unified result."""
 
     config.validate()
-    waveforms = simulate_pfc_line_cycle(config)
+    waveforms = waveforms if waveforms is not None else simulate_pfc_line_cycle(config)
     stage = config.power_stage
     time = np.asarray(waveforms.time_s, dtype=float)
     sl = _last_cycle_slice(time, stage.line_frequency_hz)
@@ -544,31 +546,53 @@ def compute_pf_thd(
     i = np.asarray(iac_a, dtype=float)
     if t.ndim != 1 or v.shape != t.shape or i.shape != t.shape or len(t) < 8:
         raise ValueError("PF/THD requires equal-length 1-D waveforms")
-    if line_hz <= 0.0 or max_harmonic < 1:
-        raise ValueError("line frequency / max_harmonic invalid")
+    if not all(np.all(np.isfinite(x)) for x in (t, v, i)):
+        raise ValueError("PF/THD waveforms must contain only finite values")
+    if not math.isfinite(line_hz) or line_hz <= 0.0:
+        raise ValueError("line frequency must be finite and positive")
+    if (
+        isinstance(max_harmonic, bool)
+        or not isinstance(max_harmonic, (int, np.integer))
+        or max_harmonic < 1
+    ):
+        raise ValueError("max_harmonic must be a positive integer")
+    if pout_w is not None and not math.isfinite(pout_w):
+        raise ValueError("output power must be finite")
+    dt = np.diff(t)
+    if not np.all(np.isfinite(dt)) or np.any(dt <= 0.0):
+        raise ValueError("time samples must be strictly increasing")
+    # The unweighted Fourier sums assume uniformly spaced samples.
+    if not np.allclose(dt, dt[0], rtol=1e-6, atol=0.0):
+        raise ValueError("time samples must be uniformly spaced")
 
-    n = len(t)
-    theta = 2.0 * math.pi * line_hz * (t - t[0])
+    try:
+        with np.errstate(over="raise", invalid="raise", divide="raise"):
+            n = len(t)
+            theta = 2.0 * math.pi * line_hz * (t - t[0])
 
-    def phasor(x: FloatArray, harmonic: int) -> complex:
-        a = 2.0 / n * float(np.sum(x * np.cos(harmonic * theta)))
-        b = 2.0 / n * float(np.sum(x * np.sin(harmonic * theta)))
-        return complex(a, -b) / math.sqrt(2.0)
+            def phasor(x: FloatArray, harmonic: int) -> complex:
+                a = 2.0 / n * float(np.sum(x * np.cos(harmonic * theta)))
+                b = 2.0 / n * float(np.sum(x * np.sin(harmonic * theta)))
+                return complex(a, -b) / math.sqrt(2.0)
 
-    v1 = phasor(v, 1)
-    i1 = phasor(i, 1)
-    v_rms = float(np.sqrt(np.mean(v ** 2)))
-    i_rms = float(np.sqrt(np.mean(i ** 2)))
-    pin = float(np.mean(v * i))
-    s_app = v_rms * i_rms
-    pf = pin / max(s_app, 1e-12)
-    dpf = float(math.cos(np.angle(v1) - np.angle(i1)))
-    h1 = abs(i1)
-    harmonics = {h: float(abs(phasor(i, h))) for h in range(1, max_harmonic + 1)}
-    rss = math.sqrt(sum(harmonics[h] ** 2 for h in range(2, max_harmonic + 1)))
-    thd = rss / max(h1, 1e-12)
-    distortion = h1 / max(math.sqrt(h1 * h1 + rss * rss), 1e-12)
-    identity = abs(pf - dpf * distortion)
+            v1 = phasor(v, 1)
+            i1 = phasor(i, 1)
+            v_rms = float(np.sqrt(np.mean(v ** 2)))
+            i_rms = float(np.sqrt(np.mean(i ** 2)))
+            pin = float(np.mean(v * i))
+            s_app = v_rms * i_rms
+            pf = pin / max(s_app, 1e-12)
+            dpf = float(math.cos(np.angle(v1) - np.angle(i1)))
+            h1 = abs(i1)
+            harmonics = {h: float(abs(phasor(i, h))) for h in range(1, max_harmonic + 1)}
+            rss = math.sqrt(sum(harmonics[h] ** 2 for h in range(2, max_harmonic + 1)))
+            thd = rss / max(h1, 1e-12)
+            distortion = h1 / max(math.sqrt(h1 * h1 + rss * rss), 1e-12)
+            identity = abs(pf - dpf * distortion)
+    except (FloatingPointError, OverflowError) as exc:
+        raise ValueError("PF/THD arithmetic exceeded the finite numeric range") from exc
+    if not all(math.isfinite(x) for x in (v_rms, i_rms, pin, pf, dpf, thd, distortion, identity)):
+        raise ValueError("PF/THD calculation produced non-finite metrics")
     conv = convention or THDConvention(included_harmonics=tuple(range(2, max_harmonic + 1)))
     notes: list[str] = []
     sanity = True
@@ -840,7 +864,6 @@ def _stability_from_loop(
     ms = float(np.nanmax(np.abs(sens)))
     mt = float(np.nanmax(np.abs(comp)))
     multi = len(margins.gain_crossovers_hz) > 1 or len(margins.phase_crossovers_hz) > 1
-    status = MetricStatus.MULTI_CROSSOVER if multi else MetricStatus.APPROXIMATION
     fc = margins.critical_gain_crossover_hz
     pbudget = None
     if fc is not None:
@@ -864,6 +887,14 @@ def _stability_from_loop(
             consistent=abs(residual) <= 3.0,
             tolerance_deg=3.0,
         )
+    status = MetricStatus.MULTI_CROSSOVER if multi else MetricStatus.APPROXIMATION
+    if not multi and (
+        fc is None
+        or margins.phase_margin_deg is None
+        or margins.phase_margin_deg < 35.0
+        or (pbudget is not None and not pbudget.consistent)
+    ):
+        status = MetricStatus.WARN
     return PFCLoopStabilityV3(
         name=name,
         fc_hz=fc,
@@ -889,6 +920,9 @@ def build_loop_separation(analysis: PFCControlLabAnalysis) -> LoopSeparationResu
         "Current loop must remain faster than voltage loop (typical ratio ≫ 1).",
     ]
     status = MetricStatus.APPROXIMATION
+    if fc_i is None or fc_v is None:
+        status = MetricStatus.WARN
+        notes.append("Loop separation is unavailable: current or voltage 0 dB crossover was not found.")
     if ratio is not None and ratio < 5.0:
         status = MetricStatus.WARN
         notes.append(f"Fc_i/Fc_v={ratio:.3g} is low — outer/inner interaction risk")
@@ -989,29 +1023,61 @@ def build_pfc_smart_control_v3(
     )
 
 
-def run_pfc_engineering_v3_core(config: PFCControlLabConfig) -> dict[str, Any]:
-    """One-shot Phase 2–4 + 7 pack for tests / Agent consumers."""
+@dataclass(frozen=True)
+class PFCEngineeringV3Result:
+    """One frozen analysis and line simulation shared by every desktop stage."""
 
-    line = build_line_cycle_result(config)
+    line_cycle: PFCLineCycleResult
+    pf_thd: PFTHDResult
+    distortion_regions: tuple[DistortionRegionResult, ...]
+    zero_crossing: ZeroCrossAnalysisResult
+    smart_control: PFCSmartControlV3Result
+
+    def as_dict(self) -> dict[str, Any]:
+        config = self.smart_control.analysis.config
+        return {
+            "line_cycle": self.line_cycle.as_dict(),
+            "pf_thd": self.pf_thd.as_dict(),
+            "distortion_regions": [r.as_dict() for r in self.distortion_regions],
+            "zero_crossing": self.zero_crossing.as_dict(),
+            "smart_control": self.smart_control.as_dict(),
+            "instant_90deg": self.line_cycle.instant_point(
+                90.0, pout_w=config.power_stage.output_power_w,
+            ).as_dict(),
+        }
+
+
+def build_pfc_engineering_v3(
+    config: PFCControlLabConfig,
+    *,
+    analysis: PFCControlLabAnalysis | None = None,
+    waveforms: PFCLineCycleWaveforms | None = None,
+) -> PFCEngineeringV3Result:
+    """Build V3 diagnostics, reusing supplied authoritative results without reruns."""
+    if analysis is not None and analysis.config != config:
+        raise ValueError("V3 config must match the supplied analysis")
+    smart = build_pfc_smart_control_v3(config, analysis=analysis)
+    line = build_line_cycle_result(config, waveforms=waveforms)
     pfthd = pf_thd_from_waveforms(
         line.waveforms,
         line_hz=config.power_stage.line_frequency_hz,
         pout_w=config.power_stage.output_power_w,
         convergence=line.convergence,
     )
-    regions = localize_distortion(line)
-    zc = analyze_zero_crossing(config, line=line)
-    smart = build_pfc_smart_control_v3(config)
     if not pfthd.sanity_ok:
         raise ValueError(f"PF/THD sanity failed: {pfthd.notes}")
-    return {
-        "line_cycle": line.as_dict(),
-        "pf_thd": pfthd.as_dict(),
-        "distortion_regions": [r.as_dict() for r in regions],
-        "zero_crossing": zc.as_dict(),
-        "smart_control": smart.as_dict(),
-        "instant_90deg": line.instant_point(90.0, pout_w=config.power_stage.output_power_w).as_dict(),
-    }
+    return PFCEngineeringV3Result(
+        line_cycle=line,
+        pf_thd=pfthd,
+        distortion_regions=localize_distortion(line),
+        zero_crossing=analyze_zero_crossing(config, line=line),
+        smart_control=smart,
+    )
+
+
+def run_pfc_engineering_v3_core(config: PFCControlLabConfig) -> dict[str, Any]:
+    """Backward-compatible JSON pack using the same result builder as desktop."""
+    return build_pfc_engineering_v3(config).as_dict()
 
 
 __all__ = [
@@ -1021,6 +1087,7 @@ __all__ = [
     "LineCycleConvergenceResult",
     "LoopSeparationResult",
     "PFCEvidenceResult",
+    "PFCEngineeringV3Result",
     "PFCInstantPoint",
     "PFCLineCycleResult",
     "PFCLoopStabilityV3",
@@ -1034,6 +1101,7 @@ __all__ = [
     "build_line_cycle_result",
     "build_loop_separation",
     "build_pfc_smart_control_v3",
+    "build_pfc_engineering_v3",
     "compute_pf_thd",
     "localize_distortion",
     "pf_thd_from_waveforms",

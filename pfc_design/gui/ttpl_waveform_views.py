@@ -106,7 +106,7 @@ class TTPLACPerformanceView(QWidget):
     def set_result(self, result: ResultTuple) -> None:
         self.result = result
         _, line, _ = result
-        config = self.config_provider()
+        config = result[0].config if result[0] is not None else self.config_provider()
         metrics = line.metrics
         warnings = "\n".join(f"  - {item}" for item in line.warnings) or "  - none"
         self.summary.setPlainText(
@@ -277,7 +277,8 @@ class TTPLSwitchingValidationView(QWidget):
         self.switching = switching
         self.angle.setValue(float(switching.line_angle_deg) % 360.0)
         self._show_switching(switching)
-        self._plot_zero_crossing(result[1], self.config_provider())
+        config = result[0].config if result[0] is not None else self.config_provider()
+        self._plot_zero_crossing(result[1], config)
 
     def rebuild(self) -> None:
         if self.result is None:
@@ -286,7 +287,7 @@ class TTPLSwitchingValidationView(QWidget):
         _, line, _ = self.result
         try:
             switching = build_pfc_switching_waveforms(
-                self.config_provider(),
+                self.result[0].config if self.result[0] is not None else self.config_provider(),
                 line_cycle=line,
                 line_angle_deg=self.angle.value(),
                 cycles=self.cycles.value(),
