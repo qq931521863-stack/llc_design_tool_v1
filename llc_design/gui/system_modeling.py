@@ -1413,6 +1413,14 @@ def install_guided_context_actions(window, edit_callback) -> QAction:
 
 def apply_definition_to_llc_window(window, definition: ControlSystemDefinition) -> LLCDesignSpec:
     """Populate the existing LLC expert workspace from the canonical model."""
+    loop = window.digital_loop_view
+    previous_controller = None
+    if not loop.external_controller_check.isChecked():
+        previous_controller = (
+            loop._solution_map_current_controller()
+            if hasattr(loop, "_solution_map_current_controller")
+            else loop._controller_config(loop.sample_us.value() * 1e-6)
+        )
     spec = llc_spec_from_system_definition(definition, window.spec)
     window.spec = spec
     window._load_spec_to_widgets(spec)
@@ -1444,13 +1452,24 @@ def apply_definition_to_llc_window(window, definition: ControlSystemDefinition) 
     loop.conversion_cycles.setValue(definition.adc.conversion_cycles)
     loop.soc_count.setValue(definition.adc.soc_count)
     loop.previous_weight.setValue(definition.adc.recursive_previous_weight)
+    loop._solution_map_sample_time = 1.0 / sensor.sample_rate_hz
+    if previous_controller is not None:
+        controller = replace(previous_controller, sample_time_s=loop._solution_map_sample_time)
+        if hasattr(loop, "_solution_map_set_controller"):
+            loop._solution_map_set_controller(controller)
+        else:
+            loop._solution_map_controller = controller
+    window._pending_controller_intent = definition.controller
+    if hasattr(loop, "solution_map_view"):
+        loop.solution_map_view.invalidate("Guided definition accepted. Building a fresh LLC candidate source…")
     _set_guided_status(window, definition)
     return spec
 
 
 def apply_definition_to_ttpl_window(window, definition: ControlSystemDefinition) -> PFCControlLabConfig:
     """Populate the existing TTPL expert workspace and return the exact run config."""
-    config = ttpl_config_from_system_definition(definition)
+    control = window.control_lab_view.control_lab
+    config = ttpl_config_from_system_definition(definition, base=control._config())
     window.guided_system_definition = definition
     window.guided_ttpl_config = config
     workbench = window.control_lab_view
@@ -1499,6 +1518,9 @@ def apply_definition_to_ttpl_window(window, definition: ControlSystemDefinition)
         fields["out_c"].setValue(sensor.adc_shunt_capacitance_f * 1e9)
         fields["sample"].setValue(sensor.sample_rate_hz / 1e3)
         fields["alpha"].setValue(sensor.digital_filter_alpha)
+    window._pending_controller_intent = definition.controller
+    if hasattr(control, "solution_map_view"):
+        control.solution_map_view.invalidate("Guided definition accepted. Building a fresh TTPL candidate source…")
     _set_guided_status(window, definition)
     return config
 
