@@ -130,14 +130,17 @@ def _library_candidates() -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
-def find_ngspice_shared_library(explicit: str | Path | None = None) -> str | None:
+def find_ngspice_shared_library(
+    explicit: str | Path | None = None, *, diagnostics: list[str] | None = None,
+) -> str | None:
     candidates = [str(Path(explicit).expanduser())] if explicit is not None else _library_candidates()
     for candidate in candidates:
         try:
             ct.CDLL(candidate)
             return candidate
-        except OSError:
-            continue
+        except OSError as exc:
+            if diagnostics is not None:
+                diagnostics.append(f"{candidate}: {exc}")
     return None
 
 

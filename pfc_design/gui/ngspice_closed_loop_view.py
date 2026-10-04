@@ -39,7 +39,8 @@ class TTPLNgSpiceClosedLoopView(QWidget):
         super().__init__(parent)
         self.analysis: PFCControlLabAnalysis | None = None
         self.result: TTPLSharedNgSpiceResult | None = None
-        self.library = find_ngspice_shared_library()
+        self.library: str | None = None
+        self._busy = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -56,6 +57,8 @@ class TTPLNgSpiceClosedLoopView(QWidget):
         self.run_button = QPushButton("Run Shared-ngspice")
         self.run_button.setEnabled(False)
         header.addWidget(self.run_button)
+        self.check_engine_button = QPushButton("Recheck engine")
+        header.addWidget(self.check_engine_button)
         root.addLayout(header)
 
         boundary = QLabel(
@@ -78,6 +81,7 @@ class TTPLNgSpiceClosedLoopView(QWidget):
         root.addWidget(splitter, 1)
 
         self.run_button.clicked.connect(self._run)
+        self.check_engine_button.clicked.connect(self._refresh_status)
         self._refresh_status()
 
     @staticmethod
@@ -99,8 +103,8 @@ class TTPLNgSpiceClosedLoopView(QWidget):
         form = QFormLayout(sim_group)
         self.duration_ms = self._spin(0.05, 100.0, 3, 0.50, " ms")
         self.phase_deg = self._spin(-360.0, 360.0, 2, 90.0, " deg")
-        self.max_step_us = self._spin(0.01, 10.0, 4, 0.0, " us")
-        self.output_step_us = self._spin(0.01, 20.0, 4, 0.0, " us")
+        self.max_step_us = self._spin(0.0, 10.0, 4, 0.0, " us")
+        self.output_step_us = self._spin(0.0, 20.0, 4, 0.0, " us")
         self.timeout_s = self._spin(1.0, 600.0, 1, 120.0, " s")
         for label, widget in (
             ("Duration", self.duration_ms),
@@ -139,9 +143,15 @@ class TTPLNgSpiceClosedLoopView(QWidget):
         return page
 
     def _refresh_status(self) -> None:
+        if self._busy:
+            return
+        diagnostics: list[str] = []
+        self.library = find_ngspice_shared_library(diagnostics=diagnostics)
         if self.library is None:
             self.status.setText(
-                "shared libngspice not found. Install libngspice or set NGSPICE_SHARED_LIB; the analytical/averaged PFC stages remain available."
+                "shared libngspice could not be loaded. The closed loop needs a DLL/dylib/so, not ngspice.exe. "
+                "Install libngspice or set NGSPICE_SHARED_LIB before launching the app, then recheck. "
+                "See docs/NGSPICE_SETUP.md.\n" + "\n".join(diagnostics)
             )
             self.run_button.setEnabled(False)
         elif self.analysis is None:
@@ -162,6 +172,9 @@ class TTPLNgSpiceClosedLoopView(QWidget):
         self._refresh_status()
 
     def _run(self) -> None:
+        if self._busy:
+            return
+        self._refresh_status()
         if self.analysis is None or self.library is None:
             return
         initial = self.vref_initial.value()
@@ -248,6 +261,8 @@ class TTPLNgSpiceClosedLoopView(QWidget):
         self.canvas.draw_idle()
 
     def set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self.check_engine_button.setEnabled(not busy)
         self.run_button.setEnabled((not busy) and self.analysis is not None and self.library is not None)
 
 

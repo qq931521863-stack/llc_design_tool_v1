@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import traceback
+from dataclasses import dataclass
 
 from PySide6.QtCore import QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction
@@ -25,10 +26,11 @@ from llc_design.i18n import t
 from pfc_design.control import (
     PFCControlLabConfig,
     build_pfc_control_handoff,
-    build_pfc_control_lab_analysis,
     build_pfc_switching_waveforms,
-    simulate_pfc_line_cycle,
 )
+from pfc_design.engineering.pfc_v3 import PFCEngineeringV3Result, build_pfc_engineering_v3
+from .v3_diagnostics_view import install_v3_diagnostics, show_v3_diagnostics
+
 from pfc_design.vienna import (
     ViennaControlLabConfig,
     build_vienna_control_lab_analysis,
@@ -49,6 +51,12 @@ from .ttpl_engineering_view import TTPLWorkbenchView
 from .vienna_control_view import ViennaControlLabView
 
 
+@dataclass(frozen=True)
+class _TTPLCalculation:
+    legacy_result: tuple
+    engineering: PFCEngineeringV3Result
+
+
 class PFCMainWindow(QMainWindow):
     """Independent PFC workspace: engineering TTPL + three-phase Vienna."""
 
@@ -61,6 +69,7 @@ class PFCMainWindow(QMainWindow):
         self.thread_pool = QThreadPool.globalInstance()
         self._active_workers = []
         self.result = None
+        self.engineering_result = None
 
         self.subtabs = QTabWidget()
         self.subtabs.setDocumentMode(True)
@@ -76,6 +85,7 @@ class PFCMainWindow(QMainWindow):
         install_ttpl_ac_switching_stages(self)
         install_ttpl_exact_hz_stage(self)
         install_ttpl_ngspice_closed_loop_stage(self)
+        install_v3_diagnostics(self.control_lab_view)
         self.control_lab_view.analysis_requested.connect(self.run_ttpl_analysis)
         self.vienna_view.analysis_requested.connect(self.run_vienna_analysis)
         self.subtabs.addTab(self.control_lab_view, "Single-Phase TTPL Engineering")
@@ -170,14 +180,15 @@ class PFCMainWindow(QMainWindow):
 
     def run_ttpl_analysis(self, config: PFCControlLabConfig):
         def calculate():
-            analysis = build_pfc_control_lab_analysis(config)
-            line = simulate_pfc_line_cycle(config)
+            engineering = build_pfc_engineering_v3(config)
+            analysis = engineering.smart_control.analysis
+            line = engineering.line_cycle.waveforms
             switching = build_pfc_switching_waveforms(
                 config,
                 line_cycle=line,
                 line_angle_deg=config.power_stage.line_angle_deg,
             )
-            return analysis, line, switching
+            return _TTPLCalculation((analysis, line, switching), engineering)
 
         self._run_worker(
             "正在建立 TTPL 双环、AC 周期、过零与开关工作点…",
@@ -187,7 +198,16 @@ class PFCMainWindow(QMainWindow):
 
     def _ttpl_ready(self, result):
         try:
+            if isinstance(result, _TTPLCalculation):
+                engineering = result.engineering
+                result = result.legacy_result
+            else:
+                # Keep legacy callers working without repeating their simulation.
+                engineering = build_pfc_engineering_v3(
+                    result[0].config, analysis=result[0], waveforms=result[1],
+                )
             self.result = result
+            self.engineering_result = engineering
             # Control/Bode remains the owner of controller/sensing settings.
             # AC/switching, exact H(z) and shared-ngspice all consume this exact
             # analysis result; no downstream stage recreates the controller.
@@ -197,13 +217,15 @@ class PFCMainWindow(QMainWindow):
             analysis, line, _ = result
             self.control_lab_view.exact_hz_view.set_analysis(analysis)
             self.control_lab_view.ngspice_closed_loop_view.set_analysis(analysis)
+            show_v3_diagnostics(self.control_lab_view, engineering)
             current = analysis.current_loop.margins
             voltage = analysis.voltage_loop.margins
             self.statusBar().showMessage(
                 f"TTPL 完成: Li fc={current.critical_gain_crossover_hz}, "
                 f"PM={current.phase_margin_deg}; Lv fc={voltage.critical_gain_crossover_hz}, "
                 f"PM={voltage.phase_margin_deg}; PF={line.metrics.power_factor:.6g}, "
-                f"THD={line.metrics.current_thd_percent:.5g}%"
+                f"THD={engineering.pf_thd.thd_percent:.5g}%; "
+                f"V3: {engineering.line_cycle.convergence.status.value}"
             )
         except Exception:
             self._worker_error("TTPL 结果绘图/GUI 更新失败\n" + traceback.format_exc())

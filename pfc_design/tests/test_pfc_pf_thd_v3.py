@@ -78,3 +78,77 @@ def test_pf_cannot_exceed_one_silently():
     r = compute_pf_thd(t, vac, iac, line_hz=fl)
     assert r.pf <= 1.0 + 1e-6
     assert r.convention.fundamental_definition == "DFT_H1_RMS"
+
+
+@pytest.mark.parametrize("waveform", ["time", "voltage", "current"])
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_rejects_nonfinite_waveforms(waveform, value):
+    t, fl = _grid()
+    v = np.sin(2 * math.pi * fl * t)
+    i = 2.0 * v
+    {"time": t, "voltage": v, "current": i}[waveform][100] = value
+    with pytest.raises(ValueError, match="finite"):
+        compute_pf_thd(t, v, i, line_hz=fl)
+
+
+@pytest.mark.parametrize("line_hz", [math.nan, math.inf, -math.inf, 0.0, -50.0])
+def test_rejects_invalid_line_frequency(line_hz):
+    t, fl = _grid()
+    v = np.sin(2 * math.pi * fl * t)
+    with pytest.raises(ValueError, match="line frequency"):
+        compute_pf_thd(t, v, v, line_hz=line_hz)
+
+
+@pytest.mark.parametrize("pout_w", [math.nan, math.inf, -math.inf])
+def test_rejects_nonfinite_output_power(pout_w):
+    t, fl = _grid()
+    v = np.sin(2 * math.pi * fl * t)
+    with pytest.raises(ValueError, match="output power.*finite"):
+        compute_pf_thd(t, v, v, line_hz=fl, pout_w=pout_w)
+
+
+@pytest.mark.parametrize("kind", ["duplicate", "decreasing", "reversed", "nonuniform"])
+def test_rejects_invalid_time_grid(kind):
+    t, fl = _grid()
+    if kind == "duplicate":
+        t[100] = t[99]
+    elif kind == "decreasing":
+        t[100] = t[99] - 1e-6
+    elif kind == "reversed":
+        t = t[::-1]
+    else:
+        t[100] += 1e-6
+    v = np.sin(2 * math.pi * fl * t)
+    with pytest.raises(ValueError, match="time.*(increasing|uniform)"):
+        compute_pf_thd(t, v, v, line_hz=fl)
+
+
+@pytest.mark.parametrize(
+    "max_harmonic", [0, -1, 1.5, 3.0, math.nan, math.inf, True, np.bool_(True), "3", None]
+)
+def test_rejects_invalid_harmonic_limit(max_harmonic):
+    t, fl = _grid()
+    v = np.sin(2 * math.pi * fl * t)
+    with pytest.raises(ValueError, match="max_harmonic.*positive integer"):
+        compute_pf_thd(t, v, v, line_hz=fl, max_harmonic=max_harmonic)
+
+
+def test_accepts_uniform_grid_roundoff_numpy_harmonic_and_finite_output_power():
+    t, fl = _grid(cycles=2)
+    t += 0.25
+    t[::2] += 1e-13
+    v = 230.0 * math.sqrt(2) * np.sin(2 * math.pi * fl * t)
+    i = 10.0 * math.sqrt(2) * np.sin(2 * math.pi * fl * t)
+    r = compute_pf_thd(t, v, i, line_hz=fl, max_harmonic=np.int64(11), pout_w=2200.0)
+    assert r.sanity_ok
+    assert r.pf == pytest.approx(1.0, abs=2e-3)
+    assert r.thd == pytest.approx(0.0, abs=2e-3)
+    assert r.pout_w == 2200.0
+    assert tuple(r.harmonics_rms_a) == tuple(range(1, 12))
+
+
+def test_finite_waveforms_that_overflow_arithmetic_are_rejected():
+    time = np.arange(1000) / 50_000.0
+    wave = 1e160 * np.sin(2 * np.pi * 50.0 * time)
+    with pytest.raises(ValueError, match="finite numeric range"):
+        compute_pf_thd(time, wave, wave, line_hz=50.0)

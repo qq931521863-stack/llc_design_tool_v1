@@ -7,7 +7,7 @@ LLC · Totem-Pole PFC · Vienna PFC · Digital Control · FRA · C99 `float32_t`
 [![Build & Test](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml)
 [![ngspice Smoke](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml)
 ![Python](https://img.shields.io/badge/Python-%3E%3D3.10-blue)
-![Version](https://img.shields.io/badge/version-9.5.0-informational)
+![Version](https://img.shields.io/badge/version-9.6.0-informational)
 [![GitHub Release](https://img.shields.io/github/v/release/yangshuai2022-star/power-design-toolkit)](https://github.com/yangshuai2022-star/power-design-toolkit/releases/latest)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 
@@ -97,7 +97,7 @@ From the launcher, **系统建模与设计 / Guided System Design** builds a can
 
 V9.4 integrates the eight-step workflow: **Topology → Power Stage → Sensing → ADC → Modulator → Timing → Controller → Review**, with live summaries and guided-definition re-entry. The new LLC envelope/ZVS/FHA–TD/loss-provenance/thermal/optimizer foundations are described in [LLC Physics Model V2](docs/LLC_PHYSICS_MODEL_V2.md).
 
-V9.5.0 adds Smart Control V2 (exact loop / timing / phase–gain budget / Ms·Mt / Exact H(z) evidence) and PFC Engineering V3 round-1 spine (unified line-cycle → PF/THD → zero-crossing → dual-loop Smart Control). Use the latest complete release; earlier tags are retained for history. See [Release process](docs/RELEASE.md).
+V9.6.0 connects the PFC V3 desktop engineering views, SPICE readiness/recheck workflow, and exact-controller candidate comparison/apply flow. Automatic candidate synthesis remains Tustin PI only; frequency-domain comparison is not time-domain or hardware validation. SPICE execution requires shared libngspice. Use the latest complete release; earlier tags are retained for history. See [Release process](docs/RELEASE.md).
 
 Roadmap placeholders for other topologies are shown explicitly — they are not silently claimed as supported. Solution Map synthesis currently targets Tustin PI. Some advanced physics paths remain API/opt-in and are not yet integrated into every default GUI/PDF/Web consumer; see the explicit [model limitations](docs/LLC_MODEL_VALIDATION_REPORT.md).
 

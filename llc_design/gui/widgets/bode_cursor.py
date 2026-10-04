@@ -27,6 +27,9 @@ _CJK_FONT_CANDIDATES: tuple[str, ...] = (
     "Hiragino Sans GB",
     # Linux / portable CJK installations
     "Noto Sans CJK SC",
+    # Matplotlib may register only the first (JP) face of Linux Noto TTCs.
+    # That face still includes the Chinese glyphs used by the cursor.
+    "Noto Sans CJK JP",
     "Source Han Sans SC",
     "WenQuanYi Micro Hei",
     "AR PL UMing CN",
