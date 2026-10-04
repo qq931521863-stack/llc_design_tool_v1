@@ -2,6 +2,24 @@
 
 This file keeps the **maintained product history**. Detailed debugging notes, one-off migration instructions, CI result snapshots and binary release artifacts are intentionally kept out of the source documentation tree; Git history, Pull Requests, Actions and Releases provide that archive.
 
+## 9.6.0 — 2026-10-04
+
+### Added / integrated — Desktop engineering workflows
+
+- connects PFC V3 line-cycle, PF/THD, zero-crossing and dual-loop engineering results to the desktop workflow;
+- adds SPICE automatic readiness detection, explicit backend diagnostics and a recheck path after environment changes;
+- connects exact-controller candidate comparison and explicit application to the maintained control workflow, preserving coefficient identity;
+- retains the existing shared loop-model and exact H(z) analysis authorities rather than introducing a parallel controller calculation stack.
+
+### Release metadata
+
+- synchronizes package, runtime, version regression and README to 9.6.0;
+- publishes through the maintained full-regression, real-ngspice and verified Windows x64 / macOS arm64 packaging gates; existing tags are preserved.
+
+### Engineering boundary
+
+Automatic candidate synthesis remains Tustin PI only. Frequency-domain candidate comparisons do not establish time-domain response or hardware validation. SPICE execution requires an available shared libngspice installation; readiness detection does not install or bundle that dependency. Existing PARTIAL / APPROXIMATION / UNKNOWN model boundaries remain in force. Packaged GUI self-tests establish software startup and resource integrity, not hardware sign-off.
+
 ## 9.5.0 — 2026-09-26
 
 ### Added — Smart Control V2
