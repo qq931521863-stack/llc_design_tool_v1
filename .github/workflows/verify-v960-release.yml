@@ -1,0 +1,113 @@
+name: verify-v960-release
+
+# Read-only receipt for the release whose final status-print command failed
+# after successful publication. Never rewrites tags, releases or assets.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/verify-v960-release.yml
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/verify-v960-release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify-published-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout immutable release source
+        uses: actions/checkout@v4
+        with:
+          ref: 189af9b9c17e251f0fc51643fed1a6b03da24fe0
+      - name: Download original verified build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: power-design-tool-*
+          path: source-artifacts
+          merge-multiple: true
+          run-id: 37171891387
+          github-token: ${{ github.token }}
+      - name: Download public release and source receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v9.6.0" > tag-ref.json
+          tag_sha=$(python -c 'import json; print(json.load(open("tag-ref.json"))["object"]["sha"])')
+          gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha" > tag.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/37171891387" > source-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/37171891387/jobs?filter=all&per_page=100" > source-jobs.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/402801280" > public-release.json
+          gh release download v9.6.0 --dir public-release
+      - name: Verify immutable source, original gates and public bytes
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json, zipfile
+          from pathlib import Path
+          sha = "189af9b9c17e251f0fc51643fed1a6b03da24fe0"
+          tag_ref = json.loads(Path("tag-ref.json").read_text())
+          tag = json.loads(Path("tag.json").read_text())
+          assert tag_ref["object"]["type"] == "tag"
+          assert tag["tag"] == "v9.6.0" and tag["object"]["sha"] == sha
+          run = json.loads(Path("source-run.json").read_text())
+          assert run["id"] == 37171891387 and run["head_sha"] == sha
+          assert run["head_branch"] == "v9.6.0" and run["status"] == "completed"
+          jobs = json.loads(Path("source-jobs.json").read_text())["jobs"]
+          required = {111346347918, 111347519252, 111347519257}
+          source_jobs = {j["id"]: j for j in jobs if j["id"] in required}
+          assert set(source_jobs) == required
+          assert all(j["conclusion"] == "success" for j in source_jobs.values())
+          release = json.loads(Path("public-release.json").read_text())
+          assert release["id"] == 402801280 and release["tag_name"] == "v9.6.0"
+          assert release["draft"] is False and release["prerelease"] is False
+          assert release["published_at"]
+          expected = {
+              "PowerDesignTool-Windows-x64.zip": "8f124cc56278d66cebb42269f4e9522352de7f00905770cbdcb63bbfad9556ab",
+              "PowerDesignTool-macOS-arm64.zip": "1b00bf25a54910f88db072d72e29709cf1814e45da75c3bc9b3fca8ab6db62ef",
+              "bundle-proof-Windows.json": "d027d00da26a8386b78d72b04b258f70ff7e4da26e7fb8502104a40993d3fb8e",
+              "bundle-proof-macOS.json": "24cb4e6219e3ffd12dc691b1ef182392d118684c02163064de28ae9fd9d0e29a",
+              "SHA256SUMS.txt": "57b96ead2469e1d9764414bece0037a819973a6b4f0f1d7a870bc49d55a8a154",
+          }
+          assets = {a["name"]: a for a in release["assets"]}
+          public = Path("public-release")
+          original = Path("source-artifacts")
+          assert set(assets) == set(expected)
+          assert {p.name for p in public.iterdir()} == set(expected)
+          assert {p.name for p in original.iterdir()} == set(expected) - {"SHA256SUMS.txt"}
+          for name, digest in expected.items():
+              data = (public / name).read_bytes()
+              assert hashlib.sha256(data).hexdigest() == digest, name
+              assert assets[name]["digest"] == "sha256:" + digest, name
+              assert assets[name]["size"] == len(data), name
+              if name != "SHA256SUMS.txt":
+                  assert (original / name).read_bytes() == data, name
+          checksums = dict(line.split("  ")[::-1] for line in (public / "SHA256SUMS.txt").read_text().splitlines())
+          assert checksums == {n: d for n, d in expected.items() if n.endswith(".zip")}
+          taxonomy = hashlib.sha256(Path("engineering_data/brand_taxonomy.json").read_bytes()).hexdigest()
+          for runner, platform, exe in (
+              ("Windows", "win32", "PowerDesignTool/PowerDesignTool.exe"),
+              ("macOS", "darwin", "PowerDesignTool.app/Contents/MacOS/PowerDesignTool"),
+          ):
+              proof = json.loads((public / f"bundle-proof-{runner}.json").read_text())
+              assert proof["success"] is True and proof["frozen"] is True
+              assert proof["version"] == "9.6.0" and proof["platform"] == platform
+              assert proof["guided_design"] is True
+              assert proof["workspaces"] == ["llc", "pfc", "control", "fra"]
+              assert proof["brand_taxonomy_sha256"] == taxonomy
+              name = "PowerDesignTool-Windows-x64.zip" if runner == "Windows" else "PowerDesignTool-macOS-arm64.zip"
+              with zipfile.ZipFile(public / name) as bundle:
+                  members = {n.replace("\\", "/"): n for n in bundle.namelist()}
+                  assert len(members) == len(bundle.namelist()) and exe in members
+                  assert bundle.testzip() is None
+                  data_entries = [v for k, v in members.items() if k.endswith("/engineering_data/brand_taxonomy.json")]
+                  assert any(hashlib.sha256(bundle.read(n)).hexdigest() == taxonomy for n in data_entries)
+          print("PASS: published v9.6.0 matches immutable source, verified original builds, five public asset digests, executable paths and frozen-app evidence")
+          PY
