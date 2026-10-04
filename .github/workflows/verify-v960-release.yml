@@ -7,12 +7,10 @@ on:
     branches: [main]
     paths:
       - .github/workflows/verify-v960-release.yml
-      - .github/workflows/build-release.yml
   push:
     branches: [main]
     paths:
       - .github/workflows/verify-v960-release.yml
-      - .github/workflows/build-release.yml
   workflow_dispatch:
 
 permissions:
