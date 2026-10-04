@@ -11,6 +11,10 @@ This file keeps the **maintained product history**. Detailed debugging notes, on
 - connects exact-controller candidate comparison and explicit application to the maintained control workflow, preserving coefficient identity;
 - retains the existing shared loop-model and exact H(z) analysis authorities rather than introducing a parallel controller calculation stack.
 
+### Fixed — Portable CJK font discovery
+
+- accepts the default JP face of Linux Noto CJK font collections when Matplotlib does not register their SC face, preserving Chinese Bode-cursor glyphs without weakening rendering tests.
+
 ### Release metadata
 
 - synchronizes package, runtime, version regression and README to 9.6.0;

@@ -107,3 +107,26 @@ def test_bode_cursor_chinese_annotation_uses_cjk_font_without_missing_glyphs() -
     assert "闭环输出阻抗" in cursor._magnitude_annotation.get_text()
     assert cursor._magnitude_annotation.get_fontproperties().get_family() != ["monospace"]
     cursor.disconnect()
+
+
+def test_cjk_font_lookup_accepts_noto_collection_default_face(monkeypatch) -> None:
+    from llc_design.gui.widgets import bode_cursor
+
+    attempted = []
+
+    def find_font(properties, *, fallback_to_default):
+        assert fallback_to_default is False
+        family = properties.get_family()[0]
+        attempted.append(family)
+        if family == "Noto Sans CJK JP":
+            return "/fonts/NotoSansCJK-Regular.ttc"
+        raise ValueError("family unavailable")
+
+    bode_cursor.resolve_cjk_font_properties.cache_clear()
+    monkeypatch.setattr(bode_cursor.font_manager, "findfont", find_font)
+    try:
+        resolved = bode_cursor.resolve_cjk_font_properties()
+        assert resolved.get_file() == "/fonts/NotoSansCJK-Regular.ttc"
+        assert attempted.index("Noto Sans CJK SC") < attempted.index("Noto Sans CJK JP")
+    finally:
+        bode_cursor.resolve_cjk_font_properties.cache_clear()
