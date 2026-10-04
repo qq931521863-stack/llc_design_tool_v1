@@ -153,3 +153,19 @@ def test_archive_gate_is_independent_of_default_text_encoding(tmp_path, monkeypa
 def test_archive_gate_handles_windows_zip_separators(tmp_path, monkeypatch):
     _archive_gate(tmp_path, monkeypatch, windows_backslash=True)
     assert len((tmp_path / "release/SHA256SUMS.txt").read_text().splitlines()) == 2
+
+
+def test_release_publisher_shell_is_syntactically_valid(tmp_path):
+    import shutil
+    import textwrap
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("Bash is required to parse the GitHub publisher script")
+    workflow = (ROOT / ".github/workflows/build-release.yml").read_text(encoding="utf-8")
+    block = workflow.split("- name: Stage and publish complete release\n", 1)[1]
+    block = block.split("run: |\n", 1)[1].split("\n      - name:", 1)[0]
+    script = tmp_path / "publish.sh"
+    script.write_text(textwrap.dedent(block), encoding="utf-8")
+    result = subprocess.run([bash, "-n", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

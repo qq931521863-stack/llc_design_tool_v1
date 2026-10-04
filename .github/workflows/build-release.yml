@@ -259,7 +259,7 @@ jobs:
               assert assets[name]["digest"] == f"sha256:{digest}", f"uploaded digest mismatch: {name}"
           PY
           gh release edit "$tag" --notes-file release-notes.md --draft=false --latest
-          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '{tag_name,draft,prerelease,published_at,assets:[.assets[].name]}
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '{tag_name,draft,prerelease,published_at,assets:[.assets[].name]}'
       - name: Mark incomplete 9.4.0 as superseded
         if: github.ref == 'refs/tags/v9.4.2'
         env:
