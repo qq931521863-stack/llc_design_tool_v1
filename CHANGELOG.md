@@ -2,6 +2,28 @@
 
 This file keeps the **maintained product history**. Detailed debugging notes, one-off migration instructions, CI result snapshots and binary release artifacts are intentionally kept out of the source documentation tree; Git history, Pull Requests, Actions and Releases provide that archive.
 
+## 9.7.0 — 2026-10-05
+
+### Added — Measured FRA PI experiment map
+
+- binds strict CSV imports to exact PI coefficients, units, sample period and operating point;
+- displays measured rounds and local predictions separately on a sparse Kp×Ti map with Bode comparisons and configurable Fc/PM/GM targets;
+- checks held-out scans against prior predictions and preserves portable JSON sessions and measured CSV data; recommendations never apply hardware settings or claim global optimality.
+
+See [FRA tuning map](docs/FRA_TUNING_MAP.md) for the workflow and measurement limits.
+
+### Added — Reproducible controller research exports
+
+- adds one-click standalone MATLAB and Python research scripts to completed LLC and TTPL PFC control analyses, including PFC current/voltage/both-loop selection;
+- preserves analyzed controller coefficients, sample times and model provenance for manual and applied controllers, with embedded frequency-response checks;
+- distinguishes rational continuous/discrete models from complete-loop frequency-response data, retaining delay and approximation boundaries without hidden fitting or changes to control math.
+
+See [Research model export](docs/RESEARCH_MODEL_EXPORT.md) for dependencies and model boundaries.
+
+### Verification boundary
+
+Python research scripts were executed in regression tests. MATLAB scripts were reviewed and structurally checked; MATLAB runtime execution was not available. Sparse measured FRA points and local predictions are not global-optimum or hardware-validation claims.
+
 ## 9.6.0 — 2026-10-04
 
 ### Added / integrated — Desktop engineering workflows

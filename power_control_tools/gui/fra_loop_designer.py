@@ -136,9 +136,19 @@ class FRALoopDesignerWindow(QMainWindow):
         action = QAction("导出 C99", self)
         action.triggered.connect(self.export_c99)
         tb.addAction(action)
+        action = QAction("实测迭代调参 Map", self)
+        action.triggered.connect(self.open_tuning_map)
+        tb.addAction(action)
         install_help(self, "fra")
         install_language_selector(self)
         install_language_selector(self)
+
+    def open_tuning_map(self) -> None:
+        from power_control_tools.gui.fra_tuning_map import FRATuningMapWindow
+        if not hasattr(self, "_tuning_map_window"):
+            self._tuning_map_window = FRATuningMapWindow(self)
+        self._tuning_map_window.show()
+        self._tuning_map_window.raise_()
 
     def _hook(self, widget) -> None:
         if hasattr(widget, "valueChanged"):

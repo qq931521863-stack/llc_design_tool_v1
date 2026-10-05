@@ -66,6 +66,7 @@ from .bode_cursor import (
 )
 from .control_block_diagram import BlockSpec, ConnectionSpec, ControlBlockDiagram
 from .sense_schematic import AnalogSenseSchematic
+from .research_export import ExportResearchPanel
 from .. import theme
 from power_codegen import generate_llc_control_code
 from power_control_tools.codegen import export_c99_filter, verify_c99_filter
@@ -609,6 +610,9 @@ class DigitalLoopView(QWidget):
         layout.setContentsMargins(6, 0, 0, 0)
         layout.setSpacing(6)
 
+        self.research_export = ExportResearchPanel("llc", panel)
+        layout.addWidget(self.research_export)
+
         top = QHBoxLayout()
         top.addWidget(QLabel("Bode 视图"))
         self.plot_group = QComboBox()
@@ -743,6 +747,7 @@ class DigitalLoopView(QWidget):
 
     def set_busy(self, busy: bool) -> None:
         self.run_button.setEnabled(not busy)
+        self.research_export.set_busy(busy)
         if hasattr(self, "codegen_button"):
             self.codegen_button.setEnabled(not busy)
 
@@ -872,6 +877,7 @@ class DigitalLoopView(QWidget):
 
     def set_analysis(self, result: DigitalLoopAnalysis) -> None:
         self.result = result
+        self.research_export.set_analysis(result)
         self.external_controller_status.setText(
             f"闭环控制器来源：{result.controller_source} | C(z)={result.controller.name}"
         )
