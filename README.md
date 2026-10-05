@@ -7,7 +7,7 @@ LLC · Totem-Pole PFC · Vienna PFC · Digital Control · FRA · C99 `float32_t`
 [![Build & Test](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml)
 [![ngspice Smoke](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml)
 ![Python](https://img.shields.io/badge/Python-%3E%3D3.10-blue)
-![Version](https://img.shields.io/badge/version-9.6.0-informational)
+![Version](https://img.shields.io/badge/version-9.7.0-informational)
 [![GitHub Release](https://img.shields.io/github/v/release/yangshuai2022-star/power-design-toolkit)](https://github.com/yangshuai2022-star/power-design-toolkit/releases/latest)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 
@@ -19,6 +19,11 @@ The project is built around four rules:
 2. **Exact digital-control semantics.** A designed discrete transfer function is passed as its real `b/a` coefficients; it is not silently re-fit into a different PI/PID form or re-discretized inside downstream simulation.
 3. **Model boundaries are explicit.** FHA, HB, switched time-domain, measured FRA, small-signal Bode, firmware runtime and ngspice answer different questions.
 4. **Evidence is not collapsed into one word.** Software regression, simulator execution and hardware validation are separate evidence levels.
+
+Completed LLC and TTPL PFC control analyses can be exported as standalone
+**MATLAB `.m` / Python `.py` research scripts**, with exact controller coefficients,
+sample times, explicit frequency-data boundaries and numerical self-checks.
+See [Research model export](docs/RESEARCH_MODEL_EXPORT.md).
 
 ![Power Design Toolkit workspace launcher](docs/assets/power-design-toolkit-overview.png)
 
@@ -91,13 +96,15 @@ The desktop launcher opens four independent workspaces while preserving state du
 | **Control Tools** | General digital controller/filter design | H(s), exact H(z), Bode, step/impulse, poles/zeros, SOS/DF2T, single-file C99 `float32_t` |
 | **FRA Loop Designer** | Controller design from measured frequency response | Bode100/SIMPLIS import, controller de-embedding, Equivalent Plant, Fc/PM/GM/Ms/Mt, Auto Design, model ID, C99 |
 
+The FRA toolbar also opens a [measured PI tuning map](docs/FRA_TUNING_MAP.md): bind each scan to its actual controller and operating point, compare rounds on a sparse Kp×Ti map, and plan a local next scan. Predictions remain separate from measurements; no hardware parameters are applied.
+
 ### Smart Control / Guided System Design (V9.4)
 
 From the launcher, **系统建模与设计 / Guided System Design** builds a canonical closed-loop definition for LLC FM voltage-loop or single-phase Totem-Pole PFC (current + bus voltage), then hands it into the existing design/control engines. An interactive **Fc–PM Solution Map** synthesizes candidate loops and installs only constraint-feasible points into the LLC/TTPL workspaces.
 
 V9.4 integrates the eight-step workflow: **Topology → Power Stage → Sensing → ADC → Modulator → Timing → Controller → Review**, with live summaries and guided-definition re-entry. The new LLC envelope/ZVS/FHA–TD/loss-provenance/thermal/optimizer foundations are described in [LLC Physics Model V2](docs/LLC_PHYSICS_MODEL_V2.md).
 
-V9.6.0 connects the PFC V3 desktop engineering views, SPICE readiness/recheck workflow, and exact-controller candidate comparison/apply flow. Automatic candidate synthesis remains Tustin PI only; frequency-domain comparison is not time-domain or hardware validation. SPICE execution requires shared libngspice. Use the latest complete release; earlier tags are retained for history. See [Release process](docs/RELEASE.md).
+V9.7.0 adds the measured FRA PI experiment map and reproducible MATLAB/Python controller research exports. Measured scans and local predictions remain separate; rational models and frequency-response data retain their declared boundaries. MATLAB runtime execution has not been validated. Software/model checks do not establish hardware validation. Use the latest complete release; earlier tags are retained for history. See [Release process](docs/RELEASE.md).
 
 Roadmap placeholders for other topologies are shown explicitly — they are not silently claimed as supported. Solution Map synthesis currently targets Tustin PI. Some advanced physics paths remain API/opt-in and are not yet integrated into every default GUI/PDF/Web consumer; see the explicit [model limitations](docs/LLC_MODEL_VALIDATION_REPORT.md).
 

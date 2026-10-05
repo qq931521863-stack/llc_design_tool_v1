@@ -39,6 +39,7 @@ from llc_design.control.digital_loop import (
 )
 from llc_design.gui.widgets.control_block_diagram import BlockSpec, ConnectionSpec, ControlBlockDiagram
 from llc_design.gui.widgets.sense_schematic import AnalogSenseSchematic
+from llc_design.gui.widgets.research_export import ExportResearchPanel
 from llc_design.gui import theme
 from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
@@ -542,6 +543,9 @@ class PFCControlLabView(QWidget):
         layout.setContentsMargins(6, 0, 0, 0)
         layout.setSpacing(5)
 
+        self.research_export = ExportResearchPanel("pfc", panel)
+        layout.addWidget(self.research_export)
+
         # LLC-style compact status strip: cursor and phase budget share one row
         # instead of consuming two full-width rows above every result page.
         status_row = QHBoxLayout()
@@ -690,6 +694,7 @@ class PFCControlLabView(QWidget):
 
     def set_busy(self, busy: bool) -> None:
         self.run_button.setEnabled(not busy)
+        self.research_export.set_busy(busy)
         # Freeze inputs while the worker is using a snapshot of them.  Without
         # this, changing line frequency/plant values mid-run can make the GUI
         # render a result using a different parameter set than the solver used.
@@ -817,6 +822,7 @@ class PFCControlLabView(QWidget):
     def set_result(self, result) -> None:
         self.result = result
         analysis, line_cycle, switching = result
+        self.research_export.set_analysis(analysis)
         pm = analysis.current_loop.margins.phase_margin_deg
         fc = analysis.current_loop.margins.critical_gain_crossover_hz
         if pm is not None and pm < 45.0:
