@@ -2,8 +2,8 @@
 
 PDF (fpdf2 + matplotlib Agg) and Excel (pandas + openpyxl) exports are built
 exclusively from the analyze_llc() result so the report always mirrors what the
-browser shows.  The PDF is English-only on purpose: the bundled fpdf2 core
-fonts are Latin-1, and engineering section names follow the product spec.
+browser shows. Engineering section names are English; project/engineer metadata
+uses an installed Unicode font when necessary, or returns an actionable error.
 """
 from __future__ import annotations
 
@@ -116,6 +116,7 @@ def _loss_pie_png(result: dict[str, Any]) -> bytes:
 # ---------------------------------------------------------------------------
 
 class _ReportPdf(FPDF):
+    report_title = "LLC Design Report"
     _ACCENT = (46, 92, 160)
     _RULE = (210, 216, 226)
     _MUTED = (110, 118, 132)
@@ -125,7 +126,7 @@ class _ReportPdf(FPDF):
             return
         self.set_font("Helvetica", "B", 8)
         self.set_text_color(*self._MUTED)
-        self.cell(0, 6, "Power Design Toolkit - LLC Design Report", align="L")
+        self.cell(0, 6, f"Power Design Toolkit - {self.report_title}", align="L")
         self.cell(0, 6, f"Page {self.page_no()}", align="R", new_x="LMARGIN", new_y="NEXT")
         self.set_draw_color(*self._RULE)
         self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
@@ -197,6 +198,87 @@ def _fmt(v: Any, digits: int = 3) -> str:
     return f"{v:.{digits}f}"
 
 
+def _metadata_font(pdf: FPDF, text: str) -> None:
+    if all(ord(char) < 256 for char in text):
+        pdf.set_font("Helvetica", "", 9)
+        return
+    from fontTools.ttLib import TTFont
+    from matplotlib import font_manager
+
+    required = {ord(char) for char in text if not char.isspace()}
+    paths = sorted(font_manager.findSystemFonts(), key=lambda p: ("noto" not in p.lower(), p))
+    for path in paths:
+        try:
+            with TTFont(path, fontNumber=0, lazy=True) as font:
+                if not required.issubset(font.getBestCmap() or {}):
+                    continue
+            pdf.add_font("MetadataUnicode", fname=path)
+            pdf.set_font("MetadataUnicode", "", 9)
+            return
+        except (OSError, ValueError, KeyError):
+            continue
+    raise ValueError("PDF metadata needs a Unicode font covering the supplied name. Install Noto Sans CJK or use Latin characters for Project/Engineer.")
+
+
+def build_control_pdf_report(request) -> bytes:
+    from backend.services.control.loop_gain import build_loop
+
+    spec, small, config, loop = build_loop(request.plant_context, request.controller, request.frequencies_hz)
+    pdf = _ReportPdf(format="A4")
+    pdf.report_title = "LLC Digital Control Report"
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.section(f"LLC Digital Control Report - V{__version__}")
+    _metadata_font(pdf, request.project + request.engineer)
+    pdf.multi_cell(0, 6, f"Project: {request.project or '-'} | Engineer: {request.engineer or '-'}", new_x="LMARGIN", new_y="NEXT")
+    pdf.section("1. Actual control-page operating point")
+    pdf.kv_table([
+        ("Input bus", f"{small.operating_point.vbus_v:g} V"),
+        ("Output target", f"{spec.vout_v:g} V"),
+        ("Rated output power", f"{spec.pout_w:g} W"),
+        ("Load fraction", f"{request.plant_context.load_fraction:g}"),
+        ("Turns ratio", f"{spec.turns_ratio:g}"),
+        ("Lr / Cr / Lm", f"{small.tank.lr_h*1e6:g} uH / {small.tank.cr_f*1e9:g} nF / {small.tank.lm_h*1e6:g} uH"),
+        ("Sample rate", f"{1 / small.sample_time_s:g} Hz"),
+    ])
+    pdf.section("2. Exact digital controller")
+    pdf.paragraph(loop.controller.difference_equation())
+    pdf.paragraph(f"Numerator b: {loop.controller.numerator.tolist()}\nDenominator a: {loop.controller.denominator.tolist()}\nConvention: y[k] = sum(b*x) - sum(a[1:]*y_history)")
+    pdf.section("3. Stability and model boundary")
+    margins = loop.margins_nominal_delay
+    pdf.kv_table([
+        ("Nominal model status", "PASS" if loop.likely_stable else "FAIL"),
+        ("Crossover", f"{_fmt(margins.critical_gain_crossover_hz)} Hz"),
+        ("Phase / gain margin", f"{_fmt(margins.phase_margin_deg)} deg / {_fmt(margins.gain_margin_db)} dB"),
+        ("Maximum sampled pole radius", f"{max(abs(loop.discrete_approximation.closed_loop_poles), default=0):.9g}"),
+    ])
+    pdf.paragraph("Status follows the kernel nominal margin and sampled-pole checks. The sampled plant is an approximation, not hardware validation. Min/max delay Bode margins alone are not separate sampled-pole qualifications.")
+    for warning in loop.warnings:
+        pdf.paragraph(warning)
+    plt = _matplotlib()
+    fig, axes = plt.subplots(2, 1, figsize=(7, 4.5), sharex=True)
+    response = loop.responses["open_loop_nominal"]
+    import numpy as np
+
+    axes[0].semilogx(loop.frequencies_hz, 20*np.log10(np.maximum(abs(response), 1e-300)))
+    axes[1].semilogx(loop.frequencies_hz, np.unwrap(np.angle(response))*180/np.pi)
+    axes[0].set_ylabel("Gain (dB)")
+    axes[1].set_ylabel("Phase (deg)")
+    axes[1].set_xlabel("Frequency (Hz)")
+    for axis in axes:
+        axis.grid(True, which="both", alpha=0.3)
+    fig.tight_layout()
+    image = io.BytesIO()
+    fig.savefig(image, format="png", dpi=140)
+    plt.close(fig)
+    image.seek(0)
+    if pdf.get_y() > 130:
+        pdf.add_page()
+    pdf.section("4. Open-loop Bode")
+    pdf.image(image, x=pdf.l_margin, w=pdf.epw)
+    return bytes(pdf.output())
+
+
 def build_pdf_report(spec_payload: dict[str, Any], project: str = "", engineer: str = "") -> bytes:
     result = analyze_llc(spec_payload)
     summary = result["summary"]
@@ -225,6 +307,7 @@ def build_pdf_report(spec_payload: dict[str, Any], project: str = "", engineer: 
     pdf.set_y(40)
     pdf.set_text_color(20, 26, 38)
     pdf.set_font("Helvetica", "", 9)
+    _metadata_font(pdf, project + engineer)
     pdf.cell(60, 6, f"Project: {project or '-'}")
     pdf.cell(60, 6, f"Engineer: {engineer or '-'}")
     pdf.cell(0, 6, f"Date: {date.today().isoformat()}", new_x="LMARGIN", new_y="NEXT")

@@ -14,11 +14,15 @@ _DESKTOP_MODULES = {
 @pytest.fixture(scope="session")
 def desktop_qapp():
     qt = pytest.importorskip("PySide6.QtWidgets")
+    from PySide6.QtCore import QThreadPool
     app = qt.QApplication.instance() or qt.QApplication([])
     yield app
+    assert QThreadPool.globalInstance().waitForDone(15000)
     app.closeAllWindows()
     app.processEvents()
-    app.shutdown()
+    # Other desktop suites share this QApplication; do not invalidate their
+    # live Python wrappers with PySide's explicit C++ singleton destruction.
+    app.quit()
 
 
 @pytest.fixture(autouse=True)

@@ -74,7 +74,7 @@ def controller_from_schema(controller: ControllerConfigSchema, ctx: PlantContext
     raise ValueError(f"unsupported controller kind: {controller.kind}")
 
 
-def _margins_dict(margins: Any) -> dict[str, Any]:
+def _margins_dict(margins: Any, *, stable: bool | None = None) -> dict[str, Any]:
     crossover = getattr(margins, "critical_gain_crossover_hz", None)
     pm = getattr(margins, "phase_margin_deg", None)
     gm = getattr(margins, "gain_margin_db", None)
@@ -84,7 +84,9 @@ def _margins_dict(margins: Any) -> dict[str, Any]:
         "phase_margin_deg": None if pm is None or not math.isfinite(pm) else float(pm),
         "gain_margin_db": None if gm is None or not math.isfinite(gm) else float(gm),
         "delay_margin_s": None if dm is None or not math.isfinite(dm) else float(dm),
-        "stable": bool(pm is not None and math.isfinite(pm) and pm > 0.0),
+        "stable": stable,
+        "stability_basis": "Kernel nominal margins and sampled closed-loop poles"
+        if stable is not None else "Delay-envelope frequency margins only; separate sampled poles not checked",
     }
 
 
@@ -99,10 +101,10 @@ def build_loop(ctx: PlantContext, controller: ControllerConfigSchema, frequencie
     return spec, small, config, loop
 
 
-def loop_gain_response(ctx: PlantContext, controller: ControllerConfigSchema) -> dict[str, Any]:
-    _, _, config, loop = build_loop(ctx, controller, None)
+def loop_gain_response(ctx: PlantContext, controller: ControllerConfigSchema, frequencies_hz=None) -> dict[str, Any]:
+    _, _, config, loop = build_loop(ctx, controller, frequencies_hz)
     return {
-        "margins": _margins_dict(loop.margins_nominal_delay),
+        "margins": _margins_dict(loop.margins_nominal_delay, stable=loop.likely_stable),
         "margins_min_delay": _margins_dict(loop.margins_minimum_delay),
         "margins_max_delay": _margins_dict(loop.margins_maximum_delay),
         "controller_kind": str(type(config).__name__),
@@ -110,8 +112,8 @@ def loop_gain_response(ctx: PlantContext, controller: ControllerConfigSchema) ->
     }
 
 
-def bode_response(ctx: PlantContext, controller: ControllerConfigSchema) -> dict[str, Any]:
-    _, _, _, loop = build_loop(ctx, controller, None)
+def bode_response(ctx: PlantContext, controller: ControllerConfigSchema, frequencies_hz=None) -> dict[str, Any]:
+    _, _, _, loop = build_loop(ctx, controller, frequencies_hz)
     frequencies = loop.frequencies_hz
     responses: dict[str, dict[str, list[float]]] = {}
     for name in _RESPONSE_NAMES:

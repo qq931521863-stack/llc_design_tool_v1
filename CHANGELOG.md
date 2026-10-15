@@ -2,6 +2,64 @@
 
 This file keeps the **maintained product history**. Detailed debugging notes, one-off migration instructions, CI result snapshots and binary release artifacts are intentionally kept out of the source documentation tree; Git history, Pull Requests, Actions and Releases provide that archive.
 
+## 9.8.0 — 2026-10-15
+
+### Added — DAB TPS and three-phase PFC engineering
+
+- adds automatic DAB operating-point calculation, periodic waveform replay,
+  sampled voltage-loop modeling, reference/load steps and PWM-verified
+  constrained TPS optimization;
+- adds three-phase two-level SVPWM/dq control and SRF/DDSRF/dual-SOGI PLL
+  comparisons with diagrams, lock transients, ABC outputs, CSV and C99;
+- extends two-level/Vienna analysis with device/inductor/capacitor RMS and peak
+  stress, configured loss terms, PF and low-frequency ITHD.
+
+### Added — Magnetics and multi-harmonic controllers
+
+- adds selectable quasi-PR compensation at harmonics 1/3/5/7/9/11 with
+  branch/combined Bode, float32 coefficients and C99 functions;
+- adds searchable core/bobbin presets and legacy reference records with source
+  tracking, measured magnetic-loss comparison and complex-impedance fitting;
+- includes an optional, independently tested 3C90 residual model with explicit
+  material/domain limits; unproven surrogate TPS search remains excluded.
+
+### Fixed — Result integrity, models and desktop navigation
+
+- invalidates failed/stale controller and loss-report exports and ignores old
+  PFC worker results after newer requests;
+- replaces sample-grid-sensitive DAB Cp differentiation with event-based RLC
+  propagation, and matches the linear plant to the time simulation's discrete
+  capacitor-energy update;
+- fixes LLC three-phase waveform signal selection and preserves visible page
+  parameters in Run Current;
+- opens the launcher maximized with all six entries visible and keeps author
+  contacts in the existing upper-right toolbar row without a separate banner;
+- repairs controller-integration test doubles for the current keyword API and
+  cleans up the waveform graphics scene before parent-widget destruction,
+  preventing the reproduced Qt shutdown crash;
+- uses theoretical DC gain for step metrics and reports insufficient response
+  windows instead of false settling times; C99 verification accepts renamed files;
+- preserves manual LLC tank/turns-ratio inputs, requested frequency grids and
+  denominator signs; rejects non-finite coefficients and reversed limits;
+- bases Web nominal stability on the kernel sampled-pole/margin checks and marks
+  unqualified delay envelopes UNKNOWN; keeps control reports tied to their own
+  operating point, supports Unicode metadata and counts every switch position;
+- restores the global PR export action after successful automatic recalculation
+  and omits unused zero-valued manual tank fields in automatic Web designs.
+
+### Release and engineering boundary
+
+- synchronizes package/runtime/version-test/README to 9.8.0; Windows x64 and
+  macOS arm64 packages remain subject to full CI and frozen-executable gates;
+- retains LLC/TTPL exact H(z), FRA tuning maps, C99 and MATLAB/Python research
+  export capabilities from earlier releases;
+- DAB Cp is a periodic power map, not a full Cp transient model. TPS ZVS remains
+  UNKNOWN. Missing device/core/ESR inputs produce partial loss/efficiency
+  results. Software and data-based checks do not establish hardware validation.
+
+See [desktop/model audit](docs/UI_ALGORITHM_AUDIT.md) and
+[engineering scope](docs/engineering-expansion.md) for evidence and limitations.
+
 ## 9.7.0 — 2026-10-05
 
 ### Added — Measured FRA PI experiment map

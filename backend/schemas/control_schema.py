@@ -7,13 +7,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ComplexPair = tuple[float, float]
 
 
 class ManualPlantParams(BaseModel):
     """User-supplied tank parameters for the control plant (FM, LLC)."""
+    model_config = ConfigDict(allow_inf_nan=False)
 
     lr_h: float = Field(gt=0.0, description="Resonant inductance / H")
     cr_f: float = Field(gt=0.0, description="Resonant capacitance / F")
@@ -29,6 +30,7 @@ class ManualPlantParams(BaseModel):
 
 class PlantContext(BaseModel):
     """How to build the LLC plant for a control request."""
+    model_config = ConfigDict(allow_inf_nan=False)
 
     spec: dict[str, Any] | None = Field(default=None, description="LLC design spec payload (same shape as /api/llc/analyze)")
     plant: ManualPlantParams | None = None
@@ -76,6 +78,7 @@ class PlantModelResponse(BaseModel):
 
 class ControllerConfigSchema(BaseModel):
     """Controller either given directly (kernel discrete forms) or auto-designed."""
+    model_config = ConfigDict(allow_inf_nan=False)
 
     kind: str = Field(description="pi | 2p2z | designed")
     type: str | None = Field(default=None, description="designed only: pi | type_ii | type_iii")
@@ -91,11 +94,27 @@ class ControllerConfigSchema(BaseModel):
     output_min: float = 0.0
     output_max: float = 1.0
 
+    @model_validator(mode="after")
+    def validate_limits(self):
+        if self.output_min >= self.output_max:
+            raise ValueError("output_min must be less than output_max")
+        return self
+
 
 class LoopGainRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     plant_context: PlantContext
     controller: ControllerConfigSchema
     frequencies_hz: list[float] | None = None
+
+    @model_validator(mode="after")
+    def validate_frequency_grid(self):
+        values = self.frequencies_hz
+        if values is not None and (len(values) < 2 or len(values) > 20000
+                or any(v <= 0 or v >= 0.5 / self.plant_context.sample_time_s for v in values)
+                or any(b <= a for a, b in zip(values, values[1:]))):
+            raise ValueError("frequencies_hz must contain 2..20000 strictly increasing positive values below Nyquist")
+        return self
 
 
 class StabilityMarginsSchema(BaseModel):
@@ -103,7 +122,13 @@ class StabilityMarginsSchema(BaseModel):
     phase_margin_deg: float | None = None
     gain_margin_db: float | None = None
     delay_margin_s: float | None = None
-    stable: bool = False
+    stable: bool | None = None
+    stability_basis: str = "Frequency margins only; sampled poles not checked"
+
+
+class ControlReportRequest(LoopGainRequest):
+    project: str = ""
+    engineer: str = ""
 
 
 class LoopGainResponse(BaseModel):

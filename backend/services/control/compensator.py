@@ -156,6 +156,8 @@ def design_compensator(request: CompensatorRequest) -> dict[str, Any]:
     config = _build_config(request.type, kc, fz1, fz2, fp, ts)
     loop = build_digital_loop_analysis(small, controller_config=config)
     achieved = _margins_dict(loop.margins_nominal_delay)
+    achieved["stable"] = loop.likely_stable
+    achieved["stability_basis"] = "Kernel nominal margins and sampled closed-loop poles"
 
     discrete = config.transfer_function()
     return {

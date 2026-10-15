@@ -67,3 +67,30 @@ def test_pfc_magnetic_fit_entry_and_export(app, tmp_path, monkeypatch):
     assert dialog.result is None and not dialog.export.isEnabled()
     dialog.close()
     view.close()
+
+
+def test_pr_toolbar_recovers_after_automatic_recalculation(app, tmp_path, monkeypatch):
+    from PySide6.QtCore import QEventLoop, QTimer
+    from PySide6.QtWidgets import QFileDialog
+    from power_control_tools.gui.main_window import ControlToolsMainWindow
+
+    window = ControlToolsMainWindow()
+    page = window.pr_view
+    window.workspace_pages.setCurrentWidget(page)
+    page.fs.setValue(100)
+    window.recalculate()
+    assert page.config is None
+    assert not window.export_action.isEnabled()
+    page.fs.setValue(40000)
+    loop = QEventLoop()
+    QTimer.singleShot(350, loop.quit)
+    loop.exec()
+    assert page.config is not None
+    assert page.export_button.isEnabled()
+    assert window.export_action.isEnabled()
+    target = tmp_path / 'recovered.h'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **k: (str(target), ''))
+    window.export_action.trigger()
+    assert 'MULTI_PR_pr_ctrl_ys_func' in target.read_text()
+    page.timer.stop()
+    window.close()

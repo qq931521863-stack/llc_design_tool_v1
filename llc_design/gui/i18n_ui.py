@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import weakref
 
+from shiboken6 import isValid
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
@@ -163,6 +165,8 @@ def _retranslate_tabs(window) -> None:
 
 def bind_window(window) -> None:
     """Scan a freshly built window and remember all static, translatable text."""
+    if not isValid(window):
+        return
     title = window.windowTitle()
     if title:
         window.setProperty(_SOURCE_PROPERTY, title)
@@ -181,6 +185,8 @@ def bind_window(window) -> None:
 
 
 def retranslate_window(window) -> None:
+    if not isValid(window):
+        return
     source = window.property(_SOURCE_PROPERTY)
     if source:
         window.setWindowTitle(t(str(source)))
@@ -209,7 +215,7 @@ def retranslate_all() -> None:
     alive: list[weakref.ref] = []
     for ref in _windows:
         window = ref()
-        if window is None:
+        if window is None or not isValid(window):
             continue
         alive.append(ref)
         retranslate_window(window)
@@ -254,7 +260,7 @@ def _refresh_language_buttons() -> None:
     alive: list[weakref.ref] = []
     for ref in _menu_buttons:
         button = ref()
-        if button is None:
+        if button is None or not isValid(button):
             continue
         alive.append(ref)
         button.setText(t(str(button.property("languageButtonSource") or "语言 / Language")))
@@ -277,7 +283,7 @@ def install_language_selector(window) -> QToolButton:
     from PySide6.QtCore import QTimer
 
     bind_window(window)
-    QTimer.singleShot(0, lambda: bind_window(window))
+    QTimer.singleShot(0, window, lambda: bind_window(window))
     return install_language_menu(window)
 
 

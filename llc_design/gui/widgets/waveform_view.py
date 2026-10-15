@@ -164,6 +164,9 @@ class WaveformView(QWidget):
         layout.addLayout(cursor_controls)
 
         self.graphics = pg.GraphicsLayoutWidget()
+        # A parent's C++ teardown does not call GraphicsView.close().  Run its
+        # Python scene/viewport cleanup while these children are still alive.
+        self.destroyed.connect(self.graphics.close)
         self.graphics.setBackground("w")
         graphics_scroll = QScrollArea()
         graphics_scroll.setWidgetResizable(True)

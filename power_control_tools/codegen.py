@@ -13,6 +13,7 @@ from .models import DigitalTransferFunction
 class C99Export:
     file_path: Path
     sections: int
+    prefix: str = ""
 
     # Backward-compatible aliases for callers from V8.3-alpha1. All three now
     # intentionally point to the single generated header-only file.
@@ -134,7 +135,7 @@ def export_c99_filter(digital: DigitalTransferFunction, destination: str | Path,
         path = dest / f'{P.lower()}.h'
     text = render_c99_single_file(digital, prefix=P)
     path.write_text(text, encoding='utf-8')
-    return C99Export(path, len(digital.sos))
+    return C99Export(path, len(digital.sos), P)
 
 
 def verify_c99_filter(digital: DigitalTransferFunction, exported: C99Export, *, samples: int = 160, compiler: str = "gcc") -> C99Verification:
@@ -143,7 +144,14 @@ def verify_c99_filter(digital: DigitalTransferFunction, exported: C99Export, *, 
     if cc is None:
         return C99Verification(False, False, float('nan'), float('nan'), compiler, 'C compiler not found')
     out = exported.file_path.parent
-    P = _ident(exported.file_path.stem)
+    P = exported.prefix
+    if not P:
+        guard = re.search(r'^#ifndef ([A-Za-z_][A-Za-z0-9_]*)_H$',
+                          exported.file_path.read_text(encoding='utf-8'), re.MULTILINE)
+        if guard is None:
+            return C99Verification(True, False, float('inf'), float('inf'), cc,
+                                   'Generated symbol prefix is missing')
+        P = guard.group(1)
     harness = out / '_verify_filter.c'
     exe = out / '_verify_filter.exe'
     code = (

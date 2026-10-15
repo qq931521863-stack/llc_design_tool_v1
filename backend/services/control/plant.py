@@ -8,6 +8,7 @@ math is re-implemented here.
 from __future__ import annotations
 
 import math
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
@@ -17,7 +18,7 @@ from llc_design.control.digital_loop import (
     FrequencyModulatorLUT,
     evaluate_fm_operating_point,
 )
-from llc_design.core.spec import LLCDesignSpec, PrimaryTopology
+from llc_design.core.spec import LLCDesignSpec, PrimaryTopology, TankParameterMode
 
 from backend.schemas.control_schema import ManualPlantParams, PlantContext
 
@@ -49,8 +50,19 @@ def _spec_from_manual(params: ManualPlantParams) -> LLCDesignSpec:
     zr = math.sqrt(lr / cr)
     q = zr / rac
 
-    secondary_turns = params.secondary_turns or 4
-    primary_turns = params.primary_turns or max(1, int(round(params.turns_ratio * secondary_turns)))
+    if params.secondary_turns is not None:
+        secondary_turns = params.secondary_turns
+        primary_turns = params.primary_turns or round(params.turns_ratio * secondary_turns)
+    elif params.primary_turns is not None:
+        primary_turns = params.primary_turns
+        secondary_turns = round(primary_turns / params.turns_ratio)
+    else:
+        ratio = Fraction(str(params.turns_ratio)).limit_denominator(500)
+        primary_turns, secondary_turns = ratio.numerator, ratio.denominator
+    if (not 1 <= primary_turns <= 500 or not 1 <= secondary_turns <= 500
+            or not math.isclose(primary_turns / secondary_turns, params.turns_ratio,
+                                rel_tol=1e-12, abs_tol=1e-12)):
+        raise ValueError("turns_ratio must match integer primary/secondary turns (1..500); no silent rounding")
 
     spec = LLCDesignSpec().clone(
         vbus_nom_v=params.vbus_v,
@@ -63,6 +75,10 @@ def _spec_from_manual(params: ManualPlantParams) -> LLCDesignSpec:
         resonant_frequency_hz=fr,
         ln_ratio=ln,
         q_full_load=q,
+        parameter_mode=TankParameterMode.USER_DEFINED,
+        user_lr_h=lr,
+        user_cr_f=cr,
+        user_lm_h=lm,
         primary_turns=primary_turns,
         secondary_turns=secondary_turns,
     )
