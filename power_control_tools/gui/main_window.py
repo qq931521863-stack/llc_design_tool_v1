@@ -91,7 +91,13 @@ class ControlToolsMainWindow(QMainWindow):
         self.param_widget = self._build_parameters(); self.tabs = self._build_tabs()
         scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setWidget(self.param_widget); scroll.setMinimumWidth(500); scroll.setMaximumWidth(650)
-        row.addWidget(scroll, 0); row.addWidget(self.tabs, 1); self.setCentralWidget(root)
+        row.addWidget(scroll, 0); row.addWidget(self.tabs, 1)
+        from power_control_tools.gui.quasi_pr_view import QuasiPRView
+        self.workspace_pages = QTabWidget()
+        self.workspace_pages.addTab(root, "Controller / Filter Designer")
+        self.pr_view = QuasiPRView()
+        self.workspace_pages.addTab(self.pr_view, "Controller — 多谐波准 PR")
+        self.setCentralWidget(self.workspace_pages)
         self._build_toolbar(); self.setStyleSheet(theme.workspace_stylesheet(theme.active_theme()))
         self.timer = QTimer(self); self.timer.setSingleShot(True); self.timer.setInterval(45)
         self.timer.timeout.connect(self.recalculate)
@@ -366,6 +372,9 @@ class ControlToolsMainWindow(QMainWindow):
         )
 
     def recalculate(self):
+        if hasattr(self, "workspace_pages") and self.workspace_pages.currentWidget() is self.pr_view:
+            self.pr_view.recalculate()
+            return
         try:
             self._update_dynamic_visibility(); a, d = self._design(); self._update_live_transfer(a, d)
             self._refresh_type_schematic()
@@ -413,6 +422,9 @@ class ControlToolsMainWindow(QMainWindow):
         self.c99.setPlainText(render_c99_single_file(d, prefix=self.export_prefix.text().strip() or "POWER_CTRL"))
 
     def export_c99(self):
+        if self.workspace_pages.currentWidget() is self.pr_view:
+            self.pr_view.export_c99()
+            return
         if self.current_digital is None: return
         prefix = self.export_prefix.text().strip() or "POWER_CTRL"
         default = str(Path.cwd() / f"{prefix.lower()}.h")

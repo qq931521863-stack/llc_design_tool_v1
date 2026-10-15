@@ -15,12 +15,15 @@ entire winding.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import cmath
 import math
 from typing import Iterable, Mapping, Sequence
 
 import numpy as np
-from scipy.special import iv
+from scipy.special import ive
+
+from .spectrum import rms_phasors
 
 
 MU0 = 4.0e-7 * math.pi
@@ -126,6 +129,7 @@ def skin_depth_m(frequency_hz: float, temperature_c: float = 20.0) -> float:
     return math.sqrt(rho / (math.pi * frequency_hz * MU0))
 
 
+@lru_cache(maxsize=4096)
 def round_wire_skin_factor(strand_diameter_m: float, frequency_hz: float,
                            temperature_c: float = 20.0) -> float:
     """Exact internal impedance of an isolated round conductor.
@@ -142,7 +146,7 @@ def round_wire_skin_factor(strand_diameter_m: float, frequency_hz: float,
     if abs(z) < 1e-4:
         # Series result: Rac/Rdc = 1 + (a/delta)^4 / 48 + ...
         return 1.0 + (radius / delta) ** 4 / 48.0
-    ratio = (z / 2.0) * iv(0, z) / iv(1, z)
+    ratio = (z / 2.0) * ive(0, z) / ive(1, z)
     return max(1.0, float(ratio.real))
 
 
@@ -152,18 +156,7 @@ def dc_resistance_ohm(wire: LitzWire, length_m: float,
 
 
 def _fft_rms_phasors(waveform: Sequence[float], max_harmonic: int) -> tuple[complex, ...]:
-    values = np.asarray(waveform, dtype=float)
-    if values.ndim != 1 or len(values) < 32:
-        raise ValueError("waveform must contain at least 32 samples")
-    coeffs = np.fft.rfft(values) / len(values)
-    phasors: list[complex] = [complex(values.mean(), 0.0)]
-    for harmonic in range(1, max_harmonic + 1):
-        if harmonic >= len(coeffs):
-            phasors.append(0.0j)
-        else:
-            # peak complex coefficient is 2*Ck; RMS phasor is peak/sqrt(2)
-            phasors.append(math.sqrt(2.0) * complex(coeffs[harmonic]))
-    return tuple(phasors)
+    return rms_phasors(waveform, max_harmonic)
 
 
 def harmonic_rms_spectrum(waveform: Sequence[float], max_harmonic: int = 15) -> tuple[float, ...]:
@@ -246,9 +239,14 @@ def layered_litz_stack_loss(
     transposition_quality = min(max(transposition_quality, 0.0), 1.0)
 
     spectra: list[_LayerSpectrum] = []
+    waveform_cache = {}  # Per evaluation: repeated physical layers share current.
     for layer in layers:
-        phasors = _fft_rms_phasors(layer.current_waveform_a, max_harmonic)
-        rms_total = float(np.sqrt(np.mean(np.asarray(layer.current_waveform_a) ** 2)))
+        key = id(layer.current_waveform_a)
+        if key not in waveform_cache:
+            waveform_cache[key] = (
+                _fft_rms_phasors(layer.current_waveform_a, max_harmonic),
+                float(np.sqrt(np.mean(np.asarray(layer.current_waveform_a) ** 2))))
+        phasors, rms_total = waveform_cache[key]
         rdc = dc_resistance_ohm(layer.wire, layer.conductor_length_m, temperature_c)
         spectra.append(_LayerSpectrum(layer, phasors, rms_total, rdc))
 

@@ -25,6 +25,11 @@ Completed LLC and TTPL PFC control analyses can be exported as standalone
 sample times, explicit frequency-data boundaries and numerical self-checks.
 See [Research model export](docs/RESEARCH_MODEL_EXPORT.md).
 
+Digital Control Tools also includes a **parallel multi-harmonic quasi-PR** page
+(1/3/5/7/9/11, branch/total Bode, float32 coefficients and C99 functions).
+PFC inductor results provide measured complex-impedance fitting and SPICE export.
+See [Multi-harmonic PR and magnetics](docs/MULTI_PR_AND_MAGNETICS.md).
+
 ![Power Design Toolkit workspace launcher](docs/assets/power-design-toolkit-overview.png)
 
 ---

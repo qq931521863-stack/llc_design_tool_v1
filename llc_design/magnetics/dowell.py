@@ -166,18 +166,8 @@ class DowellLayer:
 
 def _fft_rms_phasors_local(waveform: Sequence[float], max_harmonic: int) -> list[complex]:
     """RMS phasor spectrum (DC + harmonics 1..max), matching litz._fft_rms_phasors."""
-    import numpy as np
-    values = np.asarray(waveform, dtype=float)
-    if values.ndim != 1 or len(values) < 32:
-        raise ValueError("waveform must contain at least 32 samples")
-    coeffs = np.fft.rfft(values) / len(values)
-    phasors = [complex(float(values.mean()), 0.0)]
-    for h in range(1, max_harmonic + 1):
-        if h >= len(coeffs):
-            phasors.append(0.0j)
-        else:
-            phasors.append(math.sqrt(2.0) * complex(coeffs[h]))
-    return phasors
+    from .spectrum import rms_phasors
+    return list(rms_phasors(waveform, max_harmonic))
 
 
 def dowell_stack_loss(

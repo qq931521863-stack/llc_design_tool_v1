@@ -468,9 +468,17 @@ class PFCInductorDesignResultView(QWidget):
         self.summary.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.summary.setPlainText("尚未计算电感。左侧进入“电感设计”，然后点击“计算电感”。")
         root.addWidget(self.summary)
+        self.impedance_fit_button = QPushButton("实测复阻抗拟合 / SPICE 模型")
+        self.impedance_fit_button.clicked.connect(self.open_impedance_fit)
+        root.addWidget(self.impedance_fit_button)
         self.figure = Figure(figsize=(11, 7))
         self.canvas = FigureCanvasQTAgg(self.figure)
         root.addWidget(self.canvas, 1)
+
+    def open_impedance_fit(self):
+        from llc_design.gui.widgets.impedance_fit_view import ImpedanceFitDialog
+        self.impedance_dialog = ImpedanceFitDialog(self)
+        self.impedance_dialog.show()
 
     def set_result(self, result) -> None:
         if isinstance(result, FerriteInductorResult):
