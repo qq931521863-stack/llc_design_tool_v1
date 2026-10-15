@@ -51,6 +51,8 @@ This file keeps the **maintained product history**. Detailed debugging notes, on
 
 - pins Qt bindings to the last published 6.11.2 baseline after the unbounded
   6.12.0/Python 3.11 candidate aborted during post-test garbage collection;
+- joins update-check workers before parent/application teardown, suppresses
+  callbacks to closed owners and writes startup proof only after worker cleanup;
 - synchronizes package/runtime/version-test/README to 9.8.0; Windows x64 and
   macOS arm64 packages remain subject to full CI and frozen-executable gates;
 - retains LLC/TTPL exact H(z), FRA tuning maps, C99 and MATLAB/Python research

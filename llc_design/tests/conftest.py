@@ -20,6 +20,8 @@ def desktop_qapp():
     app = qt.QApplication.instance() or qt.QApplication([])
     yield app
     assert QThreadPool.globalInstance().waitForDone(15000)
+    from llc_design.gui.updater import wait_for_update_checks
+    wait_for_update_checks()
     app.closeAllWindows()
     # Release Python-backed scenes/viewports before Qt's interpreter-exit
     # cleanup can destroy their wrappers in a different order.

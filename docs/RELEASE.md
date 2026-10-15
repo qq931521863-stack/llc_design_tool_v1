@@ -66,7 +66,13 @@ codes to obtain a green build.
 
 `packaging/verify_bundle.py` starts the actual executable using `subprocess.run`, waits for completion with a timeout, and requires a zero exit code plus a freshly created JSON self-test report. It runs outside the repository working directory, so source-tree data cannot hide missing bundled resources.
 
-The report must confirm the expected runtime version, frozen-process status, platform, construction/show/hide of all four workspaces, Guided System Design construction, and the SHA-256 of the bundled brand taxonomy. The checksum must match the checked-out release source. The child only writes success evidence after completing the tests.
+The report must confirm the expected runtime version, frozen-process status, platform, construction/show/hide of all five workspaces, Guided System Design construction, and the SHA-256 of the bundled brand taxonomy. The checksum must match the checked-out release source. The child only writes success evidence after completing the tests.
+
+Startup may initiate a real asynchronous update check. The self-test joins those
+workers before writing success evidence; normal parent/application teardown uses
+the same cleanup. A completed GUI assertion followed by a live-QThread abort is
+not a passing startup check. Network checks keep their configured timeout and
+are not disabled to obtain build evidence.
 
 Do not rely on PowerShell's launch expression or a pre-existing `$LASTEXITCODE` to validate a windowed EXE. Do not replace missing data with defaults or disable the self-test to get a green build.
 

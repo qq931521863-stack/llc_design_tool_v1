@@ -17,6 +17,7 @@ def _run_packaged_self_test() -> int:
     from llc_design.gui import theme
     from llc_design.gui.launcher import WorkspaceApplicationController, WorkspaceSelectionDialog
     from llc_design.gui.system_modeling import SystemModelingDesignDialog
+    from llc_design.gui.updater import wait_for_update_checks
     from llc_design.validation.provenance import validate_bundled_data
     from power_control_tools import part_validation
 
@@ -34,6 +35,7 @@ def _run_packaged_self_test() -> int:
         for window in (controller.llc_window, controller.pfc_window,
                        controller.control_window, controller.fra_window, controller.dab_window):
             window.close()
+        wait_for_update_checks()
         return 2
 
     for workspace in ("llc", "pfc", "control", "fra", "dab"):
@@ -43,6 +45,9 @@ def _run_packaged_self_test() -> int:
                    controller.control_window, controller.fra_window, controller.dab_window):
         window.hide()
         window.close()
+    app.processEvents()
+
+    wait_for_update_checks()
     app.processEvents()
 
     # This path is inside the frozen bundle, not relative to the source/CWD.
