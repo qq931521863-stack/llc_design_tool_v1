@@ -31,8 +31,8 @@ def digital_controller_response(ctx: PlantContext, controller: ControllerConfigS
         "b0": numerator[0] if len(numerator) > 0 else 0.0,
         "b1": numerator[1] if len(numerator) > 1 else 0.0,
         "b2": numerator[2] if len(numerator) > 2 else 0.0,
-        "a1": -float(denominator[1]) if len(denominator) > 1 else 0.0,
-        "a2": -float(denominator[2]) if len(denominator) > 2 else 0.0,
+        "a1": float(denominator[1]) if len(denominator) > 1 else 0.0,
+        "a2": float(denominator[2]) if len(denominator) > 2 else 0.0,
     }
     # NOTE: the kernel stores the difference equation as y[k] = -a1*y[k-1] - a2*y[k-2] + ...
     # (its difference_equation() negates the denominator signs internally).

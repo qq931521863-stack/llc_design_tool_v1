@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -65,14 +68,11 @@ def test_older_or_unparseable_release_is_not_an_update(tag: str) -> None:
 def test_automatic_check_runs_once_per_session() -> None:
     updater._auto_check_started = False
     parent = QObject()
-    with patch.object(updater, "UpdateCheckThread") as thread_cls:
-        thread = thread_cls.return_value
-        thread.finished_sig.connect = lambda *_args: None
-        thread.error_sig.connect = lambda *_args: None
-        thread.finished.connect = lambda *_args: None
-        assert updater.check_for_updates(parent, notify_up_to_date=False) is thread
+    with patch.object(updater.UpdateCheckThread, "start") as start:
+        thread = updater.check_for_updates(parent, notify_up_to_date=False)
+        assert isinstance(thread, updater.UpdateCheckThread)
         assert updater.check_for_updates(parent, notify_up_to_date=False) is None
-        assert thread_cls.call_count == 1
+        start.assert_called_once()
 
 
 def test_automatic_network_failure_is_silent() -> None:
@@ -90,3 +90,45 @@ def test_dismissed_release_does_not_prompt_again_automatically() -> None:
         updater._on_check_result(QObject(), info, notify_up_to_date=False)
 
     show.assert_not_called()
+
+
+def test_parent_destruction_and_app_quit_finish_real_update_threads():
+    program = '''
+import threading, time
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QWidget
+from shiboken6 import delete, isValid
+from llc_design.gui import updater
+app = QApplication([])
+app.setQuitOnLastWindowClosed(False)
+started = threading.Event()
+info = updater.ReleaseInfo("v99.0.0", "Future", "", "", "", True)
+def slow_fetch():
+    started.set()
+    time.sleep(0.08)
+    return info
+updater.fetch_latest_release = slow_fetch
+parent = QWidget()
+worker = updater.check_for_updates(parent, True)
+assert started.wait(2)
+delete(parent)  # must join before Qt deletes its child QThread
+assert not isValid(worker) or not worker.isRunning()
+app.processEvents()
+started.clear()
+parent = QWidget()
+worker = updater.check_for_updates(parent, True)
+assert started.wait(2)
+QTimer.singleShot(0, app.quit)
+app.exec()  # aboutToQuit must drain workers and suppress late dialogs
+assert not isValid(worker) or not worker.isRunning()
+assert not updater._active_checks
+assert updater.check_for_updates(parent, True) is None
+delete(parent)
+app.processEvents()
+app.shutdown()
+'''
+    result = subprocess.run([sys.executable, '-c', program], text=True,
+                            capture_output=True, timeout=30,
+                            env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen'})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'Traceback' not in result.stderr, result.stderr

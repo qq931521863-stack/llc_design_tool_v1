@@ -217,7 +217,8 @@ def analyze_llc(payload: dict[str, Any]) -> dict[str, Any]:
     sr_device = db.get_sr(spec.sr_device)
     device_cost_usd = (
         primary_device.price_usd * spec.primary_parallel_devices
-        + sr_device.price_usd * spec.sr_parallel_devices_per_position
+        * (2 if spec.primary_topology == PrimaryTopology.HALF_BRIDGE else 4)
+        + 4 * sr_device.price_usd * spec.sr_parallel_devices_per_position
     )
     magnetic_cost_usd = sum(x for x in (transformer_cost_usd, inductor_cost_usd) if x is not None)
     bom_cost_usd = device_cost_usd + magnetic_cost_usd if magnetic_cost_usd else None

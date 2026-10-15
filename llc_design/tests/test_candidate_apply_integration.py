@@ -69,7 +69,7 @@ def _ttpl_window(monkeypatch):
     control = window.control_lab_view.control_lab
     # This test covers controller integration. Full waveform/render ownership
     # has independent V3 desktop coverage; keep this fixture inexpensive.
-    monkeypatch.setattr(control, "set_result", lambda result: setattr(control, "result", result))
+    monkeypatch.setattr(control, "set_result", lambda result, **kwargs: setattr(control, "result", result))
     view = install_ttpl_solution_map(window)
     config = control._config()
     config = replace(config, firmware=replace(config.firmware, current_loop_rate_hz=60_000.0, amc_rate_hz=30_000.0),
@@ -274,7 +274,7 @@ def test_late_previous_worker_cannot_replace_newer_controller_source(app, monkey
         from pfc_design.gui.solution_map_install import install_ttpl_solution_map
         window = PFCMainWindow()
         control = window.control_lab_view.control_lab
-        monkeypatch.setattr(control, "set_result", lambda result: setattr(control, "result", result))
+        monkeypatch.setattr(control, "set_result", lambda result, **kwargs: setattr(control, "result", result))
         def ready(result):
             window.result = result
             control.set_result(result)

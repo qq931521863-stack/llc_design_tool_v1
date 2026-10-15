@@ -138,6 +138,9 @@ class ControlToolsMainWindow(QMainWindow):
         self.timer = QTimer(self); self.timer.setSingleShot(True); self.timer.setInterval(45)
         self.timer.timeout.connect(self.recalculate)
         self.workspace_pages.currentChanged.connect(lambda *_: self.recalculate())
+        self.pr_view.export_state_changed.connect(
+            lambda enabled: self._set_export_enabled(False)
+            if self.workspace_pages.currentWidget() is self.pr_view else None)
         self._update_dynamic_visibility(); self.recalculate()
 
     def _build_toolbar(self):
@@ -472,7 +475,9 @@ class ControlToolsMainWindow(QMainWindow):
         ax.grid(True, which="both"); ax2.grid(True, which="both"); ax.legend(); ax2.legend(); self.bode_fig.tight_layout(); self.bode_canvas.draw_idle()
 
         self.step_fig.clear(); ax = self.step_fig.add_subplot(111); ax.plot(r.step_time_s*1e3, r.step); ax.set_xlabel("Time (ms)"); ax.set_ylabel("Amplitude"); ax.grid(True)
-        ax.set_title(f"Step: overshoot={r.step_overshoot_percent:.2f}%, settling={r.settling_time_s*1e3:.3f} ms"); self.step_fig.tight_layout(); self.step_canvas.draw_idle()
+        overshoot = "N/A" if r.step_overshoot_percent is None else f"{r.step_overshoot_percent:.2f}%"
+        settling = "N/A" if r.settling_time_s is None else f"{r.settling_time_s*1e3:.3f} ms"
+        ax.set_title(f"Step: overshoot={overshoot}, settling={settling}\n{r.step_status}"); self.step_fig.tight_layout(); self.step_canvas.draw_idle()
         self.imp_fig.clear(); ax = self.imp_fig.add_subplot(111); ax.stem(r.impulse_time_s*1e3, r.impulse); ax.set_xlabel("Time (ms)"); ax.set_ylabel("Amplitude"); ax.grid(True); self.imp_fig.tight_layout(); self.imp_canvas.draw_idle()
         self.pz_fig.clear(); ax = self.pz_fig.add_subplot(111); th = np.linspace(0, 2*np.pi, 400); ax.plot(np.cos(th), np.sin(th), '--')
         if len(r.zeros): ax.plot(r.zeros.real, r.zeros.imag, 'o', label="Zero")

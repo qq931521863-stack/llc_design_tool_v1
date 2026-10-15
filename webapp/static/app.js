@@ -24,10 +24,18 @@ const PLACEHOLDER = {
   dab: ['DAB 双向变换器', 'TPS/ZVS 双向 DAB 设计模块，Web 接入按路线图推进。'],
 };
 let defaults = null;
+let reportMode = 'llc';
 
 function route() {
   const hash = location.hash.replace(/^#\//, '') || 'llc';
   const key = hash.split('/')[0];
+  if (key === 'llc' || key === 'control') reportMode = key;
+  if (key === 'report') {
+    $('rXlsxBtn').disabled = reportMode === 'control';
+    $('rReportContext').textContent = reportMode === 'control'
+      ? '控制报告：使用控制页工况、采样率和控制器参数，不读取 LLC 设计页。'
+      : 'LLC 设计报告：使用 LLC 设计页参数。';
+  }
   document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
   let activeLink = null;
   document.querySelectorAll('#nav a').forEach((a) => {
@@ -72,17 +80,23 @@ function populate(d) {
 }
 function specFromForm() {
   const val = (id) => Number($(id).value);
-  return {
+  const spec = {
     vbus_nom_v: val('vbus_nom_v'), vbus_min_normal_v: val('vbus_min_normal_v'), vbus_max_v: val('vbus_max_v'),
     vbus_hold_end_v: val('vbus_hold_end_v'), vout_v: val('vout_v'), pout_w: val('pout_kw') * 1000,
     resonant_frequency_hz: val('fr_khz') * 1000, minimum_frequency_hz: val('fmin_khz') * 1000,
     maximum_frequency_hz: val('fmax_khz') * 1000, ln_ratio: val('ln_ratio'), q_full_load: val('q_full_load'),
-    parameter_mode: $('parameter_mode').value, user_lr_h: val('user_lr_uh') * 1e-6, user_cr_f: val('user_cr_nf') * 1e-9, user_lm_h: val('user_lm_uh') * 1e-6,
+    parameter_mode: $('parameter_mode').value,
     primary_turns: val('primary_turns'), secondary_turns: val('secondary_turns'),
     primary_topology: $('primary_topology').value, primary_device: $('primary_device').value,
     sr_device: $('sr_device').value, primary_deadtime_s: val('primary_deadtime_ns') * 1e-9,
     bus_capacitance_f: val('bus_cap_uf') * 1e-6,
   };
+  if (spec.parameter_mode === 'USER_DEFINED') {
+    spec.user_lr_h = val('user_lr_uh') * 1e-6;
+    spec.user_cr_f = val('user_cr_nf') * 1e-9;
+    spec.user_lm_h = val('user_lm_uh') * 1e-6;
+  }
+  return spec;
 }
 function renderSummary(r) {
   const s = r.summary;
@@ -280,7 +294,7 @@ function renderLoop(loop) {
   ];
   $('cLoopTable').innerHTML = rows.map(([label, m]) =>
     `<tr><td>${label}</td><td>${fmt(m.crossover_hz, 0)}</td><td>${fmt(m.phase_margin_deg, 1)}</td>` +
-    `<td>${fmt(m.gain_margin_db, 1)}</td><td>${m.stable ? 'PASS' : 'FAIL'}</td></tr>`).join('');
+    `<td>${fmt(m.gain_margin_db, 1)}</td><td title="${m.stability_basis || ''}">${m.stable === true ? 'PASS' : m.stable === false ? 'FAIL' : 'UNKNOWN'}</td></tr>`).join('');
 }
 function renderRail(design) {
   const m = design.achieved || {};
@@ -449,6 +463,15 @@ async function downloadReport(path, filename, body) {
 $('rPdfBtn').addEventListener('click', async () => {
   $('rErrorBox').classList.add('hidden');
   try {
+    if (reportMode === 'control') {
+      await downloadReport('/api/control/report', 'llc_control_report.pdf', {
+        plant_context: cPlantContext(),
+        controller: { kind: 'designed', type: $('c_type').value,
+          target_bandwidth_hz: Number($('c_bw').value), target_phase_margin_deg: Number($('c_pm').value) },
+        project: $('r_project').value, engineer: $('r_engineer').value,
+      });
+      return;
+    }
     await downloadReport('/api/llc/report', 'llc_design_report.pdf', {
       spec: currentSpec(), project: $('r_project').value, engineer: $('r_engineer').value,
     });
@@ -457,6 +480,7 @@ $('rPdfBtn').addEventListener('click', async () => {
 $('rXlsxBtn').addEventListener('click', async () => {
   $('rErrorBox').classList.add('hidden');
   try {
+    if (reportMode === 'control') throw new Error('控制报告暂支持 PDF；不会导出其他页面的 Excel。');
     await downloadReport('/api/llc/report.xlsx', 'llc_design_report.xlsx', { spec: currentSpec() });
   } catch (e) { $('rErrorBox').textContent = e.message; $('rErrorBox').classList.remove('hidden'); }
 });
@@ -466,8 +490,8 @@ $('runBtn').addEventListener('click', runAnalysis);
 $('resetBtn').addEventListener('click', () => { if (defaults) { populate(defaults); runAnalysis(); } });
 $('cRunBtn').addEventListener('click', cRun);
 $('cPlantBtn').addEventListener('click', cPlantOnly);
-$('railReport').addEventListener('click', () => { location.hash = '#/report'; });
-$('cReportBtn').addEventListener('click', () => { location.hash = '#/report'; });
+$('railReport').addEventListener('click', () => { reportMode = 'llc'; location.hash = '#/report'; });
+$('cReportBtn').addEventListener('click', () => { reportMode = 'control'; location.hash = '#/report'; });
 
 async function boot() {
   try {

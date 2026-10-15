@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -32,6 +32,8 @@ from power_control_tools.quasi_pr_codegen import coefficient_json, render_quasi_
 
 
 class QuasiPRView(QWidget):
+    export_state_changed = Signal(bool)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.config = None
@@ -129,6 +131,7 @@ class QuasiPRView(QWidget):
         self.config = None
         self.export_button.setEnabled(False)
         self.json_button.setEnabled(False)
+        self.export_state_changed.emit(False)
         try:
             cfg = QuasiPRConfig(
                 sample_rate_hz=self.fs.value(), grid_frequency_hz=self.grid.value(), kp=self.kp.value(),
@@ -167,6 +170,7 @@ class QuasiPRView(QWidget):
             self.config = cfg
             self.export_button.setEnabled(True)
             self.json_button.setEnabled(True)
+            self.export_state_changed.emit(True)
         except (ValueError, OverflowError) as exc:
             self.status.setText('参数无效：' + str(exc))
             self.coefficients.clear()

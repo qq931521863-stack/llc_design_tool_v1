@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.api.control import router as control_router
 from llc_design import __version__
+from llc_design.core.tank import GainNotReachableError
 
 from .reporting import build_excel_report, build_pdf_report
 from .schemas import LLCAnalyzeRequest, OptimizeRequest, ReportRequest
@@ -47,7 +48,7 @@ def llc_defaults() -> dict[str, Any]:
 def llc_analyze(request: LLCAnalyzeRequest) -> dict[str, Any]:
     try:
         return analyze_llc(request.spec.service_payload())
-    except (ValueError, KeyError) as exc:
+    except (ValueError, KeyError, GainNotReachableError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         # Keep stack traces server-side.  The browser receives a concise error.
@@ -71,11 +72,12 @@ def llc_optimize(request: OptimizeRequest) -> dict[str, Any]:
 
 @app.post("/api/llc/report")
 def llc_report(request: ReportRequest) -> Response:
-    pdf = build_pdf_report(
-        request.spec.service_payload(),
-        project=request.project,
-        engineer=request.engineer,
-    )
+    try:
+        pdf = build_pdf_report(
+            request.spec.service_payload(), project=request.project, engineer=request.engineer,
+        )
+    except (ValueError, KeyError, GainNotReachableError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(
         pdf,
         media_type="application/pdf",
@@ -85,7 +87,10 @@ def llc_report(request: ReportRequest) -> Response:
 
 @app.post("/api/llc/report.xlsx")
 def llc_report_xlsx(request: LLCAnalyzeRequest) -> Response:
-    xlsx = build_excel_report(request.spec.service_payload())
+    try:
+        xlsx = build_excel_report(request.spec.service_payload())
+    except (ValueError, KeyError, GainNotReachableError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(
         xlsx,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

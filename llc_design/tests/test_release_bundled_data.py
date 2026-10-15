@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
+import tomllib
 
 import pytest
 
@@ -15,6 +16,11 @@ import power_control_tools.part_validation as part_validation
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_gui_release_uses_qualified_qt_baseline():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "PySide6==6.11.2" in project["project"]["optional-dependencies"]["gui"]
 
 
 def test_desktop_packaging_collects_shared_engineering_data():

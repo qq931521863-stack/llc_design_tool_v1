@@ -82,12 +82,16 @@ class DigitalTransferFunction:
         den = np.asarray(self.denominator, dtype=float).reshape(-1)
         if len(num) == 0 or len(den) == 0:
             raise ValueError("digital transfer-function polynomials cannot be empty")
-        if self.sample_time_s <= 0.0:
+        if not math.isfinite(self.sample_time_s) or self.sample_time_s <= 0.0:
             raise ValueError("sample time must be positive")
+        if not np.all(np.isfinite(num)) or not np.all(np.isfinite(den)):
+            raise ValueError("digital transfer-function coefficients must be finite")
         if abs(den[0]) < 1e-18:
             raise ValueError("digital transfer-function denominator leading coefficient is zero")
         num = num / den[0]
         den = den / den[0]
+        if not np.all(np.isfinite(num)) or not np.all(np.isfinite(den)):
+            raise ValueError("normalized digital coefficients must be finite")
         object.__setattr__(self, "numerator", num)
         object.__setattr__(self, "denominator", den)
 
@@ -988,8 +992,8 @@ def build_digital_loop_analysis(
         frequencies = np.geomspace(lower, upper, 2400)
     else:
         frequencies = np.asarray(frequencies_hz, dtype=float)
-    if np.any(frequencies <= 0.0):
-        raise ValueError("Bode frequencies must be positive")
+    if frequencies.ndim != 1 or not frequencies.size or not np.all(np.isfinite(frequencies)) or np.any(frequencies <= 0.0):
+        raise ValueError("Bode frequencies must be finite and positive")
 
     plant = small_signal.continuous_transfer.frequency_response(frequencies)
     controller_response = controller.frequency_response(frequencies)
@@ -1123,6 +1127,11 @@ def export_controller_c99(
     output_max: float = 1.0,
 ) -> Path:
     """Export a generic Direct-Form-I controller matching the z^-1 coefficients."""
+    values = np.r_[controller.numerator, controller.denominator, output_min, output_max]
+    if not np.all(np.isfinite(values)) or np.any(np.abs(values) > np.finfo(np.float32).max):
+        raise ValueError("C99 coefficients and limits must be finite and fit float32")
+    if output_min >= output_max:
+        raise ValueError("output_min must be less than output_max")
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     num = controller.numerator

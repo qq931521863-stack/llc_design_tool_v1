@@ -11,7 +11,8 @@ import urllib.request
 from dataclasses import dataclass
 from functools import total_ordering
 
-from PySide6.QtCore import QObject, QSettings, QThread, QUrl, Signal
+from PySide6.QtCore import QCoreApplication, QObject, QSettings, QThread, QUrl, Signal
+from shiboken6 import isValid
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QMessageBox, QToolButton
 
@@ -35,6 +36,8 @@ _VERSION_RE = re.compile(
 )
 
 _auto_check_started = False
+_updates_shutting_down = False
+_active_checks: set[UpdateCheckThread] = set()
 _DISMISSED_RELEASE_KEY = "updates/dismissed_release"
 
 
@@ -143,9 +146,28 @@ class UpdateCheckThread(QThread):
         try:
             info = fetch_latest_release()
         except Exception as exc:  # noqa: BLE001 - 网络错误统一上报
-            self.error_sig.emit(str(exc))
+            if not self.isInterruptionRequested():
+                self.error_sig.emit(str(exc))
             return
-        self.finished_sig.emit(info)
+        if not self.isInterruptionRequested():
+            self.finished_sig.emit(info)
+
+
+def _finish_update_thread(thread: UpdateCheckThread) -> None:
+    if isValid(thread) and thread.isRunning():
+        # urllib has a network timeout. Never terminate a thread that is still
+        # inside Python/network code or delete its QThread while it is running.
+        thread.requestInterruption()
+        thread.wait()
+    _active_checks.discard(thread)
+
+
+def wait_for_update_checks() -> None:
+    """Finish network workers before application/frozen-self-test teardown."""
+    global _updates_shutting_down
+    _updates_shutting_down = True
+    for thread in tuple(_active_checks):
+        _finish_update_thread(thread)
 
 
 def check_for_updates(parent: QObject, notify_up_to_date: bool) -> UpdateCheckThread | None:
@@ -155,6 +177,8 @@ def check_for_updates(parent: QObject, notify_up_to_date: bool) -> UpdateCheckTh
     ``False`` 时自动检查(仅在新版本时弹窗,失败静默)。
     """
     global _auto_check_started
+    if _updates_shutting_down:
+        return None
     if not notify_up_to_date:
         if _auto_check_started:
             return None
@@ -166,11 +190,18 @@ def check_for_updates(parent: QObject, notify_up_to_date: bool) -> UpdateCheckTh
         parent.update_check_threads = holder  # type: ignore[attr-defined]
 
     thread = UpdateCheckThread(parent)
+    _active_checks.add(thread)
+    parent.destroyed.connect(lambda *_args: _finish_update_thread(thread))
+    app = QCoreApplication.instance()
+    if app is not None and not getattr(app, "_pdt_update_cleanup_installed", False):
+        app.aboutToQuit.connect(wait_for_update_checks)
+        app._pdt_update_cleanup_installed = True
     thread.finished_sig.connect(
         lambda info: _on_check_result(parent, info, notify_up_to_date))
     thread.error_sig.connect(
         lambda message: _on_check_error(parent, message, notify_up_to_date))
     thread.finished.connect(thread.deleteLater)
+    thread.finished.connect(lambda: _active_checks.discard(thread))
     holder.append(thread)
     thread.start()
     return thread
@@ -199,6 +230,8 @@ def add_toolbar_right_side(toolbar, main_window) -> None:
 
 
 def _on_check_result(parent: QObject, info: ReleaseInfo, notify_up_to_date: bool) -> None:
+    if _updates_shutting_down or not isValid(parent):
+        return
     if info.is_newer:
         if not notify_up_to_date and _dismissed_release() == info.tag_name:
             return
@@ -228,6 +261,8 @@ def _on_check_result(parent: QObject, info: ReleaseInfo, notify_up_to_date: bool
 
 
 def _on_check_error(parent: QObject, message: str, notify_up_to_date: bool) -> None:
+    if _updates_shutting_down or not isValid(parent):
+        return
     if notify_up_to_date:
         QMessageBox.warning(
             parent, t("检查更新失败"),
@@ -246,4 +281,5 @@ __all__ = [
     "check_for_updates",
     "fetch_latest_release",
     "parse_version",
+    "wait_for_update_checks",
 ]
