@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 import pyqtgraph as pg
+from shiboken6 import isValid
 
 from ...dynamics.waveforms import WaveformBundle
 
@@ -166,7 +167,9 @@ class WaveformView(QWidget):
         self.graphics = pg.GraphicsLayoutWidget()
         # A parent's C++ teardown does not call GraphicsView.close().  Run its
         # Python scene/viewport cleanup while these children are still alive.
-        self.destroyed.connect(self.graphics.close)
+        graphics = self.graphics
+        self.destroyed.connect(
+            lambda: graphics.close() if isValid(graphics) and not graphics.closed else None)
         self.graphics.setBackground("w")
         graphics_scroll = QScrollArea()
         graphics_scroll.setWidgetResizable(True)

@@ -14,11 +14,25 @@ _DESKTOP_MODULES = {
 @pytest.fixture(scope="session")
 def desktop_qapp():
     qt = pytest.importorskip("PySide6.QtWidgets")
-    from PySide6.QtCore import QThreadPool
+    from PySide6.QtCore import QCoreApplication, QEvent, QThreadPool
+    from pyqtgraph import GraphicsLayoutWidget
+    from shiboken6 import isValid
     app = qt.QApplication.instance() or qt.QApplication([])
     yield app
     assert QThreadPool.globalInstance().waitForDone(15000)
     app.closeAllWindows()
+    # Release Python-backed scenes/viewports before Qt's interpreter-exit
+    # cleanup can destroy their wrappers in a different order.
+    windows = app.topLevelWidgets()
+    for window in windows:
+        if isValid(window):
+            for graphics in window.findChildren(GraphicsLayoutWidget):
+                if isValid(graphics) and not graphics.closed:
+                    graphics.close()
+    for window in windows:
+        if isValid(window):
+            window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()
     # Other desktop suites share this QApplication; do not invalidate their
     # live Python wrappers with PySide's explicit C++ singleton destruction.
