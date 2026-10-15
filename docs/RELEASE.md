@@ -49,6 +49,21 @@ Reviewed PR with synchronized version metadata
 
 ## Frozen executable verification
 
+The GUI extra pins PySide6 to **6.11.2**, including its version-matched Shiboken,
+Essentials and Addons dependencies. This is the last successfully published Qt
+baseline (v9.7.0). The unbounded dependency selected 6.12.0 in the failing 9.8
+candidate: Python 3.11 completed every assertion, then aborted during garbage
+collection with `none_dealloc`. Python 3.12 passing alone does not qualify that
+combination. An isolated Python 3.11 probe retaining 500 missing-property results
+from `QObject.property()` observed no corresponding increase in the `None`
+reference count under 6.12.0; releasing the results and interpreter teardown
+aborted. Under 6.11.2 the retained references were counted and the probe exited
+normally. The native ownership regression test deliberately uses a child process
+and retains the Python 3.11 CI lane, since Python 3.12's immortal `None` can hide
+this failure. Upgrade the pin only after complete native lifecycle and frozen
+executable checks on the supported platforms; do not disable GC or ignore exit
+codes to obtain a green build.
+
 `packaging/verify_bundle.py` starts the actual executable using `subprocess.run`, waits for completion with a timeout, and requires a zero exit code plus a freshly created JSON self-test report. It runs outside the repository working directory, so source-tree data cannot hide missing bundled resources.
 
 The report must confirm the expected runtime version, frozen-process status, platform, construction/show/hide of all four workspaces, Guided System Design construction, and the SHA-256 of the bundled brand taxonomy. The checksum must match the checked-out release source. The child only writes success evidence after completing the tests.
