@@ -13,28 +13,28 @@ LLC · DAB TPS · Totem-Pole PFC · Vienna / Two-Level PFC · SRF / DDSRF / DSOG
 
 Power Design Toolkit is an engineering-oriented power-electronics design and digital-control platform. It connects **power-stage design, component/loss screening, multi-fidelity models, measured FRA data, exact discrete controller H(z), stability analysis, C99 code generation, firmware-correlated switching co-simulation and Agent/API access** in one codebase.
 
-## 当前功能总览 / Current capabilities
+## Current capabilities
 
-一个工具箱连接功率级设计、磁性器件、损耗、电流电压波形、控制环设计、实测 FRA、数字系数与 C99 导出。
+One toolkit connects power-stage design, magnetics, loss estimation, voltage/current waveforms, control-loop design, measured FRA, digital coefficients and C99 export.
 
-| 模块 | 已实现功能 | 使用入口 / 说明 |
+| Module | Implemented capabilities | Workspace / documentation |
 |---|---|---|
-| **LLC 谐振变换器** | FHA、多谐波 HB、开关时域、增益/ZVS、原边/SR 器件库、磁设计、数字电压环、交错分析、可选 ngspice 对比 | LLC Design；[模型层级](docs/LLC_MODELING.md) |
-| **DAB TPS** | 多工况 TPS、L / L+Cp 周期解、功率/回流/电容应力、PWM计数、选择工况自动计算、10 fps周期回放 | DAB TPS；[约定](docs/DAB_TPS_AND_THREE_PHASE_DQ.md) |
-| **DAB 数字闭环与优化** | PI→Pcmd→TPS→Vout 小信号模型、离散Bode/极点、参考与负载阶跃、控制器导入/C99、约束优化和量化复核 | DAB → 电压环 / TPS 优化；[工程说明](docs/engineering-expansion.md#dab-电压环与约束优化) |
-| **单相 Totem-Pole PFC** | L/C选型、器件/电容/热分析、PF/THD、过零/最小脉宽、采样与双环、Exact H(z)、C99、shared-ngspice闭环 | PFC → TTPL Engineering；[工作流](docs/PFC_ENGINEERING_WORKSPACE.md) |
-| **三相两电平 PFC** | 六开关SVPWM、dq解耦双环、三种PLL可选、频率/相位/负载扰动、多速率稳定性、器件/电感/电容应力与损耗 | PFC → Three-Phase Two-Level dq / PLL |
-| **Vienna PFC** | ABC电流环、母线与中点平衡、三电平调制、扇区/波形、RMS/PK、PF/ITHD、器件/磁芯/电容损耗；两种中点开关结构 | PFC → Vienna；[新增分析范围](docs/engineering-expansion.md#电流损耗与效率的范围) |
-| **三种 PLL 对比** | SRF、DDSRF、双SOGI正序PLL；相同输入下比较锁相、相位误差、频率纹波、ABC及正序输出；框图/CSV/C99 | 两电平 / Vienna → PLL 对比；DDSOGI在此指DSOGI |
-| **数字控制与多谐波 PR** | PI/PIF/PID/Type-II/III等；可选1/3/5/7/9/11次准PR、支路/合成Bode、float32系数及每个C函数 | Control Tools；[PR实现与系数](docs/MULTI_PR_AND_MAGNETICS.md) |
-| **磁芯/材料数据库** | 46个完整磁芯/骨架预设、137条历史参考记录、搜索/筛选/自动带参、来源与异常标记、实测CSV校核 | LLC → 变压器设计 → 磁芯参数库 |
-| **磁模型与复阻抗** | 波形iGSE、Litz/Dowell、复阻抗拟合/SPICE；通过独立测试门槛的可选3C90残差模型 | [磁计算、数据与AI验证](docs/engineering-expansion.md#ai-的独立验证与接入边界) |
-| **FRA / 实测调参** | Bode100/SIMPLIS/CSV、原控制器去嵌、Fc/PM/GM/Ms/Mt、自动设计、实测PI调参Map、MATLAB/Python研究导出 | FRA Loop Designer；[实测调参Map](docs/FRA_TUNING_MAP.md) |
-| **Web / Agent** | 共用确定性内核的FastAPI/Web与MCP接口 | [Web](docs/WEB_DEPLOYMENT.md) / [MCP](docs/AGENT_MCP.md)；新增桌面功能不自动等于新增API |
+| **LLC resonant converter** | FHA, multi-harmonic HB, switched time-domain analysis, gain/ZVS maps, primary/SR device libraries, magnetics, digital voltage control, interleaving and optional ngspice correlation | LLC Design; [model hierarchy](docs/LLC_MODELING.md) |
+| **DAB TPS** | Operating-point sweeps, periodic L / L+Cp solutions, power/backflow/capacitor stress, PWM counts, automatic calculation on point selection and 10 fps periodic replay | DAB TPS; [model conventions](docs/DAB_TPS_AND_THREE_PHASE_DQ.md) |
+| **DAB digital control and optimization** | PI→Pcmd→TPS→Vout small-signal model, discrete Bode/poles, reference/load steps, controller import/C99, constrained optimization and quantized-candidate checks | DAB → Voltage Loop / TPS Optimization; [engineering notes (Chinese)](docs/engineering-expansion.md#dab-电压环与约束优化) |
+| **Single-phase Totem-Pole PFC** | L/C sizing, device/capacitor/thermal analysis, PF/THD, zero-crossing/minimum-pulse behavior, sensing and dual-loop control, exact H(z), C99 and shared-ngspice closed loop | PFC → TTPL Engineering; [workflow](docs/PFC_ENGINEERING_WORKSPACE.md) |
+| **Three-phase two-level PFC** | Six-switch SVPWM, decoupled dq dual-loop control, three selectable PLLs, frequency/phase/load disturbances, multi-rate stability, and device/inductor/capacitor stress and loss | PFC → Three-Phase Two-Level dq / PLL |
+| **Vienna PFC** | ABC current control, DC-bus/midpoint balance, three-level modulation, sectors/waveforms, RMS/peak currents, PF/ITHD, device/core/capacitor losses and two center-switch implementations | PFC → Vienna; [analysis scope (Chinese)](docs/engineering-expansion.md#电流损耗与效率的范围) |
+| **Three-PLL comparison** | SRF, DDSRF and dual-SOGI positive-sequence PLLs under identical inputs; locking, phase error, frequency ripple, ABC/positive-sequence outputs, diagrams, CSV and C99 | Two-Level / Vienna → PLL Comparison; DDSOGI denotes DSOGI here |
+| **Digital control and multi-harmonic PR** | PI/PIF/PID/Type-II/III and more; selectable quasi-PR harmonics 1/3/5/7/9/11, branch/combined Bode, float32 coefficients and C function export | Control Tools; [PR equations and coefficients (Chinese)](docs/MULTI_PR_AND_MAGNETICS.md) |
+| **Core/material database** | 46 complete core/bobbin presets, 137 legacy reference records, search/filter/parameter loading, source/anomaly tracking and measured CSV comparisons | LLC → Transformer Design → Core Catalog |
+| **Magnetic models and complex impedance** | Waveform-based iGSE, Litz/Dowell loss, complex-impedance fitting/SPICE, and an optional 3C90 residual model that passed an independent-test gate | [Magnetic modeling, data and AI validation (Chinese)](docs/engineering-expansion.md#ai-的独立验证与接入边界) |
+| **FRA and measured tuning** | Bode100/SIMPLIS/CSV import, existing-controller de-embedding, Fc/PM/GM/Ms/Mt, automatic design, measured PI tuning map and MATLAB/Python research exports | FRA Loop Designer; [measured tuning map](docs/FRA_TUNING_MAP.md) |
+| **Web / Agent** | FastAPI/Web and MCP interfaces backed by shared deterministic kernels | [Web](docs/WEB_DEPLOYMENT.md) / [MCP](docs/AGENT_MCP.md); desktop additions do not automatically add API coverage |
 
-**源码与发行包分别说明：** 本页描述 `main` 源码；最新二进制包以对应 Release 的版本说明为准。本轮新增功能为软件模型与数据验证，未宣称实机闭环或高压验证。DAB和三相新增页面当前以桌面/Python为主；C99为控制/PLL参考函数，不含板级PWM/ADC驱动。
+**Source and binary releases:** This page describes the `main` source tree. Check the corresponding Release notes for features included in a binary package. The latest additions provide software models and data-based validation; they do not establish hardware closed-loop or high-voltage validation. New DAB and three-phase features primarily target desktop/Python use. C99 exports provide controller/PLL reference functions without board-specific PWM/ADC drivers.
 
-**Latest engineering additions:** [中文工程说明、模型限制和复现步骤](docs/engineering-expansion.md) · [控制验证](docs/benchmarks/control_validation.json) · [磁模型独立测试](docs/benchmarks/magnetic_ai.json) · [优化对比](docs/benchmarks/dab_optimization.json) · [回归范围](docs/benchmarks/regression.md)
+**Latest engineering additions:** [Detailed notes, limitations and reproduction (Chinese)](docs/engineering-expansion.md) · [Control validation](docs/benchmarks/control_validation.json) · [Independent magnetic-model test](docs/benchmarks/magnetic_ai.json) · [Optimization comparison](docs/benchmarks/dab_optimization.json) · [Regression scope (Chinese)](docs/benchmarks/regression.md)
 
 The project is built around four rules:
 
@@ -130,12 +130,12 @@ and [the current expansion](docs/engineering-expansion.md).
 
 ### DAB: operating point → controller → Vout
 
-Selecting **查看工况 / Operating point** automatically starts calculation when
+Selecting **Operating point** automatically starts calculation when
 needed. Electrical waveforms can replay at a 100 ms frame interval, with pause
 and phase reset. This replays one computed steady-state period; it does not
 manufacture a transient simulation.
 
-The **电压环 / TPS 优化** tab reuses LLC digital-controller coefficients and adds:
+The **Voltage Loop / TPS Optimization** tab reuses LLC digital-controller coefficients and adds:
 
 - PI or imported C(z) → power command → TPS → capacitor/load → Vout;
 - local power-map linearization, ZOH/sample delay, Bode and discrete poles;
@@ -153,7 +153,7 @@ The FRA toolbar also opens a [measured PI tuning map](docs/FRA_TUNING_MAP.md): b
 
 ### Smart Control / Guided System Design (V9.4)
 
-From the launcher, **系统建模与设计 / Guided System Design** builds a canonical closed-loop definition for LLC FM voltage-loop or single-phase Totem-Pole PFC (current + bus voltage), then hands it into the existing design/control engines. An interactive **Fc–PM Solution Map** synthesizes candidate loops and installs only constraint-feasible points into the LLC/TTPL workspaces.
+From the launcher, **Guided System Design** builds a canonical closed-loop definition for LLC FM voltage-loop or single-phase Totem-Pole PFC (current + bus voltage), then hands it into the existing design/control engines. An interactive **Fc–PM Solution Map** synthesizes candidate loops and installs only constraint-feasible points into the LLC/TTPL workspaces.
 
 V9.4 integrates the eight-step workflow: **Topology → Power Stage → Sensing → ADC → Modulator → Timing → Controller → Review**, with live summaries and guided-definition re-entry. The new LLC envelope/ZVS/FHA–TD/loss-provenance/thermal/optimizer foundations are described in [LLC Physics Model V2](docs/LLC_PHYSICS_MODEL_V2.md).
 
@@ -218,7 +218,7 @@ retain their source pages, rows and warnings.
 
 The catalog also opens measured sinusoidal core-loss CSV comparison and an
 optional bounded 3C90 waveform predictor. It never substitutes that predictor
-for PC40/PC44 or another material. See [magnetic validation](docs/engineering-expansion.md#数据库与磁计算基准).
+for PC40/PC44 or another material. See [magnetic validation (Chinese)](docs/engineering-expansion.md#数据库与磁计算基准).
 
 ### ngspice boundary
 
@@ -507,7 +507,7 @@ python -m pip install -e ".[gui]"
 power-design-gui
 ```
 
-Source-tree launchers (`LLC工具.command` / `LLC工具.bat`, or the repo-root `.command` / `.bat` scripts) start the same desktop GUI when present.
+The repository also includes Windows `.bat` and macOS `.command` launchers for the same desktop application.
 
 Equivalent source-tree entry:
 
@@ -551,7 +551,7 @@ OPENBLAS_NUM_THREADS=1 python tools/benchmark_dab_optimization.py
 
 Re-training the optional 3C90 model requires the separately sourced reference
 data; original user PDFs/XLS and third-party datasets are not bundled. Ordinary
-application inference does not require scikit-learn. See [sources and reproduction](docs/engineering-expansion.md#复现和参考来源).
+application inference does not require scikit-learn. See [sources and reproduction (Chinese)](docs/engineering-expansion.md#复现和参考来源).
 
 ### Installed CLI entry points
 
@@ -692,10 +692,10 @@ The application also contains an offline **Help / F1** system in the workspaces,
 
 Desktop UI/help currently supports:
 
-- 简体中文
 - English
-- 日本語
-- 한국어
+- Simplified Chinese
+- Japanese
+- Korean
 
 Engineering identifiers such as `Bode`, `H(z)`, `C99`, `Kp`, `PM`, `GM`, `FRA` and component/model names intentionally remain stable across languages.
 
@@ -703,13 +703,14 @@ Engineering identifiers such as `Bode`, `H(z)`, `C99`, `Kp`, `PM`, `GM`, `FRA` a
 
 ## 15. Contact
 
-**Yang Shuai / 杨帅**  
+**Yang Shuai**
+
 Power Electronics · Digital Power · Embedded Control · Control Algorithms
 
 - GitHub: `yangshuai2022-star`
 - Email: `maileyang@qq.com`
 - WeChat: `maileyang`
-- Technical blog / WeChat official account: **开关电源仿真与实用设计**
+- Technical blog / WeChat official account: **Switching Power Supply Simulation & Practical Design** (Chinese account name: 开关电源仿真与实用设计)
 
 ![WeChat official account QR](llc_design/data/wechat_official_account.jpg)
 
