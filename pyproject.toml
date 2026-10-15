@@ -38,7 +38,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["pfc_design*", "llc_design*", "power_codegen*", "power_control_tools*", "power_sim*", "power_agent*", "webapp*", "backend*"]
+include = ["dab_design*", "pfc_design*", "llc_design*", "power_codegen*", "power_control_tools*", "power_sim*", "power_agent*", "webapp*", "backend*"]
 exclude = ["*.output*", "*.__pycache__*"]
 
 [tool.setuptools.package-data]
@@ -47,5 +47,5 @@ exclude = ["*.output*", "*.__pycache__*"]
 "webapp" = ["static/*"]
 
 [tool.pytest.ini_options]
-testpaths = ["pfc_design/tests", "llc_design/tests", "power_codegen/tests", "power_control_tools/tests", "power_sim/tests", "power_agent/tests", "webapp/tests", "backend/tests"]
+testpaths = ["dab_design/tests", "pfc_design/tests", "llc_design/tests", "power_codegen/tests", "power_control_tools/tests", "power_sim/tests", "power_agent/tests", "webapp/tests", "backend/tests"]
 addopts = "-q"

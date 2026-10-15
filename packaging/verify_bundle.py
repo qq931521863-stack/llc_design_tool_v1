@@ -41,7 +41,7 @@ def verify_bundle(
         required = {
             "success": True, "frozen": True, "version": expected_version,
             "platform": sys.platform,
-            "workspaces": ["llc", "pfc", "control", "fra"],
+            "workspaces": ["llc", "pfc", "control", "fra", "dab"],
             "guided_design": True,
             "brand_taxonomy_sha256": expected_taxonomy_sha256,
         }

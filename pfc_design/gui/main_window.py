@@ -49,6 +49,7 @@ from .exact_hz_install import install_ttpl_exact_hz_stage
 from .ngspice_closed_loop_install import install_ttpl_ngspice_closed_loop_stage
 from .ttpl_engineering_view import TTPLWorkbenchView
 from .vienna_control_view import ViennaControlLabView
+from .three_phase_view import ThreePhaseDQView
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,7 @@ class PFCMainWindow(QMainWindow):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("电源设计工具箱 — PFC Engineering: TTPL / Vienna")
+        self.setWindowTitle("电源设计工具箱 — PFC Engineering: TTPL / Vienna / Two-Level dq")
         self.resize(1920, 1080)
         self.thread_pool = QThreadPool.globalInstance()
         self._active_workers = []
@@ -93,6 +94,8 @@ class PFCMainWindow(QMainWindow):
         self.vienna_view.analysis_requested.connect(self.run_vienna_analysis)
         self.subtabs.addTab(self.control_lab_view, "Single-Phase TTPL Engineering")
         self.subtabs.addTab(self.vienna_view, "Three-Phase Vienna PFC")
+        self.three_phase_view = ThreePhaseDQView()
+        self.subtabs.addTab(self.three_phase_view, "Three-Phase Two-Level dq / PLL")
         self.setCentralWidget(self.subtabs)
 
         self._build_toolbar()
@@ -120,6 +123,9 @@ class PFCMainWindow(QMainWindow):
         action = QAction("Vienna", self)
         action.triggered.connect(lambda: self.subtabs.setCurrentIndex(1))
         toolbar.addAction(action)
+        action = QAction("Two-Level dq / PLL", self)
+        action.triggered.connect(lambda: self.subtabs.setCurrentWidget(self.three_phase_view))
+        toolbar.addAction(action)
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -146,6 +152,15 @@ class PFCMainWindow(QMainWindow):
         widget = self.subtabs.currentWidget()
         if hasattr(widget, "_request"):
             widget._request()
+        elif widget is self.three_phase_view:
+            widget.run_analysis()
+
+    def closeEvent(self, event):
+        if self.three_phase_view._worker is not None:
+            self.statusBar().showMessage("三相 dq 仿真进行中，请完成后关闭。")
+            event.ignore()
+        else:
+            super().closeEvent(event)
 
     def _build_statusbar(self):
         status = QStatusBar()

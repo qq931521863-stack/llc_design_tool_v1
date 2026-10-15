@@ -2,7 +2,7 @@
 
 > **Open-source power electronics CAE toolkit for LLC, PFC, FRA, digital control, C99 code generation and switching verification.**
 
-LLC · Totem-Pole PFC · Vienna PFC · Digital Control · FRA · C99 `float32_t` · ngspice · Web API · MCP
+LLC · DAB TPS · Totem-Pole PFC · Vienna PFC · Two-Level dq PFC · Digital Control · FRA · C99 `float32_t` · ngspice · Web API · MCP
 
 [![Build & Test](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml)
 [![ngspice Smoke](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml)
@@ -85,16 +85,25 @@ The first maintained reference case is [`LLC_400V_53V_3kW`](reference_designs/LL
 
 ---
 
-## 2. Four engineering workspaces
+## 2. Five engineering workspaces
 
-The desktop launcher opens four independent workspaces while preserving state during switching.
+The desktop launcher opens five independent workspaces while preserving state during switching.
 
 | Workspace | Main purpose | Typical outputs |
 | --- | --- | --- |
 | **LLC Design** | Resonant tank, operating region, Q/ZVS, magnetics, primary/SR devices, interleaving, waveforms, small signal and digital voltage loop | Lr/Cr/Lm, gain map, device/loss comparison, stress data, FHA/HB/TD comparison, Gvf(s/z), exact H(z), PM/GM, shared-ngspice closed-loop verification |
+| **DAB TPS** | Forward-power TPS command law and operating-point sweep from the supplied MATLAB V2 reference | D1/D2/D3, ideal L-only and L+Cp waveforms, current/capacitor stress, commutation-current diagnostics, PWM ticks, CSV and project JSON; ZVS remains UNKNOWN |
 | **PFC Design** | Single-phase TTPL engineering workflow plus three-phase Vienna PFC | L/C sizing, device/loss/thermal screening, AC PF/THD, zero-crossing and switching waveforms, sensing/ADC, current/voltage H(z), C99, shared-ngspice TTPL closed loop |
 | **Control Tools** | General digital controller/filter design | H(s), exact H(z), Bode, step/impulse, poles/zeros, SOS/DF2T, single-file C99 `float32_t` |
 | **FRA Loop Designer** | Controller design from measured frequency response | Bode100/SIMPLIS import, controller de-embedding, Equivalent Plant, Fc/PM/GM/Ms/Mt, Auto Design, model ID, C99 |
+
+The PFC workspace also includes **Three-Phase Two-Level dq / PLL**: a separate
+six-switch averaged plant, sampled SRF-PLL, voltage PI, decoupled dq current PIs,
+SVPWM, and frequency/phase/load disturbance analysis. Its source angle is used
+only for generating the grid and evaluating phase error, never as controller feedback.
+Both new capabilities currently support desktop and Python API use; they do not
+extend the existing Web/MCP or C99 generation interfaces. See
+[DAB TPS and two-level dq model contracts](docs/DAB_TPS_AND_THREE_PHASE_DQ.md).
 
 The FRA toolbar also opens a [measured PI tuning map](docs/FRA_TUNING_MAP.md): bind each scan to its actual controller and operating point, compare rounds on a sparse Kp×Ti map, and plan a local next scan. Predictions remain separate from measurements; no hardware parameters are applied.
 

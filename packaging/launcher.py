@@ -32,15 +32,15 @@ def _run_packaged_self_test() -> int:
     if not report.valid:
         print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
         for window in (controller.llc_window, controller.pfc_window,
-                       controller.control_window, controller.fra_window):
+                       controller.control_window, controller.fra_window, controller.dab_window):
             window.close()
         return 2
 
-    for workspace in ("llc", "pfc", "control", "fra"):
+    for workspace in ("llc", "pfc", "control", "fra", "dab"):
         controller.show_workspace(workspace)
         app.processEvents()
     for window in (controller.llc_window, controller.pfc_window,
-                   controller.control_window, controller.fra_window):
+                   controller.control_window, controller.fra_window, controller.dab_window):
         window.hide()
         window.close()
     app.processEvents()
@@ -51,7 +51,7 @@ def _run_packaged_self_test() -> int:
     proof = {
         "success": True, "version": __version__,
         "frozen": bool(getattr(sys, "frozen", False)), "platform": sys.platform,
-        "workspaces": ["llc", "pfc", "control", "fra"], "guided_design": True,
+        "workspaces": ["llc", "pfc", "control", "fra", "dab"], "guided_design": True,
         "brand_taxonomy_sha256": hashlib.sha256(taxonomy.read_bytes()).hexdigest(),
     }
     destination = os.environ.get("PDT_SELF_TEST_REPORT")

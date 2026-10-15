@@ -84,7 +84,7 @@ def test_every_bound_shell_string_is_translated():
 
     app, controller = _controller(qt_widgets)
     sources: set[str] = set()
-    for window in (controller.llc_window, controller.pfc_window, controller.control_window, controller.fra_window):
+    for window in (controller.llc_window, controller.pfc_window, controller.control_window, controller.fra_window, controller.dab_window):
         bind_window(window)
         for obj in list(window.findChildren(QWidget)) + list(window.findChildren(QAction)):
             source = obj.property("i18nSourceText")
@@ -101,7 +101,7 @@ def test_every_bound_shell_string_is_translated():
         missing = [source for source in chinese if source not in entries]
         assert not missing, f"{code} is missing {len(missing)} shell strings: {missing[:8]}"
 
-    for window in (controller.llc_window, controller.pfc_window, controller.control_window, controller.fra_window):
+    for window in (controller.llc_window, controller.pfc_window, controller.control_window, controller.fra_window, controller.dab_window):
         window.close()
     app.processEvents()
 

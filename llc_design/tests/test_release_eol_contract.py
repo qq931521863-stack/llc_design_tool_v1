@@ -45,7 +45,7 @@ def _fixture(tmp_path, monkeypatch, *, crlf, defect=None):
         if defect == 'wrong-raw-proof' and runner == 'Windows':
             sha = hashlib.sha256(data).hexdigest()
         proof = dict(success=True, frozen=True, version='9.4.2', platform=platform,
-                     workspaces=['llc', 'pfc', 'control', 'fra'], guided_design=True,
+                     workspaces=['llc', 'pfc', 'control', 'fra', 'dab'], guided_design=True,
                      brand_taxonomy_sha256=sha)
         (tmp_path / f'release/bundle-proof-{runner}.json').write_text(json.dumps(proof), encoding='utf-8')
         with zipfile.ZipFile(tmp_path / 'release' / name, 'w') as z:

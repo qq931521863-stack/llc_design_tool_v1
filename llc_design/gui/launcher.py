@@ -30,6 +30,7 @@ from llc_design.gui.system_modeling import (
     install_guided_context_actions,
 )
 from pfc_design.gui.main_window import PFCMainWindow
+from dab_design.gui.main_window import DABMainWindow
 from pfc_design.gui.solution_map_install import install_ttpl_solution_map
 from power_control_tools.gui.fra_advanced import install_advanced_fra_actions
 from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
@@ -133,7 +134,7 @@ class WorkspaceSelectionDialog(QDialog):
 
         subtitle = QLabel(
             t("V9.3 新增“系统建模与设计”：先逐步定义功率级、采样、ADC/PWM 与数字时序，再进入现有强分析引擎；")
-            + t("Expert 用户仍可直接进入 LLC、PFC、Control Tools 或 FRA 工作区。")
+            + t("Expert 用户仍可直接进入 LLC、DAB、PFC、Control Tools 或 FRA 工作区。")
         )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
@@ -193,6 +194,12 @@ class WorkspaceSelectionDialog(QDialog):
             cta=t("进入 FRA Loop Designer"),
             object_name="fra_designer_card",
         )
+        dab = _LauncherCard(
+            "DAB TPS 设计",
+            "三移相控制、负载扫描、L/Cp 波形、电流与电容应力、换流电流及 PWM 计数",
+            badge="EXPERT", cta="进入 DAB TPS", object_name="dab_expert_card",
+        )
+        dab.button.clicked.connect(lambda: self._select("dab"))
         llc.button.clicked.connect(lambda: self._select("llc"))
         pfc.button.clicked.connect(lambda: self._select("pfc"))
         control.button.clicked.connect(lambda: self._select("control"))
@@ -201,12 +208,13 @@ class WorkspaceSelectionDialog(QDialog):
         grid.addWidget(pfc, 0, 1)
         grid.addWidget(control, 1, 0)
         grid.addWidget(fra, 1, 1)
+        grid.addWidget(dab, 2, 0, 1, 2)
         root.addLayout(grid, 1)
 
         cancel = QPushButton(t("退出"))
         cancel.clicked.connect(self.reject)
         help_button = QPushButton(t("使用说明 / 帮助 (F1)"))
-        help_button.setToolTip(t("系统建模向导与四个 Expert 工作区分别做什么、如何选择"))
+        help_button.setToolTip(t("系统建模向导与五个 Expert 工作区分别做什么、如何选择"))
         help_button.clicked.connect(lambda: show_help(self, "selector"))
         footer = QHBoxLayout()
         footer.addStretch(1)
@@ -231,6 +239,7 @@ class WorkspaceApplicationController:
         install_closed_loop_verification(self.llc_window)
         install_llc_solution_map(self.llc_window)
         self.pfc_window = PFCMainWindow()
+        self.dab_window = DABMainWindow()
         install_ttpl_solution_map(self.pfc_window)
         self.control_window = ControlToolsMainWindow()
         self.fra_window = FRALoopDesignerWindow()
@@ -240,6 +249,7 @@ class WorkspaceApplicationController:
         self.pfc_window.workspace_switch_requested.connect(self._handle_request)
         self.control_window.workspace_switch_requested.connect(self._handle_request)
         self.fra_window.workspace_switch_requested.connect(self._handle_request)
+        self.dab_window.workspace_switch_requested.connect(self._handle_request)
         self.control_window.digital_design_updated.connect(self.llc_window.set_external_control_design)
         self.control_window.digital_design_updated.connect(
             lambda digital, label="": self.llc_window.refresh_closed_loop_controller()
@@ -269,12 +279,13 @@ class WorkspaceApplicationController:
         self.pfc_window.hide()
         self.control_window.hide()
         self.fra_window.hide()
+        self.dab_window.hide()
 
     def show_workspace(self, workspace: str) -> None:
         if workspace == "system_modeling":
             self._run_system_modeling(previous=self.active_workspace)
             return
-        if workspace not in {"llc", "pfc", "control", "fra"}:
+        if workspace not in {"llc", "pfc", "control", "fra", "dab"}:
             raise ValueError(f"unsupported workspace: {workspace}")
         self._hide_all()
         target = {
@@ -282,6 +293,7 @@ class WorkspaceApplicationController:
             "pfc": self.pfc_window,
             "control": self.control_window,
             "fra": self.fra_window,
+            "dab": self.dab_window,
         }[workspace]
         self.active_workspace = workspace
         target.showMaximized()

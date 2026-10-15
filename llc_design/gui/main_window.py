@@ -135,6 +135,9 @@ class LLCMainWindow(QMainWindow):
         switch_action.triggered.connect(
             lambda: self.workspace_switch_requested.emit("pfc"))
         toolbar.addAction(switch_action)
+        dab_action = QAction("DAB TPS", self)
+        dab_action.triggered.connect(lambda: self.workspace_switch_requested.emit("dab"))
+        toolbar.addAction(dab_action)
         control_action = QAction("Control Tools", self)
         control_action.triggered.connect(
             lambda: self.workspace_switch_requested.emit("control"))

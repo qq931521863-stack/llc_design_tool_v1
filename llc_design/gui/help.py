@@ -202,8 +202,16 @@ TD（分段时域）
 _PFC = HelpTopic(
     key="pfc",
     heading="PFC Design 工作区 — 使用说明",
-    intro="单相 TTPL PFC 与三相 Vienna PFC 的固件形状双环控制、采样链、Bode、完整 AC 周期、开关波形与 PF/THD 分析。",
+    intro="单相 TTPL、三相 Vienna 与三相两电平 dq/PLL 的独立控制分析页面；各自模型能力和证据范围单独定义。",
     sections=(
+        HelpSection(
+            "三相两电平 dq / PLL",
+            "打开 Three-Phase Two-Level dq / PLL 页，设置线电压、母线、电感与电容、dq PI 及 PLL。"
+            "点击运行，查看三相电流、dq 跟踪、PLL 锁定、母线能量和六路 SVPWM。"
+            "默认 Iq=0；可施加频率、相位和负载阶跃。该页使用独立两电平平均模型，"
+            "不套用 Vienna 中点控制。未实现器件损耗、死区、ADC、硬件保护或 C99 导出；"
+            "母线初始预充，PLL 丢锁后降低电流给定，不是硬件关断模型。",
+        ),
         HelpSection(
             "快速上手",
             """1. 先在上方子页签选择拓扑：Single-Phase TTPL PFC 或 Three-Phase Vienna PFC。
@@ -613,14 +621,16 @@ Complete Loop 模式下 PWM、ADC、采样/滤波与真实延时不会重复添�
 _SELECTOR = HelpTopic(
     key="selector",
     heading="功能选择 — 该进哪个工作区",
-    intro="工具箱按工程任务分成四个独立工作区，各自保持状态，可用工具栏随时切换。",
+    intro="工具箱按工程任务分成五个独立工作区，各自保持状态，可用工具栏随时切换。",
     sections=(
         HelpSection(
-            "四个工作区",
+            "五个工作区",
             """LLC Design          谐振腔设计、多精度电气分析、磁件与损耗、SR、交错、波形、
                     小信号与数字电压环。从规格出发做完整变换器设计时进这里。
 PFC Design          单相 TTPL 与三相 Vienna 的固件形状双环控制、采样链、Bode、
                     完整 AC 周期、开关波形、PF/THD 与电感设计。
+                    Three-Phase Two-Level 页提供独立 dq 双环、SRF-PLL 和六开关 SVPWM。
+DAB TPS             三移相分段公式、负载扫描、L-only / L+Cp 周期波形、应力与 PWM 计数。
 Control Tools       单独的数字控制器/滤波器设计：选结构、看 H(s)/H(z)、
                     Bode/Step/Impulse/极零点/群延迟、导出单文件 C99。
 FRA Loop Designer   基于实测频响（Bode100/SIMPLIS/通用）做控制器整定、目标 Fc/PM
@@ -667,8 +677,25 @@ FRA Loop Designer   基于实测频响（Bode100/SIMPLIS/通用）做控制器�
     docs=(("README", "README.md"),),
 )
 
+_DAB = HelpTopic(
+    key="dab", heading="DAB TPS — 使用说明",
+    intro="基于所提供 MATLAB V2 参考的正向功率 TPS 稳态分析；沿用参数面板和分析页签工作流。",
+    sections=(
+        HelpSection("快速上手", "设置 VA、VB 扫描点、负载比例、变比及 L/Cp/Co，点击运行 TPS 扫描。"
+                    "默认生成 25 个工况；点击表格或工况下拉框切换波形，修改参数后需要重新运行。"),
+        HelpSection("参数与相位约定", "n=Ns/Np，副边电压折算为 VB/n，m=n·VA/VB。D1/D2/D3 为半周期归一化的绝对桥臂相位，"
+                    "电角度等于 180D，副边内部相位为 D3-D2。功率指令达到 p_limit 会单独标记 limited。"),
+        HelpSection("模型边界", "TPS 公式采用理想电感模型；串联 Cp 与 R 在周期波形模型中评估，不反向改变控制公式。"
+                    "换流电流不是 ZVS 证明：缺少换流方向、Coss 和死区条件，ZVS 始终 UNKNOWN。"
+                    "没有负功率控制、闭环瞬态、器件开关损耗或 DSP 驱动代码。"),
+        HelpSection("保存与导出", "保存工程 JSON 记录当前参数；CSV 导出上次完成计算的指标，并保存该次运行参数快照。"
+                    "波形可通过图形工具栏保存 PNG。计数沿用参考的整周期时钟约定，不直接对应上下计数的 TBPRD 寄存器。"),
+    ),
+    docs=(("DAB TPS 与三相 dq 模型", "docs/DAB_TPS_AND_THREE_PHASE_DQ.md"),),
+)
+
 HELP_TOPICS: dict[str, HelpTopic] = {
-    topic.key: topic for topic in (_SELECTOR, _LLC, _PFC, _CONTROL, _FRA)
+    topic.key: topic for topic in (_SELECTOR, _LLC, _PFC, _CONTROL, _FRA, _DAB)
 }
 
 _SHORTCUTS = HelpSection(

@@ -20,7 +20,7 @@ def _qapp(qt_widgets):
 def test_every_help_topic_has_real_content():
     from llc_design.gui.help import HELP_TOPICS, help_topic
 
-    assert set(HELP_TOPICS) == {"selector", "llc", "pfc", "control", "fra"}
+    assert set(HELP_TOPICS) == {"selector", "llc", "pfc", "control", "fra", "dab"}
     for key in HELP_TOPICS:
         topic = help_topic(key)
         assert topic.heading and topic.intro
@@ -116,6 +116,7 @@ def test_every_workspace_installs_a_help_button_and_f1_shortcut():
         "pfc": controller.pfc_window,
         "control": controller.control_window,
         "fra": controller.fra_window,
+        "dab": controller.dab_window,
     }
     for name, window in windows.items():
         buttons = [b for b in window.findChildren(QToolButton) if b.text() == "帮助"]

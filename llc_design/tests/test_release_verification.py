@@ -19,7 +19,7 @@ SPEC.loader.exec_module(MODULE)
 def _child(tmp_path, *, exit_code=0, report=True, delay=0, **overrides):
     payload = {
         "success": True, "version": "9.4.1", "frozen": True, "platform": sys.platform,
-        "workspaces": ["llc", "pfc", "control", "fra"],
+        "workspaces": ["llc", "pfc", "control", "fra", "dab"],
         "guided_design": True, "brand_taxonomy_sha256": "a" * 64,
     }
     payload.update(overrides)
@@ -103,7 +103,7 @@ def _archive_gate(tmp_path, monkeypatch, *, missing_mac=False, wrong_taxonomy=Fa
         if missing_mac and runner == "macOS":
             continue
         proof = {"success": True, "frozen": True, "version": "9.4.1", "platform": platform,
-                 "guided_design": True, "workspaces": ["llc", "pfc", "control", "fra"],
+                 "guided_design": True, "workspaces": ["llc", "pfc", "control", "fra", "dab"],
                  "brand_taxonomy_sha256": digest}
         (tmp_path / f"release/bundle-proof-{runner}.json").write_text(json.dumps(proof))
         with zipfile.ZipFile(tmp_path / "release" / name, "w") as bundle:

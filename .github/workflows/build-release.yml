@@ -149,6 +149,7 @@ jobs:
             --add-data "engineering_data:engineering_data" \
             --collect-submodules llc_design --collect-submodules pfc_design --collect-submodules power_codegen \
             --collect-submodules power_control_tools \
+            --collect-submodules dab_design \
             packaging/launcher.py
       - name: Verify frozen application and fresh evidence
         shell: bash
@@ -210,7 +211,7 @@ jobs:
               assert proof["success"] is True and proof["frozen"] is True
               assert proof["version"] == version and proof["platform"] == platform
               assert proof["guided_design"] is True
-              assert proof["workspaces"] == ["llc", "pfc", "control", "fra"]
+              assert proof["workspaces"] == ["llc", "pfc", "control", "fra", "dab"]
               assert proof["brand_taxonomy_sha256"] == taxonomy_sha
               archive = Path("release") / name
               with zipfile.ZipFile(archive) as bundle:
