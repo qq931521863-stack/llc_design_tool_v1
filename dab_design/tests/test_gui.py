@@ -108,3 +108,41 @@ def test_three_phase_gui_runs_and_exports(monkeypatch, tmp_path):
     )
     assert len(view.figures["SVPWM 六路"].axes[1].lines) == 6
     view.close()
+
+
+def test_dab_selection_autoruns_and_animation_pause_reset(monkeypatch):
+    qt = pytest.importorskip("PySide6.QtWidgets")
+    from dab_design.gui.main_window import DABMainWindow
+    import numpy as np
+
+    app = qt.QApplication.instance() or qt.QApplication([])
+    window = DABMainWindow()
+    errors = []
+    monkeypatch.setattr(window, "_error", errors.append)
+    window.samples.setValue(1024)
+    window.point_choice.setCurrentIndex(3)
+    finish(app, window)
+    assert not errors and window.result is not None
+    assert window.point_choice.currentIndex() == 3
+    assert window._worker is None
+    previous = window.result
+    window.inputs["va_v"].setValue(410)
+    window.point_choice.setCurrentIndex(4)
+    finish(app, window)
+    assert window.result is not previous and window.result.config.va_v == 410
+    assert window.point_choice.currentIndex() == 4
+    window.show()
+    window.tabs.setCurrentIndex(2)  # electrical waveform tab
+    window.animation_timer.stop()  # deterministic frame stepping below
+    line, original = window._animated_lines[0]
+    window._animate_waveform()
+    assert not np.array_equal(line.get_ydata(), original)
+    window.animate.setChecked(False)
+    paused = line.get_ydata().copy()
+    window._animate_waveform()
+    assert np.array_equal(line.get_ydata(), paused)
+    window._reset_animation()
+    assert np.array_equal(line.get_ydata(), original)
+    assert window.animation_timer.interval() == 100
+    assert window._worker is None  # playback does not recompute the circuit
+    window.close()

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -25,10 +28,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
 
 from ...core.spec import LLCDesignSpec
+from ...magnetics.material import MaterialDatabase
 from ...magnetics.transformer_designer import (
     FerriteCoreInput,
     TransformerSynthesisResult,
@@ -165,11 +167,25 @@ class TransformerDesignView(QWidget):
         preset_box = QGroupBox("规格书 / 磁芯")
         f = QFormLayout(preset_box)
         self.preset = QComboBox()
-        for key, item in self._presets.items():
-            self.preset.addItem(f"{item.shape} {item.material_grade} · {item.part_number}", key)
-        self.preset.addItem("自定义规格书参数", "CUSTOM")
+        self.core_search = QLineEdit()
+        self.core_search.setPlaceholderText("型号 / 材料 / 骨架，例如 PQ35、PC44、EER")
+        self.family_filter = QComboBox()
+        self.family_filter.addItem("全部形状", "")
+        for family in sorted({p.to_core_spec().family for p in self._presets.values()}):
+            self.family_filter.addItem(family, family)
+        self._populate_presets()
         self.preset.currentIndexChanged.connect(self._preset_changed)
+        self.core_search.textChanged.connect(self._filter_presets)
+        self.family_filter.currentIndexChanged.connect(self._filter_presets)
+        f.addRow("搜索磁芯", self.core_search)
+        f.addRow("形状", self.family_filter)
         f.addRow("预设", self.preset)
+        self.core_source = QLabel()
+        self.core_source.setWordWrap(True)
+        f.addRow("数据来源", self.core_source)
+        catalog_button = QPushButton("浏览磁芯参数库（含待补全记录）")
+        catalog_button.clicked.connect(self._open_catalog)
+        f.addRow(catalog_button)
 
         self.core_fields = {}
         specs = [
@@ -186,7 +202,9 @@ class TransformerDesignView(QWidget):
         ]
         for key, label, lo, hi, dec, suffix in specs:
             w = self._dspin(lo, hi, dec, suffix); self.core_fields[key] = w; f.addRow(label, w)
-        self.material = QComboBox(); self.material.addItem("N87", "TDK_N87_REF"); self.material.addItem("N97", "TDK_N97_REF")
+        self.material = QComboBox()
+        for material in MaterialDatabase().materials:
+            self.material.addItem(f"{material.grade} · {material.manufacturer}", material.key)
         f.addRow("损耗材料模型", self.material)
         lay.addWidget(preset_box)
 
@@ -259,6 +277,38 @@ class TransformerDesignView(QWidget):
         if key != "CUSTOM":
             self._load_preset(key)
 
+    def _populate_presets(self, query="", family=""):
+        previous = self.preset.currentData()
+        self.preset.blockSignals(True)
+        self.preset.clear()
+        for key, item in self._presets.items():
+            label = f"{item.shape} {item.material_grade} · {item.part_number}"
+            if query.casefold() not in (label + item.source).casefold():
+                continue
+            if family and item.to_core_spec().family != family:
+                continue
+            self.preset.addItem(label, key)
+            self.preset.setItemData(self.preset.count()-1, item.source, Qt.ItemDataRole.ToolTipRole)
+        self.preset.addItem("自定义规格书参数", "CUSTOM")
+        idx = self.preset.findData(previous)
+        self.preset.setCurrentIndex(idx if idx >= 0 else 0)
+        self.preset.blockSignals(False)
+
+    def _filter_presets(self):
+        self._populate_presets(self.core_search.text().strip(), self.family_filter.currentData())
+        self._preset_changed()
+
+    def _open_catalog(self):
+        from .magnetic_catalog_view import MagneticCatalogDialog
+        self.catalog_dialog = MagneticCatalogDialog(self)
+        self.catalog_dialog.preset_selected.connect(self._select_catalog_preset)
+        self.catalog_dialog.show()
+
+    def _select_catalog_preset(self, key):
+        self.core_search.clear()
+        self.family_filter.setCurrentIndex(0)
+        self._load_preset(key)
+
     def _load_preset(self, key: str) -> None:
         p = self._presets[key]
         idx = self.preset.findData(key)
@@ -266,6 +316,7 @@ class TransformerDesignView(QWidget):
             self.preset.blockSignals(True); self.preset.setCurrentIndex(idx); self.preset.blockSignals(False)
         for name, widget in self.core_fields.items():
             widget.setValue(float(getattr(p, name)))
+        self.core_source.setText(p.source + ("\n" + "\n".join(p.source_notes) if p.source_notes else ""))
         midx = self.material.findData(p.material_key)
         if midx >= 0: self.material.setCurrentIndex(midx)
 
@@ -276,7 +327,7 @@ class TransformerDesignView(QWidget):
         changes.update({
             "preset_key": str(key),
             "material_key": self.material.currentData(),
-            "material_grade": self.material.currentText(),
+            "material_grade": MaterialDatabase().get(self.material.currentData()).grade,
         })
         return replace(base, **changes)
 

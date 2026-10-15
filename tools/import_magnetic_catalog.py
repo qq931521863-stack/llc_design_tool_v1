@@ -1,0 +1,942 @@
+"""Reproduce catalog facts from the supplied XLS and TDK 2002 PDF.
+
+Optional offline ingestion dependencies: xlrd, pdfplumber (not app dependencies).
+Raw documents remain external; hashes, pages, rows and curve coordinates are kept.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+
+# Exact matched core/bobbin pairs, PDF pages 22-45. Window width is bobbin C
+# minus two flange thicknesses, an explicit helper, not an insulation allowance.
+# shape, Ae, le, Ve, AL, mass, loss_max, bobbin, Aw_bobbin, MLT, C, t, core_page, bobbin_page
+PAIRS = [
+    (
+        "PQ20/16",
+        62,
+        37.4,
+        2320,
+        3880,
+        13,
+        0.84,
+        "BPQ20/16-1114CPFR",
+        23.4,
+        44,
+        8,
+        0.8,
+        43,
+        45,
+    ),
+    (
+        "PQ20/20",
+        62,
+        45.4,
+        2810,
+        3150,
+        15,
+        1.02,
+        "BPQ20/20-1114CPFR",
+        36.2,
+        44,
+        12,
+        0.8,
+        43,
+        45,
+    ),
+    (
+        "PQ26/20",
+        119,
+        46.3,
+        5510,
+        6170,
+        31,
+        1.94,
+        "BPQ26/20-1112CPFR",
+        30.7,
+        56.2,
+        9.2,
+        0.8,
+        43,
+        45,
+    ),
+    (
+        "PQ26/25",
+        118,
+        55.5,
+        6550,
+        5250,
+        36,
+        2.32,
+        "BPQ26/25-1112CPFR",
+        47.7,
+        56.2,
+        13.9,
+        0.8,
+        43,
+        45,
+    ),
+    (
+        "PQ32/20",
+        170,
+        55.5,
+        9440,
+        7310,
+        42,
+        2.92,
+        "BPQ32/20-1112CPFR",
+        42.9,
+        67.1,
+        9,
+        0.9,
+        43,
+        45,
+    ),
+    (
+        "PQ32/30",
+        161,
+        74.6,
+        12000,
+        5140,
+        55,
+        3.92,
+        "BPQ32/30-1112CPFR",
+        95.3,
+        67.1,
+        18.6,
+        0.9,
+        43,
+        45,
+    ),
+    (
+        "PQ35/35",
+        196,
+        87.9,
+        17200,
+        4860,
+        73,
+        5.27,
+        "BPQ35/35-1112CPFR",
+        154.2,
+        75.2,
+        22.4,
+        0.9,
+        43,
+        45,
+    ),
+    (
+        "PQ40/40",
+        201,
+        102,
+        20500,
+        4300,
+        95,
+        6.56,
+        "BPQ40/40-1112CPFR",
+        240,
+        83.9,
+        26.8,
+        0.9,
+        43,
+        45,
+    ),
+    (
+        "PQ50/50",
+        328,
+        113,
+        37238,
+        6720,
+        195,
+        6.10,
+        "BPQ50/50-1112DSFR",
+        313,
+        104,
+        32.4,
+        1,
+        43,
+        45,
+    ),
+    (
+        "ETD19",
+        41.3,
+        54.6,
+        2260,
+        1720,
+        14,
+        1.1,
+        "BETD19-1111CPHFR",
+        37.3,
+        33.2,
+        16,
+        0.9,
+        37,
+        39,
+    ),
+    (
+        "ETD24",
+        56.3,
+        61.9,
+        3480,
+        2125,
+        20,
+        1.6,
+        "BETD24-1112CPHFR",
+        44.7,
+        55.5,
+        17.2,
+        0.9,
+        37,
+        39,
+    ),
+    (
+        "EC70",
+        279,
+        144,
+        40100,
+        4800,
+        256,
+        14,
+        "BEC-70-5116",
+        471.4,
+        98,
+        41.45,
+        1.13,
+        37,
+        39,
+    ),
+    (
+        "EC90",
+        624,
+        216,
+        135000,
+        6000,
+        698,
+        2.8,
+        "BEC-90-0112",
+        1046.5,
+        162,
+        65.3,
+        1.9,
+        37,
+        39,
+    ),
+    (
+        "EER25.5",
+        44.8,
+        48.2,
+        2160,
+        1920,
+        11,
+        0.98,
+        "BEER25.5-118CPFR",
+        48.4,
+        46.2,
+        10.05,
+        0.8,
+        33,
+        35,
+    ),
+    (
+        "EER28",
+        82.1,
+        64,
+        5250,
+        2870,
+        28,
+        2.3,
+        "BEER28-1110CPFR",
+        71.8,
+        52.2,
+        16.7,
+        0.8,
+        33,
+        35,
+    ),
+    (
+        "EER28L",
+        81.4,
+        75.5,
+        6150,
+        2520,
+        33,
+        2.7,
+        "BEER28L-1110CPFR",
+        96.3,
+        52.2,
+        22.4,
+        0.8,
+        33,
+        35,
+    ),
+    (
+        "EER35",
+        107,
+        90.8,
+        9720,
+        2770,
+        52,
+        4.2,
+        "BEER35-1112CPFR",
+        152.7,
+        61.4,
+        26.1,
+        0.8,
+        33,
+        35,
+    ),
+    (
+        "EER40",
+        149,
+        98,
+        14600,
+        3620,
+        78,
+        6.3,
+        "BEER40-1112CPFR",
+        178.8,
+        69.9,
+        27.5,
+        0.8,
+        33,
+        35,
+    ),
+    (
+        "EER42",
+        194,
+        98.8,
+        19200,
+        4690,
+        102,
+        8.6,
+        "BEER42-1114CPFR",
+        153.3,
+        73.9,
+        27.5,
+        0.8,
+        33,
+        35,
+    ),
+    (
+        "EER42/42/20",
+        240,
+        98.6,
+        23700,
+        5340,
+        116,
+        10.7,
+        "BEER42/20-1112CPFR",
+        159.7,
+        80.6,
+        27.3,
+        0.8,
+        33,
+        35,
+    ),
+    (
+        "EER49",
+        231,
+        91.3,
+        21100,
+        6250,
+        110,
+        5.4,
+        "BEER49-1118CPFR",
+        167.8,
+        88.4,
+        21.45,
+        0.9,
+        33,
+        35,
+    ),
+    (
+        "EI12.5",
+        14.4,
+        21.3,
+        308,
+        1200,
+        1.9,
+        0.12,
+        "BE12.5-1110CPFR",
+        8.6,
+        27.2,
+        3.5,
+        0.325,
+        23,
+        29,
+    ),
+    (
+        "EI16",
+        19.8,
+        34.6,
+        685,
+        1100,
+        3.3,
+        0.31,
+        "BE16-116CPFR",
+        27.3,
+        32.5,
+        8.5,
+        0.375,
+        23,
+        29,
+    ),
+    (
+        "EI19",
+        24,
+        39.6,
+        950,
+        1400,
+        5.1,
+        0.42,
+        "BE19-116CPFR",
+        36.4,
+        36.8,
+        9.1,
+        0.35,
+        23,
+        29,
+    ),
+    (
+        "EI22",
+        42,
+        39.3,
+        1650,
+        2400,
+        9.8,
+        0.6,
+        "BE22-118CPFR",
+        20,
+        38.6,
+        8.45,
+        0.8,
+        23,
+        29,
+    ),
+    (
+        "EI22/19/6",
+        37,
+        41.8,
+        1550,
+        2000,
+        8.5,
+        0.64,
+        "BE22/19/6-118CPFR",
+        31.5,
+        42.8,
+        8.45,
+        0.8,
+        23,
+        29,
+    ),
+    (
+        "EI25",
+        41,
+        47,
+        1930,
+        2140,
+        9.8,
+        0.79,
+        "BE25-118CPFR",
+        42.5,
+        49.4,
+        9.8,
+        0.75,
+        23,
+        29,
+    ),
+    (
+        "EI28",
+        86,
+        48.2,
+        4150,
+        4300,
+        22,
+        1.65,
+        "BE28-1110CPLFR",
+        39.4,
+        59.1,
+        9.6,
+        0.8,
+        23,
+        29,
+    ),
+    (
+        "EI30",
+        111,
+        58,
+        6440,
+        4690,
+        34,
+        3.1,
+        "BE30-1110CPFR",
+        44.5,
+        61,
+        13.7,
+        0.8,
+        23,
+        29,
+    ),
+    (
+        "EI33/29/13",
+        119,
+        67.5,
+        8030,
+        4400,
+        41,
+        3.5,
+        "BE33-1112CPLFR",
+        88.8,
+        72.3,
+        16.6,
+        0.8,
+        23,
+        29,
+    ),
+    (
+        "EI35",
+        101,
+        67.1,
+        6780,
+        3800,
+        36,
+        2.85,
+        "BE35-1112CPLFR",
+        88.7,
+        68.5,
+        15.7,
+        0.8,
+        23,
+        29,
+    ),
+    (
+        "EI40",
+        148,
+        77,
+        11400,
+        4860,
+        60,
+        4.8,
+        "BE40-1112CPFR",
+        108,
+        76,
+        17.3,
+        0.8,
+        23,
+        29,
+    ),
+    (
+        "EI50",
+        230,
+        94,
+        21620,
+        6110,
+        115,
+        9.2,
+        "BE50-1112CPFR",
+        170,
+        94,
+        21.3,
+        0.8,
+        23,
+        29,
+    ),
+    (
+        "EI60",
+        247,
+        109,
+        26900,
+        5670,
+        139,
+        12.5,
+        "BE60-1112CPFR",
+        294,
+        113,
+        23.8,
+        0.8,
+        23,
+        29,
+    ),
+    (
+        "EE8",
+        7,
+        19.2,
+        134,
+        610,
+        0.7,
+        0.06,
+        "BE8-116CPHFR",
+        5.3,
+        19.9,
+        4.78,
+        0.35,
+        25,
+        29,
+    ),
+    (
+        "EE10/11",
+        12.1,
+        26.1,
+        315,
+        850,
+        1.5,
+        0.14,
+        "BE10-118CPSFR",
+        12.2,
+        23.8,
+        6.6,
+        0.4,
+        25,
+        29,
+    ),
+    (
+        "EE13",
+        17.1,
+        30.2,
+        517,
+        1130,
+        2.7,
+        0.235,
+        "BE13-1110CPSFR",
+        22.2,
+        31.3,
+        7.4,
+        0.4,
+        25,
+        29,
+    ),
+    (
+        "EE16",
+        19.2,
+        34.5,
+        656,
+        1140,
+        3.3,
+        0.31,
+        "BE16-116CPFR",
+        27.3,
+        32.5,
+        8.5,
+        0.375,
+        25,
+        29,
+    ),
+    (
+        "EE19",
+        23,
+        39.4,
+        906,
+        1250,
+        4.8,
+        0.42,
+        "BE19-116CPFR",
+        36.4,
+        36.8,
+        9.1,
+        0.35,
+        25,
+        29,
+    ),
+    (
+        "EE22",
+        41,
+        39.6,
+        1620,
+        2180,
+        8.8,
+        0.61,
+        "BE22-118CPFR",
+        20,
+        38.6,
+        8.45,
+        0.8,
+        25,
+        29,
+    ),
+    (
+        "EE30",
+        109,
+        57.7,
+        6290,
+        4690,
+        32,
+        2.9,
+        "BE30-1110CPFR",
+        44.5,
+        61,
+        13.7,
+        0.8,
+        25,
+        29,
+    ),
+    (
+        "EE40",
+        128,
+        77.3,
+        9890,
+        4150,
+        50,
+        4.2,
+        "BE40-1112CPFR",
+        108,
+        76,
+        17.3,
+        0.8,
+        27,
+        29,
+    ),
+    (
+        "EE50",
+        226,
+        95.8,
+        21600,
+        6110,
+        116,
+        9.4,
+        "BE50-1112CPFR",
+        170,
+        94,
+        21.3,
+        0.8,
+        27,
+        29,
+    ),
+    (
+        "EE60",
+        247,
+        110,
+        27100,
+        5670,
+        135,
+        12.5,
+        "BE60-1112CPFR",
+        294,
+        113,
+        23.8,
+        0.8,
+        27,
+        29,
+    ),
+]
+
+
+def build(xls_path: Path, pdf_path: Path):
+    import pdfplumber
+    import xlrd
+
+    records = []
+    book = xlrd.open_workbook(xls_path)
+    for sheet in book.sheets()[1:]:
+        for i in range(3, sheet.nrows):
+            row = sheet.row_values(i)
+            if not row[1] or not isinstance(row[4], float):
+                continue
+            ratio = row[8] / (row[4] * row[7])
+            issues = (
+                []
+                if 0.85 < ratio < 1.15
+                else ["Ve differs from Ae*le by >15%; review source"]
+            )
+            records.append(
+                {
+                    "key": f"XLS_{sheet.name}_{i + 1}",
+                    "shape": str(row[0]).strip(),
+                    "family": sheet.name,
+                    "material_grade": str(row[1]).strip(),
+                    "dimensions_mm": str(row[2]),
+                    "ap_cm4": row[3],
+                    "ae_mm2": row[4],
+                    "core_window_mm2": row[5],
+                    "al_nh": row[6],
+                    "le_mm": row[7],
+                    "ve_mm3": row[8],
+                    "mass_g": row[9],
+                    "loss_ref_w": row[10] or None,
+                    "bobbin_width_mm": row[12] or None,
+                    "source_sheet": sheet.name,
+                    "source_row": i + 1,
+                    "issues": issues,
+                    "status": "LEGACY_REFERENCE",
+                }
+            )
+    sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+    metadata = {
+        "schema_version": "1.0",
+        "xls_sha256": sha(xls_path),
+        "pdf_sha256": sha(pdf_path),
+        "source_xls": xls_path.name,
+        "source_pdf": pdf_path.name,
+        "pdf_year": 2002,
+        "note": "XLS core window and PDF bobbin winding area are distinct; no silent substitutions.",
+    }
+    data_dir = ROOT / "llc_design/data"
+    (data_dir / "magnetic_catalog.json").write_text(
+        json.dumps(
+            {"metadata": metadata, "records": records}, ensure_ascii=False, indent=2
+        )
+        + "\n"
+    )
+    presets = []
+    for (
+        shape,
+        ae,
+        le,
+        ve,
+        al,
+        mass,
+        loss,
+        bobbin,
+        aw,
+        mlt,
+        width,
+        flange,
+        cp,
+        bp,
+    ) in PAIRS:
+        grade = "PC44" if shape.startswith("PQ") else "PC40"
+        key = "TDK_2002_" + grade + "_" + shape.replace("/", "_")
+        part = grade + shape + ("Z-12" if grade == "PC44" else "-Z")
+        # EC90 AL is a minimum, not a nominal tolerance-controlled value.
+        notes = [
+            "Amin unavailable: Ae used for preliminary flux screen; check local minimum area",
+            "Usable width = bobbin C - 2*t geometric helper; insulation not deducted",
+            "Thermal resistance is an area-scaled screening estimate, not a measured value",
+        ]
+        if shape == "EC90":
+            notes.append("AL is datasheet minimum (6000 nH), not a nominal AL")
+        presets.append(
+            {
+                "preset_key": key,
+                "manufacturer": "TDK",
+                "part_number": part,
+                "shape": shape,
+                "material_key": "TDK_" + grade + "_2002",
+                "material_grade": grade,
+                "ae_mm2": ae,
+                "amin_mm2": ae,
+                "le_mm": le,
+                "ve_mm3": ve,
+                "sigma_l_over_a_per_mm": le / ae,
+                "al_nh": al,
+                "mu_e": al * 1e-9 * (le * 1e-3) / (4e-7 * np.pi * ae * 1e-6),
+                "winding_area_mm2": aw,
+                "mean_turn_length_mm": mlt,
+                "usable_winding_width_mm": round(width - 2 * flange, 4),
+                "ar_uohm": 0,
+                "core_mass_g": mass,
+                "thermal_resistance_k_per_w": 12 * (ve / 24000) ** (-2 / 3),
+                "datasheet_loss_ref_w": loss,
+                "datasheet_loss_ref_frequency_hz": 25000 if shape == "EC90" else 100000,
+                "datasheet_loss_ref_b_t": 0.15
+                if shape in ("PQ50/50", "EER49")
+                else 0.2,
+                "datasheet_loss_ref_temperature_c": 100,
+                "source": f"{pdf_path.name}, core p.{cp}; bobbin p.{bp}; {bobbin}",
+                "source_notes": notes,
+            }
+        )
+    (data_dir / "tdk_transformer_presets.json").write_text(
+        json.dumps(
+            {"metadata": metadata, "presets": presets}, ensure_ascii=False, indent=2
+        )
+        + "\n"
+    )
+    # Vector digitization preserves original plot coordinates and dash identity.
+    all_points = []
+    with pdfplumber.open(pdf_path) as doc:
+        page = doc.pages[8]
+        for grade, left, ids, curve_ids in [
+            ("PC40", 84.556, [59, 58, 57, 56, 55, 52], {}),
+            ("PC44", 347.671, [124, 123, 122, None, None, 121], {3: 17, 4: 16}),
+        ]:
+            for j, frequency in enumerate(
+                [25000, 50000, 100000, 200000, 300000, 500000]
+            ):
+                if ids[j] is not None:
+                    line = page.lines[ids[j]]
+                    pts = [(line["x0"], line["bottom"]), (line["x1"], line["top"])]
+                else:
+                    pts = page.curves[curve_ids[j]]["pts"]
+                for flux in [0.075, 0.1, 0.15, 0.2]:
+                    x = left + 198 * np.log10(flux / 0.05)
+                    y = float(np.interp(x, [v[0] for v in pts], [v[1] for v in pts]))
+                    all_points.append(
+                        {
+                            "grade": grade,
+                            "frequency_hz": frequency,
+                            "b_peak_t": flux,
+                            "temperature_c": 100,
+                            "loss_w_m3": float(1000 * 10 ** ((357.638 - y) / 49.9)),
+                            "source_page": 9,
+                            "pdf_x": x,
+                            "pdf_y": y,
+                        }
+                    )
+    (data_dir / "tdk_loss_points.json").write_text(
+        json.dumps({"metadata": metadata, "points": all_points}, indent=2) + "\n"
+    )
+    path = data_dir / "materials.json"
+    data = json.loads(path.read_text())
+    data["materials"] = [
+        x
+        for x in data["materials"]
+        if x["key"] not in ["TDK_PC40_2002", "TDK_PC44_2002"]
+    ]
+    for grade, mu, ref in [
+        ("PC40", 2300, [600000, 450000, 410000, 500000]),
+        ("PC44", 2400, [600000, 400000, 300000, 380000]),
+    ]:
+        pts = [
+            p
+            for p in all_points
+            if p["grade"] == grade
+            and not (p["frequency_hz"] == 100000 and p["b_peak_t"] == 0.2)
+        ]
+        X = np.array(
+            [[1, np.log(p["frequency_hz"]), np.log(p["b_peak_t"])] for p in pts]
+        )
+        c = np.linalg.lstsq(X, np.log([p["loss_w_m3"] for p in pts]), rcond=None)[0]
+        k = float(np.exp(c[0]))
+        alpha, beta = map(float, c[1:])
+        data["materials"].append(
+            {
+                "key": "TDK_" + grade + "_2002",
+                "manufacturer": "TDK",
+                "grade": grade,
+                "mu_i_25": mu,
+                "bsat_points": [[25, 0.51], [60, 0.45], [100, 0.39], [120, 0.35]],
+                "steinmetz_points": [
+                    [t, k * pv / ref[2], alpha, beta]
+                    for t, pv in zip([25, 60, 100, 120], ref)
+                ],
+                "frequency_range_hz": [25000, 500000],
+                "flux_range_t": [0.075, 0.2],
+                "core_loss_correction": 1,
+                "source": "TDK 2002 PDF p.9 100C dashed curves; p.6 temperature ratios. Graph-fit approximation.",
+                "provenance": {
+                    "pdf_sha256": metadata["pdf_sha256"],
+                    "fit_points": 23,
+                    "reference_100c_pv_w_m3": ref[2],
+                    "reference_100c_fit_w_m3": float(k * 1e5**alpha * 0.2**beta),
+                    "status": "DIGITIZED_REFERENCE_FIT",
+                },
+            }
+        )
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    print(
+        f"Imported {len(records)} XLS records and {len(presets)} matched core/bobbin presets"
+    )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("xls", type=Path)
+    parser.add_argument("pdf", type=Path)
+    args = parser.parse_args()
+    build(args.xls, args.pdf)

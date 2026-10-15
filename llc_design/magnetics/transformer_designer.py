@@ -14,9 +14,9 @@ release should use coefficients fitted to the exact material loss curves.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -55,6 +55,8 @@ class FerriteCoreInput:
     datasheet_loss_ref_frequency_hz: float = 100_000.0
     datasheet_loss_ref_b_t: float = 0.200
     datasheet_loss_ref_temperature_c: float = 100.0
+    source: str = "TDK PQ35/35 B65881A + B65882B, October 2022"
+    source_notes: tuple[str, ...] = ()
 
     @property
     def effective_window_height_mm(self) -> float:
@@ -65,7 +67,8 @@ class FerriteCoreInput:
         return CoreSpec(
             part_number=self.part_number,
             shape=self.shape,
-            family="PQ" if self.shape.upper().startswith("PQ") else "CUSTOM",
+            family=next((f for f in ("EER", "ETD", "PQ", "EE", "EI", "EC", "EF")
+                         if self.shape.upper().startswith(f)), "CUSTOM"),
             manufacturer=self.manufacturer,
             standard=self.shape,
             material_key=self.material_key,
@@ -183,8 +186,13 @@ _PRESET_PATH = Path(__file__).parent.parent / "data" / "transformer_core_presets
 def load_transformer_core_presets(path: str | Path | None = None) -> dict[str, FerriteCoreInput]:
     source = Path(path) if path is not None else _PRESET_PATH
     data = json.loads(source.read_text(encoding="utf-8"))
+    if path is None:
+        extra = source.with_name("tdk_transformer_presets.json")
+        data["presets"].extend(json.loads(extra.read_text(encoding="utf-8"))["presets"])
     presets: dict[str, FerriteCoreInput] = {}
     for entry in data.get("presets", []):
+        entry = dict(entry)
+        entry["source_notes"] = tuple(entry.get("source_notes", ()))
         preset = FerriteCoreInput(**entry)
         presets[preset.preset_key] = preset
     return presets
@@ -423,6 +431,7 @@ def synthesize_transformer(
     if gap_mm > 5.0:
         warnings.append(f"estimated total gap is large ({gap_mm:.2f} mm); verify fringing/leakage")
     warnings.extend(nominal_loss.material_warnings)
+    warnings.extend(core_input.source_notes)
     warnings.append(
         "Core-loss calculation uses the bundled iGSE material reference fit.  The datasheet single-point Pv value is shown for cross-checking, not used as a full loss surface."
     )
@@ -466,8 +475,8 @@ def synthesize_transformer(
 
 def export_transformer_synthesis(result: TransformerSynthesisResult, output_directory: str | Path) -> dict[str, Path]:
     """Export a compact engineering calculation book for the transformer page."""
-    from dataclasses import asdict
     import csv
+    from dataclasses import asdict
 
     out = Path(output_directory)
     out.mkdir(parents=True, exist_ok=True)

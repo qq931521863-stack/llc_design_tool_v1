@@ -60,6 +60,7 @@ class ThreePhaseConfig:
     current_slew_a_per_s: float = 2000.0
     modulation_limit: float = 0.98
     pwm_delay_ticks: int = 1
+    pll_kind: str = "SRF"
     pll_bandwidth_hz: float = 20.0  # natural frequency, not closed-loop -3dB bandwidth
     pll_damping: float = 0.707
     pll_min_hz: float = 40.0
@@ -76,7 +77,11 @@ class ThreePhaseConfig:
     load_step_ratio: float = 1.0
 
     def validate(self):
+        if self.pll_kind not in ("SRF", "DDSRF", "DDSOGI"):
+            raise ValueError("Choose SRF, DDSRF or DDSOGI PLL")
         for name, value in asdict(self).items():
+            if name == "pll_kind":
+                continue
             if not isinstance(value, (int, float)) or not math.isfinite(value):
                 raise ValueError(f"{name} must be a finite number")
         for name in (
@@ -257,7 +262,14 @@ def simulate_three_phase(config: ThreePhaseConfig) -> ThreePhaseResult:
         "energy_balance_error_j",
     ]
     signals = {name: np.zeros(len(time)) for name in names}
-    pll = SRFPLL(config)
+    from .pll import GridPLL, PLLConfig
+    pll = GridPLL(PLLConfig(
+        sample_hz=config.control_hz, nominal_hz=config.nominal_hz,
+        bandwidth_hz=config.pll_bandwidth_hz, damping=config.pll_damping,
+        minimum_hz=config.pll_min_hz, maximum_hz=config.pll_max_hz,
+        nominal_peak_v=config.line_line_rms_v * math.sqrt(2 / 3),
+        initial_angle_deg=config.pll_initial_deg, lock_error=config.pll_lock_error,
+        lock_time_s=config.pll_lock_time_s), config.pll_kind)
     vpk = config.line_line_rms_v * math.sqrt(2 / 3)
     current = np.zeros(3)
     bus_energy = 0.5 * config.bus_capacitance_f * config.bus_voltage_v**2
@@ -418,7 +430,7 @@ def simulate_three_phase(config: ThreePhaseConfig) -> ThreePhaseResult:
     )
     warnings = [
         "Averaged ideal six-switch model; no deadtime, device losses, ADC errors or hardware verification.",
-        "SRF PLL assumes positive-sequence balanced input; negative-sequence rejection is not implemented.",
+        f"PLL={config.pll_kind}; separate comparison experiment covers negative sequence and harmonics.",
         "Starts with precharged DC bus; no rectifier diode/precharge/startup protection model.",
     ]
     if not settled:

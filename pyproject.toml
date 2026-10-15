@@ -20,6 +20,8 @@ gui = ["PySide6>=6.7", "pyqtgraph>=0.13.7"]
 web = ["fastapi>=0.141,<1", "uvicorn[standard]>=0.30,<1", "openpyxl>=3.1,<4"]
 agent = ["mcp>=2,<3"]
 
+research = ["scikit-learn>=1.4", "threadpoolctl>=3", "xlrd>=2", "pdfplumber>=0.11"]
+
 [project.scripts]
 pfc-design = "pfc_design.__main__:cli"
 pfc-control-lab = "pfc_design.control_cli:cli"

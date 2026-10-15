@@ -1,0 +1,3 @@
+material_key,frequency_hz,temperature_c,b_peak_t,measured_pv_w_m3
+TDK_PC40_2002,100000,100,0.2,410000
+TDK_PC44_2002,100000,100,0.2,300000

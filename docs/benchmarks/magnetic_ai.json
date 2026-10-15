@@ -1,0 +1,79 @@
+{
+  "schema": "magnetic-independent-test-v1",
+  "material_grade": "3C90",
+  "seed": 20261015,
+  "data_sha256": {
+    "B_waveform[T]_downscaled.csv": "b18588930f7d509a6525dd763074dea7b74ed6c87f26bf5e625e9af14dedeb1f",
+    "Frequency[Hz]_downscaled.csv": "9ea3516199ab1b543c0b18dd0011c5952e46e6f8dcaac24eb5cf3c92c1552ac6",
+    "Temperature[C]_downscaled.csv": "10f7a8dba39676d39345cbbde0adbf954f175d36305ddd1134155db18dfab3cc",
+    "Volumetric_losses[Wm-3]_downscaled.csv": "3a20209ff3fc36180680dbe1179e567f6eeab91bf4fae08fa974bf3adc8780b9"
+  },
+  "samples": 3257,
+  "waveform_samples": 1024,
+  "split": {
+    "training": 1948,
+    "validation": 488,
+    "test": 821,
+    "test_condition": "all 70C samples held out"
+  },
+  "ose_test": {
+    "mape_percent": 34.919960860775056,
+    "p95_percent": 85.45004807885859,
+    "max_percent": 122.34329373618155,
+    "rmse_w_m3": 62814.07946966317
+  },
+  "igse_test": {
+    "mape_percent": 23.25565667761618,
+    "p95_percent": 52.889355540408765,
+    "max_percent": 86.09677643193842,
+    "rmse_w_m3": 48471.07232873275
+  },
+  "residual_fnn_test": {
+    "mape_percent": 3.9467907112523233,
+    "p95_percent": 8.39021336220316,
+    "max_percent": 27.81092895696078,
+    "rmse_w_m3": 8645.25799311893
+  },
+  "validation_candidates": [
+    {
+      "hidden": [
+        32
+      ],
+      "validation": {
+        "mape_percent": 1.9999880610110734,
+        "p95_percent": 5.414790542481277,
+        "max_percent": 15.183544245090497,
+        "rmse_w_m3": 11061.274798747741
+      },
+      "training_s": 0.3485745580001094
+    },
+    {
+      "hidden": [
+        48,
+        24
+      ],
+      "validation": {
+        "mape_percent": 1.7340647232341353,
+        "p95_percent": 4.403015786539457,
+        "max_percent": 10.809720795596922,
+        "rmse_w_m3": 9979.273629319296
+      },
+      "training_s": 0.9122115529971779
+    }
+  ],
+  "validation_gate_passed": true,
+  "gate": ">=10% MAPE improvement and no worse P95 than fitted iGSE on blind 70C set",
+  "igse_fit_seconds": 1.007283531000212,
+  "igse_coefficients": [
+    -4.106031328483805,
+    1.8290092079260591,
+    2.5320357969692324,
+    -0.3306914718578966,
+    0.11699478217533042
+  ],
+  "boundaries": [
+    "MagNet-derived reference data; not our bench measurements",
+    "Single 3C90 grade; no DC-bias/saturation/winding-loss claim",
+    "Temperature holdout does not establish unseen-material or arbitrary-waveform generalization"
+  ]
+}

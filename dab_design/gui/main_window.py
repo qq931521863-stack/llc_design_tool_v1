@@ -7,10 +7,11 @@ from pathlib import Path
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
-from PySide6.QtCore import Qt, QThreadPool, Signal
+from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDockWidget,
     QDoubleSpinBox,
@@ -72,6 +73,10 @@ class DABMainWindow(QMainWindow):
         self.setStyleSheet(theme.workspace_stylesheet(theme.active_theme()))
         self.result: DABResult | None = None
         self._worker = None
+        self._dirty = True
+        self._pending_point = 0
+        self._animation_phase = 0
+        self._animated_lines = []
         toolbar = self.addToolBar("DAB 工程")
         toolbar.setObjectName("dab_toolbar")
         for label, callback in (
@@ -95,7 +100,9 @@ class DABMainWindow(QMainWindow):
         self.summary = QPlainTextEdit()
         self.summary.setReadOnly(True)
         self.summary.setMaximumHeight(220)
-        self.summary.setPlainText("设置参数后运行：默认 5 个输出电压 × 5 个负载点。")
+        self.summary.setPlainText(
+            "选择“查看工况”即可自动计算：默认 5 个输出电压 × 5 个负载点。"
+        )
         layout.addWidget(self.summary)
         self.table = QTableWidget()
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -156,8 +163,20 @@ class DABMainWindow(QMainWindow):
         self.run_button.clicked.connect(self.run_analysis)
         form.addRow(self.run_button)
         self.point_choice = QComboBox()
-        self.point_choice.currentIndexChanged.connect(self._plot_selected)
+        cfg = DABConfig()
+        for vb in cfg.vb_cases_v:
+            for load in cfg.load_ratios:
+                self.point_choice.addItem(f"VB {vb:g} V · {100 * load:g}%")
+        self.point_choice.setCurrentIndex(-1)
+        self.point_choice.currentIndexChanged.connect(self._point_selected)
+        self.point_choice.activated.connect(self._point_activated)
         form.addRow("查看工况", self.point_choice)
+        self.animate = QCheckBox("周期波形循环播放（10 帧/秒）")
+        self.animate.setChecked(True)
+        form.addRow(self.animate)
+        reset_animation = QPushButton("波形相位复位")
+        reset_animation.clicked.connect(self._reset_animation)
+        form.addRow(reset_animation)
         note = QLabel(
             "n = Ns/Np；D1/D2/D3 为半周期归一化相位。\n"
             "正向功率稳态分析；Cp 不改变理想 TPS 指令公式。\n"
@@ -169,8 +188,69 @@ class DABMainWindow(QMainWindow):
         dock.setWidget(scroll)
         dock.setMinimumWidth(340)
         install_language_selector(self)
+        from .control_view import DABControlView
+
+        self.control_view = DABControlView(self.config_from_widgets)
+        self.tabs.addTab(self.control_view, "电压环 / TPS 优化")
+        self.animation_timer = QTimer(self)
+        self.animation_timer.setInterval(100)
+        self.animation_timer.timeout.connect(self._animate_waveform)
+        self.animation_timer.start()
+
+    def _point_activated(self, index):
+        if self._dirty:
+            self._point_selected(index)
+
+    def _point_selected(self, index):
+        if index < 0:
+            return
+        self._pending_point = index
+        if self.result is None or self._dirty:
+            self.run_analysis()
+        else:
+            self._plot_selected(index)
+
+    def _reset_animation(self):
+        self._animation_phase = 0
+        for line, values in self._animated_lines:
+            line.set_ydata(values)
+        self.canvases["电气波形"].draw_idle()
+
+    def _animate_waveform(self):
+        if (
+            not self.animate.isChecked()
+            or not self.isVisible()
+            or self.tabs.tabText(self.tabs.currentIndex()) != "电气波形"
+        ):
+            return
+        self._animation_phase = (self._animation_phase + 1) % 40
+        for line, values in self._animated_lines:
+            line.set_ydata(
+                np.roll(values, round(len(values) * self._animation_phase / 40))
+            )
+        self.canvases["电气波形"].draw_idle()
 
     def _inputs_changed(self):
+        self._dirty = True
+        if hasattr(self, "point_choice"):
+            try:
+                config = self.config_from_widgets()
+                selected = self.point_choice.currentIndex()
+                self.point_choice.blockSignals(True)
+                self.point_choice.clear()
+                for vb in config.vb_cases_v:
+                    for load in config.load_ratios:
+                        self.point_choice.addItem(f"VB {vb:g} V · {100 * load:g}%")
+                self._pending_point = max(
+                    0, min(selected, self.point_choice.count() - 1)
+                )
+                self.point_choice.setCurrentIndex(
+                    min(selected, self.point_choice.count() - 1)
+                )
+            except (ValueError, TypeError):
+                pass
+            finally:
+                self.point_choice.blockSignals(False)
         if self.result is not None:
             self.statusBar().showMessage(
                 "参数已修改；显示与导出的仍为上次运行快照，请重新运行。"
@@ -219,6 +299,7 @@ class DABMainWindow(QMainWindow):
 
     def set_result(self, result: DABResult):
         self.result = result
+        self._dirty = False
         columns = (
             "vb_v",
             "load_percent",
@@ -262,8 +343,10 @@ class DABMainWindow(QMainWindow):
             self.point_choice.addItem(
                 f"VB {point.vb_v:g} V · {point.load_ratio * 100:g}% · {point.pref_w:g} W"
             )
+        selected = min(self._pending_point, len(result.points) - 1)
+        self.point_choice.setCurrentIndex(selected)
         self.point_choice.blockSignals(False)
-        self._plot_selected(0)
+        self._plot_selected(selected)
         self.export_action.setEnabled(True)
         self.statusBar().showMessage("TPS 扫描完成；软件模型结果")
         try:
@@ -279,6 +362,9 @@ class DABMainWindow(QMainWindow):
         if self.result is None or index < 0:
             return
         point = self.result.points[index]
+        self.control_view.set_operating_point(point.vb_v, point.pref_w)
+        self._animation_phase = 0
+        self._animated_lines = []
         same_v = [p for p in self.result.points if p.vb_v == point.vb_v]
         x = [100 * p.load_ratio for p in same_v]
 
@@ -308,6 +394,14 @@ class DABMainWindow(QMainWindow):
             ax[2].step(t, wave.signals[key] + 3 * j, where="post", label=key)
         ax[2].set_ylabel("Leg functions (offset)")
         ax[2].set_xlabel("Time (us); mathematical leg polarity, not gate outputs")
+        for axis in self.figures["电气波形"].axes:
+            for line in axis.lines:
+                self._animated_lines.append(
+                    (line, np.array(line.get_ydata(), copy=True))
+                )
+        self.figures["电气波形"].suptitle(
+            "Periodic steady-state replay · 10 fps; not transient simulation"
+        )
         ax = axes("电流 / 回流", 2)
         for key in ("irms_a", "ipeak_a", "ipp_a"):
             ax[0].plot(x, [p.summary[key] for p in same_v], "o-", label=key)
@@ -395,7 +489,7 @@ class DABMainWindow(QMainWindow):
                 self._error(str(exc))
 
     def closeEvent(self, event):
-        if self._worker is not None:
+        if self._worker is not None or self.control_view._worker is not None:
             self.statusBar().showMessage("计算进行中，请完成后关闭。")
             event.ignore()
         else:

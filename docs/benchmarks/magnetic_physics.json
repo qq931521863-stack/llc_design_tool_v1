@@ -1,0 +1,131 @@
+{
+  "scope": "Numerical identity + 2002 TDK manufacturer table; NOT our bench measurements",
+  "catalog": {
+    "reference_records": 137,
+    "ready_presets": 46,
+    "families": [
+      "EC",
+      "EE",
+      "EER",
+      "EF",
+      "EFD",
+      "EI",
+      "EP",
+      "EPC",
+      "ETD",
+      "LP",
+      "PQ",
+      "PTS",
+      "RM",
+      "UU"
+    ],
+    "flagged_records": [
+      "XLS_EPC_7",
+      "XLS_ETD_4",
+      "XLS_PTS_4"
+    ]
+  },
+  "sinusoidal_igse_convergence": [
+    {
+      "material": "TDK_PC40_2002",
+      "samples": 256,
+      "ose_w_m3": 71333.59197312413,
+      "igse_w_m3": 71330.87418234702,
+      "relative_error": -3.8099732565521904e-05
+    },
+    {
+      "material": "TDK_PC40_2002",
+      "samples": 1024,
+      "ose_w_m3": 71333.59197312413,
+      "igse_w_m3": 71333.4192411281,
+      "relative_error": -2.4214678001621692e-06
+    },
+    {
+      "material": "TDK_PC40_2002",
+      "samples": 4096,
+      "ose_w_m3": 71333.59197312413,
+      "igse_w_m3": 71333.58109548799,
+      "relative_error": -1.5248967344394515e-07
+    },
+    {
+      "material": "TDK_PC44_2002",
+      "samples": 256,
+      "ose_w_m3": 49399.49383273301,
+      "igse_w_m3": 49397.228102410634,
+      "relative_error": -4.5865456234195356e-05
+    },
+    {
+      "material": "TDK_PC44_2002",
+      "samples": 1024,
+      "ose_w_m3": 49399.49383273301,
+      "igse_w_m3": 49399.35191066629,
+      "relative_error": -2.87294576739594e-06
+    },
+    {
+      "material": "TDK_PC44_2002",
+      "samples": 4096,
+      "ose_w_m3": 49399.49383273301,
+      "igse_w_m3": 49399.484956460925,
+      "relative_error": -1.7968346222030362e-07
+    },
+    {
+      "material": "TDK_N97_REF",
+      "samples": 256,
+      "ose_w_m3": 74510.8117390508,
+      "igse_w_m3": 74508.27868874301,
+      "relative_error": -3.399574167384234e-05
+    },
+    {
+      "material": "TDK_N97_REF",
+      "samples": 1024,
+      "ose_w_m3": 74510.8117390508,
+      "igse_w_m3": 74510.64823767761,
+      "relative_error": -2.1943308544658535e-06
+    },
+    {
+      "material": "TDK_N97_REF",
+      "samples": 4096,
+      "ose_w_m3": 74510.8117390508,
+      "igse_w_m3": 74510.80134659114,
+      "relative_error": -1.394758615269609e-07
+    }
+  ],
+  "tdk_independent_table": {
+    "source_file": "tdk_reference_points.csv",
+    "samples": 2,
+    "mape_percent": 10.520992603169997,
+    "mean_signed_error_percent": 10.520992603169997,
+    "p95_absolute_percent": 12.5335941783874,
+    "scope": "Sinusoidal core-only Pv; no automatic coefficient fitting",
+    "rows": [
+      {
+        "source_row": 2,
+        "material_key": "TDK_PC40_2002",
+        "frequency_hz": 100000.0,
+        "temperature_c": 100.0,
+        "b_peak_t": 0.2,
+        "measured_pv_w_m3": 410000.0,
+        "predicted_pv_w_m3": 462304.58796009846,
+        "signed_error_percent": 12.757216575633779,
+        "warnings": []
+      },
+      {
+        "source_row": 3,
+        "material_key": "TDK_PC44_2002",
+        "frequency_hz": 100000.0,
+        "temperature_c": 100.0,
+        "b_peak_t": 0.2,
+        "measured_pv_w_m3": 300000.0,
+        "predicted_pv_w_m3": 324854.30589211866,
+        "signed_error_percent": 8.284768630706218,
+        "warnings": []
+      }
+    ]
+  },
+  "diagnosis": [
+    "Table/graph fit discrepancy is retained, not hidden by a correction multiplier",
+    "Legacy Ae*le vs Ve anomalies are flagged; raw values retained",
+    "Core-window area is not usable bobbin winding area",
+    "Bench waveform, copper/core separation and temperature records still required"
+  ]
+}

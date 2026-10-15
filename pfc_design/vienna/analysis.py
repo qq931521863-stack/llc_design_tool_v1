@@ -1,13 +1,25 @@
 """Small-signal nested-loop analysis for three-phase Vienna PFC."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
+
 import numpy as np
 from numpy.typing import NDArray
 
-from llc_design.control.digital_loop import DigitalTransferFunction, StabilityMargins, calculate_stability_margins
-from pfc_design.control.sensing import SenseFrequencyResponse, SenseChainSummary, sense_frequency_response, summarize_sense_chain
+from llc_design.control.digital_loop import (
+    DigitalTransferFunction,
+    StabilityMargins,
+    calculate_stability_margins,
+)
+from pfc_design.control.config import LoadModel
+from pfc_design.control.sensing import (
+    SenseChainSummary,
+    SenseFrequencyResponse,
+    sense_frequency_response,
+    summarize_sense_chain,
+)
+
 from .config import ViennaControlLabConfig
 
 FloatArray = NDArray[np.float64]
@@ -73,8 +85,15 @@ def build_vienna_control_lab_analysis(config: ViennaControlLabConfig) -> ViennaC
 
     cv = config.voltage_controller.transfer_function(); cv_r=cv.frequency_response(f)
     ceq = stage.series_bus_capacitance_f
-    # dP/dG = 3*Vphase_rms^2.  Vdc energy plant includes series split caps.
-    gvg = (3*stage.phase_rms_v**2)/(max(stage.bus_voltage_v,1e-9)*ceq*s)
+    # Average energy model with copper loss and stored inductor energy.
+    # dPconv/dG = 3*Vrms^2*(1-2*R*G0-L*G0*s).
+    # The -s term is the boost energy-transfer right-half-plane zero.
+    g0 = stage.input_conductance_a_per_v
+    slope = (2*stage.output_power_w/stage.bus_voltage_v
+             if stage.load_model == LoadModel.RESISTIVE else 0.0)
+    gvg = (3*stage.phase_rms_v**2*(1-2*stage.phase_series_resistance_ohm*g0
+                                 -stage.boost_inductance_h*g0*s)
+           /(stage.bus_voltage_v*ceq*s+slope))
     pwm_v = _zoh(f,1/fw.voltage_loop_rate_hz)*np.exp(-1j*2*math.pi*f*fw.voltage_computation_delay_s)
     forward_v = cv_r*pwm_v*ti_actual*gvg
     open_v = forward_v*hvdc.total
@@ -103,7 +122,11 @@ def build_vienna_control_lab_analysis(config: ViennaControlLabConfig) -> ViennaC
     }
     mb=calculate_stability_margins(f,open_b)
 
-    warnings=[]
+    warnings=[
+        "Local averaged control model; excludes saturation, DCM and periodic harmonic coupling.",
+        "Voltage plant includes inductor-energy RHP zero, copper loss and selected R/CPL load slope.",
+        "Midpoint plant is a configured gain approximation; validate against the nonlinear split-bus response.",
+    ]
     if not _stable(mi): warnings.append("Vienna phase-current loop has non-positive margin.")
     if not _stable(mv): warnings.append("Vienna DC-voltage loop has non-positive margin.")
     if not _stable(mb): warnings.append("Vienna midpoint-balance loop has non-positive margin.")

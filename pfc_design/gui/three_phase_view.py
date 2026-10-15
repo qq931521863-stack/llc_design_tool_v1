@@ -11,6 +11,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolb
 from matplotlib.figure import Figure
 from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import (
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -77,7 +78,7 @@ class ThreePhaseDQView(QWidget):
         self.result: ThreePhaseResult | None = None
         self._worker = None
         root = QVBoxLayout(self)
-        title = QLabel("三相两电平 PFC · 六开关 · dq 双环 · SRF-PLL · SVPWM")
+        title = QLabel("三相两电平 PFC · 六开关 · dq 双环 · 可选 PLL · SVPWM")
         title.setStyleSheet("font-size:18px;font-weight:650")
         root.addWidget(title)
         note = QLabel(
@@ -111,6 +112,10 @@ class ThreePhaseDQView(QWidget):
             w.valueChanged.connect(self._changed)
             self.inputs[key] = w
             form.addRow(label, w)
+        self.pll_kind = QComboBox()
+        self.pll_kind.addItems(["SRF", "DDSRF", "DDSOGI"])
+        self.pll_kind.currentTextChanged.connect(self._changed)
+        form.addRow("PLL 算法", self.pll_kind)
         self.run_button = QPushButton("运行 dq / PLL 仿真")
         self.run_button.clicked.connect(self.run_analysis)
         self.save_button = QPushButton("保存参数 JSON")
@@ -157,10 +162,19 @@ class ThreePhaseDQView(QWidget):
             layout.addWidget(canvas)
             self.figures[title], self.canvases[title] = fig, canvas
             self.tabs.addTab(page, title)
+        from .pll_comparison_view import PLLComparisonView
+        self.pll_comparison = PLLComparisonView()
+        self.tabs.addTab(self.pll_comparison, "三种 PLL 对比 / C99")
+        from .three_phase_loop_view import ThreePhaseLoopView
+        from .three_phase_performance_view import ThreePhasePerformanceView
+        self.performance = ThreePhasePerformanceView()
+        self.loop_view = ThreePhaseLoopView()
+        self.tabs.addTab(self.performance, "电流应力 / 损耗 / PF")
+        self.tabs.addTab(self.loop_view, "控制框图 / 双环稳定性")
         self.status = QLabel("准备就绪")
         root.addWidget(self.status)
 
-    def _changed(self):
+    def _changed(self, *_):
         if self.result is not None:
             self.status.setText("参数已更改；显示与导出仍为上次运行快照，请重新运行。")
 
@@ -169,7 +183,7 @@ class ThreePhaseDQView(QWidget):
             k: w.value() / PARAMETERS[k][1] if k in PARAMETERS else w.value()
             for k, w in self.inputs.items()
         }
-        config = ThreePhaseConfig(**values)
+        config = ThreePhaseConfig(**values, pll_kind=self.pll_kind.currentText())
         config.validate()
         return config
 
@@ -200,8 +214,10 @@ class ThreePhaseDQView(QWidget):
 
     def set_result(self, result: ThreePhaseResult):
         self.result = result
+        self.performance.set_two_level(result)
+        self.loop_view.set_result(result)
         self.summary.setPlainText(
-            "SOFTWARE_MODEL_ONLY · dq current control + SRF PLL + two-level SVPWM\n\n"
+            f"SOFTWARE_MODEL_ONLY · dq current control + {result.config.pll_kind} PLL + two-level SVPWM\n\n"
             + json.dumps(result.metrics, indent=2, ensure_ascii=False)
             + "\n\n"
             + "\n".join(result.warnings)
@@ -322,6 +338,7 @@ class ThreePhaseDQView(QWidget):
                 raise ValueError("not a three-phase-dq-v1 project")
             config = ThreePhaseConfig(**data["config"])
             config.validate()
+            self.pll_kind.setCurrentText(config.pll_kind)
             for key, w in self.inputs.items():
                 val = getattr(config, key) * (
                     PARAMETERS[key][1] if key in PARAMETERS else 1

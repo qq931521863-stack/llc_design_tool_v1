@@ -7,60 +7,366 @@
     "verified_for_hardware": false,
     "library_status": "engineering_reference_curves",
     "warning": "The bundled material coefficients are reference fits intended for comparative optimization. Replace them with coefficients fitted from the exact manufacturer loss curves, core lot and temperature range before production release.",
-    "models": ["Steinmetz", "iGSE arbitrary waveform", "temperature interpolation"]
+    "models": [
+      "Steinmetz",
+      "iGSE arbitrary waveform",
+      "temperature interpolation"
+    ]
   },
   "materials": [
     {
-      "key": "TDK_N87_REF", "manufacturer": "TDK/EPCOS", "grade": "N87",
+      "key": "TDK_N87_REF",
+      "manufacturer": "TDK/EPCOS",
+      "grade": "N87",
       "mu_i_25": 2200.0,
-      "bsat_points": [[25.0, 0.49], [100.0, 0.39], [120.0, 0.36]],
-      "steinmetz_points": [
-        [25.0, 3.70, 1.43, 2.72],
-        [60.0, 3.25, 1.43, 2.72],
-        [100.0, 3.00, 1.43, 2.72],
-        [120.0, 3.20, 1.43, 2.72]
+      "bsat_points": [
+        [
+          25.0,
+          0.49
+        ],
+        [
+          100.0,
+          0.39
+        ],
+        [
+          120.0,
+          0.36
+        ]
       ],
-      "frequency_range_hz": [20000.0, 500000.0], "flux_range_t": [0.02, 0.30],
-      "core_loss_correction": 1.00
+      "steinmetz_points": [
+        [
+          25.0,
+          3.7,
+          1.43,
+          2.72
+        ],
+        [
+          60.0,
+          3.25,
+          1.43,
+          2.72
+        ],
+        [
+          100.0,
+          3.0,
+          1.43,
+          2.72
+        ],
+        [
+          120.0,
+          3.2,
+          1.43,
+          2.72
+        ]
+      ],
+      "frequency_range_hz": [
+        20000.0,
+        500000.0
+      ],
+      "flux_range_t": [
+        0.02,
+        0.3
+      ],
+      "core_loss_correction": 1.0
     },
     {
-      "key": "TDK_N97_REF", "manufacturer": "TDK/EPCOS", "grade": "N97",
+      "key": "TDK_N97_REF",
+      "manufacturer": "TDK/EPCOS",
+      "grade": "N97",
       "mu_i_25": 2300.0,
-      "bsat_points": [[25.0, 0.49], [100.0, 0.39], [120.0, 0.36]],
-      "steinmetz_points": [
-        [25.0, 2.75, 1.45, 2.70],
-        [60.0, 2.35, 1.45, 2.70],
-        [100.0, 2.10, 1.45, 2.70],
-        [120.0, 2.30, 1.45, 2.70]
+      "bsat_points": [
+        [
+          25.0,
+          0.49
+        ],
+        [
+          100.0,
+          0.39
+        ],
+        [
+          120.0,
+          0.36
+        ]
       ],
-      "frequency_range_hz": [25000.0, 500000.0], "flux_range_t": [0.02, 0.30],
-      "core_loss_correction": 1.00
+      "steinmetz_points": [
+        [
+          25.0,
+          2.75,
+          1.45,
+          2.7
+        ],
+        [
+          60.0,
+          2.35,
+          1.45,
+          2.7
+        ],
+        [
+          100.0,
+          2.1,
+          1.45,
+          2.7
+        ],
+        [
+          120.0,
+          2.3,
+          1.45,
+          2.7
+        ]
+      ],
+      "frequency_range_hz": [
+        25000.0,
+        500000.0
+      ],
+      "flux_range_t": [
+        0.02,
+        0.3
+      ],
+      "core_loss_correction": 1.0
     },
     {
-      "key": "FERROXCUBE_3C95_REF", "manufacturer": "Ferroxcube", "grade": "3C95",
+      "key": "FERROXCUBE_3C95_REF",
+      "manufacturer": "Ferroxcube",
+      "grade": "3C95",
       "mu_i_25": 3000.0,
-      "bsat_points": [[25.0, 0.50], [100.0, 0.40], [120.0, 0.37]],
-      "steinmetz_points": [
-        [25.0, 2.60, 1.46, 2.72],
-        [60.0, 2.20, 1.46, 2.72],
-        [100.0, 2.00, 1.46, 2.72],
-        [120.0, 2.20, 1.46, 2.72]
+      "bsat_points": [
+        [
+          25.0,
+          0.5
+        ],
+        [
+          100.0,
+          0.4
+        ],
+        [
+          120.0,
+          0.37
+        ]
       ],
-      "frequency_range_hz": [25000.0, 400000.0], "flux_range_t": [0.02, 0.30],
-      "core_loss_correction": 1.00
+      "steinmetz_points": [
+        [
+          25.0,
+          2.6,
+          1.46,
+          2.72
+        ],
+        [
+          60.0,
+          2.2,
+          1.46,
+          2.72
+        ],
+        [
+          100.0,
+          2.0,
+          1.46,
+          2.72
+        ],
+        [
+          120.0,
+          2.2,
+          1.46,
+          2.72
+        ]
+      ],
+      "frequency_range_hz": [
+        25000.0,
+        400000.0
+      ],
+      "flux_range_t": [
+        0.02,
+        0.3
+      ],
+      "core_loss_correction": 1.0
     },
     {
-      "key": "TDK_PC95_REF", "manufacturer": "TDK", "grade": "PC95-class",
+      "key": "TDK_PC95_REF",
+      "manufacturer": "TDK",
+      "grade": "PC95-class",
       "mu_i_25": 3300.0,
-      "bsat_points": [[25.0, 0.51], [100.0, 0.41], [120.0, 0.38]],
-      "steinmetz_points": [
-        [25.0, 2.35, 1.48, 2.70],
-        [60.0, 2.00, 1.48, 2.70],
-        [100.0, 1.85, 1.48, 2.70],
-        [120.0, 2.05, 1.48, 2.70]
+      "bsat_points": [
+        [
+          25.0,
+          0.51
+        ],
+        [
+          100.0,
+          0.41
+        ],
+        [
+          120.0,
+          0.38
+        ]
       ],
-      "frequency_range_hz": [50000.0, 500000.0], "flux_range_t": [0.02, 0.25],
-      "core_loss_correction": 1.00
+      "steinmetz_points": [
+        [
+          25.0,
+          2.35,
+          1.48,
+          2.7
+        ],
+        [
+          60.0,
+          2.0,
+          1.48,
+          2.7
+        ],
+        [
+          100.0,
+          1.85,
+          1.48,
+          2.7
+        ],
+        [
+          120.0,
+          2.05,
+          1.48,
+          2.7
+        ]
+      ],
+      "frequency_range_hz": [
+        50000.0,
+        500000.0
+      ],
+      "flux_range_t": [
+        0.02,
+        0.25
+      ],
+      "core_loss_correction": 1.0
+    },
+    {
+      "key": "TDK_PC40_2002",
+      "manufacturer": "TDK",
+      "grade": "PC40",
+      "mu_i_25": 2300,
+      "bsat_points": [
+        [
+          25,
+          0.51
+        ],
+        [
+          60,
+          0.45
+        ],
+        [
+          100,
+          0.39
+        ],
+        [
+          120,
+          0.35
+        ]
+      ],
+      "steinmetz_points": [
+        [
+          25,
+          0.7747534397795585,
+          1.5651376254273155,
+          2.696190153297403
+        ],
+        [
+          60,
+          0.5810650798346689,
+          1.5651376254273155,
+          2.696190153297403
+        ],
+        [
+          100,
+          0.5294148505160317,
+          1.5651376254273155,
+          2.696190153297403
+        ],
+        [
+          120,
+          0.6456278664829653,
+          1.5651376254273155,
+          2.696190153297403
+        ]
+      ],
+      "frequency_range_hz": [
+        25000,
+        500000
+      ],
+      "flux_range_t": [
+        0.075,
+        0.2
+      ],
+      "core_loss_correction": 1,
+      "source": "TDK 2002 PDF p.9 100C dashed curves; p.6 temperature ratios. Graph-fit approximation.",
+      "provenance": {
+        "pdf_sha256": "d27c337b2796b877f0d2b97c0cc138f0098865e9d4fcb4cbe85484f15dabd9a1",
+        "fit_points": 23,
+        "reference_100c_pv_w_m3": 410000,
+        "reference_100c_fit_w_m3": 462304.58796009846,
+        "status": "DIGITIZED_REFERENCE_FIT"
+      }
+    },
+    {
+      "key": "TDK_PC44_2002",
+      "manufacturer": "TDK",
+      "grade": "PC44",
+      "mu_i_25": 2400,
+      "bsat_points": [
+        [
+          25,
+          0.51
+        ],
+        [
+          60,
+          0.45
+        ],
+        [
+          100,
+          0.39
+        ],
+        [
+          120,
+          0.35
+        ]
+      ],
+      "steinmetz_points": [
+        [
+          25,
+          0.03514106576382662,
+          1.833232445877342,
+          2.717224663444913
+        ],
+        [
+          60,
+          0.023427377175884414,
+          1.833232445877342,
+          2.717224663444913
+        ],
+        [
+          100,
+          0.01757053288191331,
+          1.833232445877342,
+          2.717224663444913
+        ],
+        [
+          120,
+          0.02225600831709019,
+          1.833232445877342,
+          2.717224663444913
+        ]
+      ],
+      "frequency_range_hz": [
+        25000,
+        500000
+      ],
+      "flux_range_t": [
+        0.075,
+        0.2
+      ],
+      "core_loss_correction": 1,
+      "source": "TDK 2002 PDF p.9 100C dashed curves; p.6 temperature ratios. Graph-fit approximation.",
+      "provenance": {
+        "pdf_sha256": "d27c337b2796b877f0d2b97c0cc138f0098865e9d4fcb4cbe85484f15dabd9a1",
+        "fit_points": 23,
+        "reference_100c_pv_w_m3": 300000,
+        "reference_100c_fit_w_m3": 324854.30589211866,
+        "status": "DIGITIZED_REFERENCE_FIT"
+      }
     }
   ]
 }

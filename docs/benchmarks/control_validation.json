@@ -1,0 +1,383 @@
+{
+  "evidence": "SOFTWARE_MODEL_ONLY; no hardware measurement",
+  "dab_voltage": {
+    "loop": {
+      "sample_time_s": 0.0002,
+      "stable": true,
+      "max_pole_radius": 0.9897341557741233,
+      "phase_margin_deg": 84.30547926717877,
+      "gain_margin_db": 26.015082753176188,
+      "crossover_hz": 39.97158089667492,
+      "plant_b": [
+        0.0,
+        0.0,
+        0.0004978188662755345
+      ],
+      "plant_a": [
+        1.0,
+        -0.9912881698401979
+      ],
+      "controller_b": [
+        100.49999999999999,
+        -99.5
+      ],
+      "controller_a": [
+        1.0,
+        -1.0
+      ],
+      "closed_loop_poles": [
+        [
+          0.9897341557741233,
+          0.0
+        ],
+        [
+          0.9488069853223802,
+          0.0
+        ],
+        [
+          0.052747028743695246,
+          0.0
+        ]
+      ]
+    },
+    "model": {
+      "operating_voltage_v": 400,
+      "power_command_w": 3500,
+      "operating_output_w": 3500.0,
+      "load_resistance_ohm": 45.714285714285715,
+      "dpout_dpcmd": 0.9999999999990904,
+      "dpout_dvout_w_per_v": 5.6843418860808015e-11,
+      "plant_numerator": [
+        2.499999999997726
+      ],
+      "plant_denominator": [
+        1,
+        43.74999999985789
+      ],
+      "transfer": "GvP(s) = (dPout/dPcmd)/(C*V0*s + dPload/dV - dPout/dV)",
+      "actuator": "PI output Pcmd [W] -> p=Pcmd/Pbase(Vout) -> TPS(D1,D2,D3)",
+      "boundary": "Averaged bus + periodic steady-state power; no Cp transient states"
+    },
+    "final_error_v": -3.757882927857281e-05,
+    "max_energy_error_j": 3.299582829185965e-13,
+    "saturation_fraction": 0.0
+  },
+  "pll_comparison": {
+    "SRF": {
+      "initial_lock_s": 0.046,
+      "relock_s": null,
+      "tail_phase_rms_deg": 1.6647088895021793,
+      "tail_frequency_ripple_pp_hz": 7.94496227226805,
+      "tail_locked_fraction": 0.0
+    },
+    "DDSRF": {
+      "initial_lock_s": 0.04075,
+      "relock_s": 0.07844999999999996,
+      "tail_phase_rms_deg": 0.07054999719307975,
+      "tail_frequency_ripple_pp_hz": 1.0848753476558173,
+      "tail_locked_fraction": 1.0
+    },
+    "DDSOGI": {
+      "initial_lock_s": 0.1051,
+      "relock_s": 0.07829999999999998,
+      "tail_phase_rms_deg": 0.008474500408228917,
+      "tail_frequency_ripple_pp_hz": 0.12916719569737012,
+      "tail_locked_fraction": 1.0
+    }
+  },
+  "two_level_nonlinear": {
+    "evidence": "SOFTWARE_MODEL_ONLY",
+    "settled": true,
+    "pll_locked": true,
+    "pll_frequency_hz": 50.00000000008178,
+    "pll_phase_error_peak_deg": 5.213196679291933e-10,
+    "vbus_average_v": 700.0000101542589,
+    "vbus_ripple_pp_v": 1.3571888302976731e-05,
+    "pin_w": 10050.682776460593,
+    "load_w": 10000.0,
+    "power_factor": 0.9999999999999994,
+    "phase_current_rms_a": [
+      14.506910996615188,
+      14.506911165164004,
+      14.506910887188784
+    ],
+    "id_error_rms_a": 4.229585307674758e-08,
+    "iq_error_rms_a": 9.487942464717243e-10,
+    "modulation_limited_fraction": 0.0,
+    "energy_balance_error_j": 0.010604416045946058
+  },
+  "two_level_loops": {
+    "current": {
+      "sample_time_s": 5e-05,
+      "stable": true,
+      "max_pole_radius": 0.993350995362865,
+      "phase_margin_deg": 62.886174284515306,
+      "gain_margin_db": 10.05676322724025,
+      "crossover_hz": 1004.1791952182086,
+      "plant_b": [
+        0.0,
+        0.0,
+        0.08305617181206981
+      ],
+      "plant_a": [
+        1.0,
+        -0.9933555062550344
+      ],
+      "controller_b": [
+        3.782575,
+        -3.757425
+      ],
+      "controller_a": [
+        1.0,
+        -1.0
+      ],
+      "closed_loop_poles": [
+        [
+          0.993350995362865,
+          0.0
+        ],
+        [
+          0.5000022554460837,
+          0.253306086847143
+        ],
+        [
+          0.5000022554460837,
+          -0.253306086847143
+        ]
+      ]
+    },
+    "voltage": {
+      "sample_time_s": 0.0005,
+      "stable": true,
+      "max_pole_radius": 0.9648681871868555,
+      "phase_margin_deg": 72.22546417861265,
+      "gain_margin_db": 31.184008975561508,
+      "crossover_hz": 25.79957715229035,
+      "plant_b": [
+        0.0,
+        0.10309137731162688,
+        -0.041913153388647206,
+        -0.05113798515807998,
+        0.00012300298929384602
+      ],
+      "plant_a": [
+        1.0,
+        -1.9353226686442753,
+        0.9351993536618853,
+        0.00011455259790914388,
+        8.762384480880388e-06
+      ],
+      "controller_b": [
+        0.505,
+        -0.495
+      ],
+      "controller_a": [
+        1.0,
+        -1.0
+      ],
+      "closed_loop_poles": [
+        [
+          0.9648681871868555,
+          0.0
+        ],
+        [
+          0.9538386012434558,
+          0.0
+        ],
+        [
+          0.9354582913741357,
+          0.0
+        ],
+        [
+          0.025982865815030533,
+          0.0
+        ],
+        [
+          0.0031135774824294637,
+          0.0
+        ]
+      ]
+    }
+  },
+  "two_level_stress": {
+    "topology": "two_level",
+    "operating_point": {
+      "grid_hz": 50.0,
+      "switching_hz": 20000.0,
+      "inductance_h": 0.0006,
+      "series_resistance_ohm": 0.08,
+      "bus_mean_v": 700.0000101638366,
+      "load_mean_w": 10000.0
+    },
+    "assumptions": {
+      "rds_on_ohm": 0,
+      "switch_energy_j": 0,
+      "energy_reference_v": 400,
+      "energy_reference_a": 20,
+      "vienna_switch_kind": "back_to_back",
+      "bridge_diode_vf_v": 0,
+      "bridge_diode_resistance_ohm": 0,
+      "diode_vf_v": 0,
+      "diode_resistance_ohm": 0,
+      "capacitor_esr_ohm": 0,
+      "hf_ac_resistance_ratio": 1,
+      "turns": 0,
+      "ae_mm2": 0,
+      "ve_mm3": 0,
+      "material_key": "TDK_PC40_2002",
+      "core_temperature_c": 100
+    },
+    "device_stress": {
+      "a_upper_switch": {
+        "rms_a": 10.295701229079496,
+        "peak_a": 22.55715547229582,
+        "mean_abs_a": 6.56173926387852
+      },
+      "a_lower_switch": {
+        "rms_a": 10.295701360571206,
+        "peak_a": 22.55715736911749,
+        "mean_abs_a": 6.561739338928493
+      },
+      "b_upper_switch": {
+        "rms_a": 10.295720414108294,
+        "peak_a": 22.556084743603883,
+        "mean_abs_a": 6.5615824824819615
+      },
+      "b_lower_switch": {
+        "rms_a": 10.295720853481145,
+        "peak_a": 22.55608594735034,
+        "mean_abs_a": 6.561582738301875
+      },
+      "c_upper_switch": {
+        "rms_a": 10.295707116170135,
+        "peak_a": 22.556085638322436,
+        "mean_abs_a": 6.561831278687667
+      },
+      "c_lower_switch": {
+        "rms_a": 10.295706557186469,
+        "peak_a": 22.55608413934079,
+        "mean_abs_a": 6.561830948053958
+      }
+    },
+    "inductor_stress": {
+      "a": {
+        "rms_a": 14.560320405284246,
+        "peak_a": 22.55715736911749,
+        "mean_abs_a": 13.123478602807012
+      },
+      "b": {
+        "rms_a": 14.560347754717013,
+        "peak_a": 22.55608594735034,
+        "mean_abs_a": 13.123165220783838
+      },
+      "c": {
+        "rms_a": 14.560328242647858,
+        "peak_a": 22.556085638322436,
+        "mean_abs_a": 13.123662226741626
+      }
+    },
+    "capacitor_stress": {
+      "bus": {
+        "rms_a": 8.112458385234174,
+        "peak_a": 14.285714186870141,
+        "mean_abs_a": 6.750149820645815
+      }
+    },
+    "flux": {},
+    "loss_breakdown_w": {
+      "inductor_copper_lf": 50.50604321967552,
+      "inductor_copper_hf": 0.3747420264427472,
+      "switch_conduction": 0.0,
+      "switch_switching": 0.0,
+      "outer_diode": 0,
+      "center_bridge_diodes": 0,
+      "capacitor_esr": 0.0,
+      "inductor_core": null
+    },
+    "included_loss_total_w": 50.880785246118265,
+    "efficiency_included_terms": 0.9949376789623446,
+    "loss_model_complete": false,
+    "missing_loss_inputs": [
+      "switch conduction Rds(Tj)",
+      "switching Eon+Eoff",
+      "capacitor ESR(f,T)",
+      "inductor core geometry, turns and material"
+    ],
+    "power_factor_total": 0.9963106447712554,
+    "ithd_2_40_percent": [
+      0.00023531557677599165,
+      0.0002353516147057449,
+      0.00023537194293039298
+    ],
+    "total_distortion_with_hf_percent": [
+      8.612854506521625,
+      8.615037519247618,
+      8.61349272551663
+    ],
+    "harmonic_orders": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40
+    ],
+    "warnings": [
+      "SOFTWARE_MODEL_ONLY: local frozen-duty CCM carrier reconstruction; no deadtime, reverse recovery or independent transient validation.",
+      "PF_total includes reconstructed HF ripple; ITHD_2_40 is low-frequency harmonics only.",
+      "Losses are postprocessed and do not feed back into the bus/current simulation.",
+      "Switching Epair is assigned only to hard-commutating devices by current polarity; soft commutation, reverse recovery and Coss are not added separately."
+    ]
+  },
+  "vienna_margins": {
+    "current_loop": {
+      "phase_margin_deg": 51.64496683467749,
+      "gain_margin_db": 13.383740044498927,
+      "crossover_hz": 1943.1496698405267
+    },
+    "voltage_loop": {
+      "phase_margin_deg": 52.96126116241217,
+      "gain_margin_db": 52.65502759457179,
+      "crossover_hz": 2.648918691859506
+    },
+    "balance_loop": {
+      "phase_margin_deg": 62.59391920017913,
+      "gain_margin_db": 46.5067376477112,
+      "crossover_hz": 15.736414513181431
+    }
+  }
+}

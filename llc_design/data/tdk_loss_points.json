@@ -1,0 +1,493 @@
+{
+  "metadata": {
+    "schema_version": "1.0",
+    "xls_sha256": "bbfcbe1c3b82d5f5517914099898053d11c826922bfa550ba553015f1084e207",
+    "pdf_sha256": "d27c337b2796b877f0d2b97c0cc138f0098865e9d4fcb4cbe85484f15dabd9a1",
+    "source_xls": "\u78c1\u82af\u53c2\u6570\u5217\u8868.xls",
+    "source_pdf": "TDK\u78c1\u6027\u6750\u6599\u89c4\u683c\u53c2\u6570.pdf",
+    "pdf_year": 2002,
+    "note": "XLS core window and PDF bobbin winding area are distinct; no silent substitutions."
+  },
+  "points": [
+    {
+      "grade": "PC40",
+      "frequency_hz": 25000,
+      "b_peak_t": 0.075,
+      "temperature_c": 100,
+      "loss_w_m3": 4559.168829099482,
+      "source_page": 9,
+      "pdf_x": 119.42206929302486,
+      "pdf_y": 324.75960483159275
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 25000,
+      "b_peak_t": 0.1,
+      "temperature_c": 100,
+      "loss_w_m3": 9982.921407275633,
+      "source_page": 9,
+      "pdf_x": 144.15993914146827,
+      "pdf_y": 307.77504316277464
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 25000,
+      "b_peak_t": 0.15,
+      "temperature_c": 100,
+      "loss_w_m3": 30129.02030738643,
+      "source_page": 9,
+      "pdf_x": 179.02600843449315,
+      "pdf_y": 283.8366479943674
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 25000,
+      "b_peak_t": 0.2,
+      "temperature_c": 100,
+      "loss_w_m3": 65971.59549940555,
+      "source_page": 9,
+      "pdf_x": 203.76387828293656,
+      "pdf_y": 266.85208632554935
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 50000,
+      "b_peak_t": 0.075,
+      "temperature_c": 100,
+      "loss_w_m3": 10027.080287787801,
+      "source_page": 9,
+      "pdf_x": 119.42206929302486,
+      "pdf_y": 307.6793928296071
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 50000,
+      "b_peak_t": 0.1,
+      "temperature_c": 100,
+      "loss_w_m3": 21731.967283006736,
+      "source_page": 9,
+      "pdf_x": 144.15993914146827,
+      "pdf_y": 290.9167577771794
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 50000,
+      "b_peak_t": 0.15,
+      "temperature_c": 100,
+      "loss_w_m3": 64648.4481095244,
+      "source_page": 9,
+      "pdf_x": 179.02600843449315,
+      "pdf_y": 267.29115060678646
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 50000,
+      "b_peak_t": 0.2,
+      "temperature_c": 100,
+      "loss_w_m3": 140114.36219618653,
+      "source_page": 9,
+      "pdf_x": 203.76387828293656,
+      "pdf_y": 250.52851555435876
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 100000,
+      "b_peak_t": 0.075,
+      "temperature_c": 100,
+      "loss_w_m3": 27911.548701747375,
+      "source_page": 9,
+      "pdf_x": 119.42206929302486,
+      "pdf_y": 285.49338167119333
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 100000,
+      "b_peak_t": 0.1,
+      "temperature_c": 100,
+      "loss_w_m3": 61192.668728723016,
+      "source_page": 9,
+      "pdf_x": 144.15993914146827,
+      "pdf_y": 268.4817002384807
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 100000,
+      "b_peak_t": 0.15,
+      "temperature_c": 100,
+      "loss_w_m3": 185008.9538099398,
+      "source_page": 9,
+      "pdf_x": 179.02600843449315,
+      "pdf_y": 244.505081909674
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 100000,
+      "b_peak_t": 0.2,
+      "temperature_c": 100,
+      "loss_w_m3": 405609.5827327025,
+      "source_page": 9,
+      "pdf_x": 203.76387828293656,
+      "pdf_y": 227.49340047696137
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 200000,
+      "b_peak_t": 0.075,
+      "temperature_c": 100,
+      "loss_w_m3": 79743.62641316796,
+      "source_page": 9,
+      "pdf_x": 119.42206929302486,
+      "pdf_y": 262.74337051277956
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 200000,
+      "b_peak_t": 0.1,
+      "temperature_c": 100,
+      "loss_w_m3": 176848.8950556155,
+      "source_page": 9,
+      "pdf_x": 144.15993914146827,
+      "pdf_y": 245.482642699782
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 200000,
+      "b_peak_t": 0.15,
+      "temperature_c": 100,
+      "loss_w_m3": 543412.9649179669,
+      "source_page": 9,
+      "pdf_x": 179.02600843449315,
+      "pdf_y": 221.1550132125615
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 200000,
+      "b_peak_t": 0.2,
+      "temperature_c": 100,
+      "loss_w_m3": 1205136.845755101,
+      "source_page": 9,
+      "pdf_x": 203.76387828293656,
+      "pdf_y": 203.89428539956396
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 300000,
+      "b_peak_t": 0.075,
+      "temperature_c": 100,
+      "loss_w_m3": 175289.09614677125,
+      "source_page": 9,
+      "pdf_x": 119.42206929302486,
+      "pdf_y": 245.67463040725897
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 300000,
+      "b_peak_t": 0.1,
+      "temperature_c": 100,
+      "loss_w_m3": 368440.5356805781,
+      "source_page": 9,
+      "pdf_x": 144.15993914146827,
+      "pdf_y": 229.5762664875628
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 300000,
+      "b_peak_t": 0.15,
+      "temperature_c": 100,
+      "loss_w_m3": 1049697.5667416002,
+      "source_page": 9,
+      "pdf_x": 179.02600843449315,
+      "pdf_y": 206.88689689482172
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 300000,
+      "b_peak_t": 0.2,
+      "temperature_c": 100,
+      "loss_w_m3": 2206361.618004142,
+      "source_page": 9,
+      "pdf_x": 203.76387828293656,
+      "pdf_y": 190.78853297512558
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 500000,
+      "b_peak_t": 0.075,
+      "temperature_c": 100,
+      "loss_w_m3": 569920.8254799721,
+      "source_page": 9,
+      "pdf_x": 119.42206929302486,
+      "pdf_y": 220.1228551116421
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 500000,
+      "b_peak_t": 0.1,
+      "temperature_c": 100,
+      "loss_w_m3": 1193993.5175212012,
+      "source_page": 9,
+      "pdf_x": 144.15993914146827,
+      "pdf_y": 204.09560175137818
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 500000,
+      "b_peak_t": 0.15,
+      "temperature_c": 100,
+      "loss_w_m3": 3386025.646493199,
+      "source_page": 9,
+      "pdf_x": 179.02600843449315,
+      "pdf_y": 181.5064568630203
+    },
+    {
+      "grade": "PC40",
+      "frequency_hz": 500000,
+      "b_peak_t": 0.2,
+      "temperature_c": 100,
+      "loss_w_m3": 7093779.506422839,
+      "source_page": 9,
+      "pdf_x": 203.76387828293656,
+      "pdf_y": 165.47920350275638
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 25000,
+      "b_peak_t": 0.075,
+      "temperature_c": 100,
+      "loss_w_m3": 1904.086721129085,
+      "source_page": 9,
+      "pdf_x": 382.53706929302484,
+      "pdf_y": 343.6816324560879
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 25000,
+      "b_peak_t": 0.1,
+      "temperature_c": 100,
+      "loss_w_m3": 4506.91830322634,
+      "source_page": 9,
+      "pdf_x": 407.2749391414683,
+      "pdf_y": 325.0094036836095
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 25000,
+      "b_peak_t": 0.15,
+      "temperature_c": 100,
+      "loss_w_m3": 15180.114365670112,
+      "source_page": 9,
+      "pdf_x": 442.14100843449313,
+      "pdf_y": 298.6923753289063
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 25000,
+      "b_peak_t": 0.2,
+      "temperature_c": 100,
+      "loss_w_m3": 35930.892495872526,
+      "source_page": 9,
+      "pdf_x": 466.8788782829365,
+      "pdf_y": 280.0201465564279
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 50000,
+      "b_peak_t": 0.075,
+      "temperature_c": 100,
+      "loss_w_m3": 4687.723432615315,
+      "source_page": 9,
+      "pdf_x": 382.53706929302484,
+      "pdf_y": 324.1569971401075
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 50000,
+      "b_peak_t": 0.1,
+      "temperature_c": 100,
+      "loss_w_m3": 11302.114100017478,
+      "source_page": 9,
+      "pdf_x": 407.2749391414683,
+      "pdf_y": 305.0853315994543
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 50000,
+      "b_peak_t": 0.15,
+      "temperature_c": 100,
+      "loss_w_m3": 39069.43218042925,
+      "source_page": 9,
+      "pdf_x": 442.14100843449313,
+      "pdf_y": 278.2053287395619
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 50000,
+      "b_peak_t": 0.2,
+      "temperature_c": 100,
+      "loss_w_m3": 94196.5085341548,
+      "source_page": 9,
+      "pdf_x": 466.8788782829365,
+      "pdf_y": 259.1336631989087
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 100000,
+      "b_peak_t": 0.075,
+      "temperature_c": 100,
+      "loss_w_m3": 17540.266368223434,
+      "source_page": 9,
+      "pdf_x": 382.53706929302484,
+      "pdf_y": 295.5605944024747
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 100000,
+      "b_peak_t": 0.1,
+      "temperature_c": 100,
+      "loss_w_m3": 39563.109564055514,
+      "source_page": 9,
+      "pdf_x": 407.2749391414683,
+      "pdf_y": 277.9332081041152
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 100000,
+      "b_peak_t": 0.15,
+      "temperature_c": 100,
+      "loss_w_m3": 124501.41818325777,
+      "source_page": 9,
+      "pdf_x": 442.14100843449313,
+      "pdf_y": 253.08880250658996
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 100000,
+      "b_peak_t": 0.2,
+      "temperature_c": 100,
+      "loss_w_m3": 280820.3219415194,
+      "source_page": 9,
+      "pdf_x": 466.8788782829365,
+      "pdf_y": 235.46141620823047
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 200000,
+      "b_peak_t": 0.075,
+      "temperature_c": 100,
+      "loss_w_m3": 82477.04921452912,
+      "source_page": 9,
+      "pdf_x": 382.53706929302484,
+      "pdf_y": 262.0129775725662
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 200000,
+      "b_peak_t": 0.1,
+      "temperature_c": 100,
+      "loss_w_m3": 168670.70527971987,
+      "source_page": 9,
+      "pdf_x": 407.2749391414683,
+      "pdf_y": 246.5087209214366
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 200000,
+      "b_peak_t": 0.15,
+      "temperature_c": 100,
+      "loss_w_m3": 483648.03506827244,
+      "source_page": 9,
+      "pdf_x": 442.14100843449313,
+      "pdf_y": 223.67998155819828
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 200000,
+      "b_peak_t": 0.2,
+      "temperature_c": 100,
+      "loss_w_m3": 1021601.4998071088,
+      "source_page": 9,
+      "pdf_x": 466.8788782829365,
+      "pdf_y": 207.47485206013496
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 300000,
+      "b_peak_t": 0.075,
+      "temperature_c": 100,
+      "loss_w_m3": 209546.2644658384,
+      "source_page": 9,
+      "pdf_x": 382.53706929302484,
+      "pdf_y": 241.80613183387945
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 300000,
+      "b_peak_t": 0.1,
+      "temperature_c": 100,
+      "loss_w_m3": 404233.59082594083,
+      "source_page": 9,
+      "pdf_x": 407.2749391414683,
+      "pdf_y": 227.56704326537312
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 300000,
+      "b_peak_t": 0.15,
+      "temperature_c": 100,
+      "loss_w_m3": 1074850.2833692688,
+      "source_page": 9,
+      "pdf_x": 442.14100843449313,
+      "pdf_y": 206.3737360330771
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 300000,
+      "b_peak_t": 0.2,
+      "temperature_c": 100,
+      "loss_w_m3": 2151555.207979051,
+      "source_page": 9,
+      "pdf_x": 466.8788782829365,
+      "pdf_y": 191.33365053090102
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 500000,
+      "b_peak_t": 0.075,
+      "temperature_c": 100,
+      "loss_w_m3": 583898.1610314415,
+      "source_page": 9,
+      "pdf_x": 382.53706929302484,
+      "pdf_y": 219.59777833790173
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 500000,
+      "b_peak_t": 0.1,
+      "temperature_c": 100,
+      "loss_w_m3": 1146196.132741737,
+      "source_page": 9,
+      "pdf_x": 407.2749391414683,
+      "pdf_y": 204.98097895300882
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 500000,
+      "b_peak_t": 0.15,
+      "temperature_c": 100,
+      "loss_w_m3": 2965576.0954378136,
+      "source_page": 9,
+      "pdf_x": 442.14100843449313,
+      "pdf_y": 184.37975729091062
+    },
+    {
+      "grade": "PC44",
+      "frequency_hz": 500000,
+      "b_peak_t": 0.2,
+      "temperature_c": 100,
+      "loss_w_m3": 5821446.407602444,
+      "source_page": 9,
+      "pdf_x": 466.8788782829365,
+      "pdf_y": 169.76295790601773
+    }
+  ]
+}

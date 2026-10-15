@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
@@ -34,6 +35,7 @@ from llc_design.control.digital_loop import (
     TwoP2ZControllerConfig,
 )
 from llc_design.control.phase_budget import phase_budget
+from llc_design.gui import theme
 from llc_design.gui.widgets.bode_cursor import BodeCursorMeasurement, format_frequency
 from llc_design.gui.widgets.control_block_diagram import (
     BlockSpec,
@@ -41,16 +43,14 @@ from llc_design.gui.widgets.control_block_diagram import (
     ControlBlockDiagram,
 )
 from llc_design.gui.widgets.sense_schematic import AnalogSenseSchematic
-from llc_design.gui import theme
-from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
+from llc_design.user_messages import show_operation_issue
 from pfc_design.control.config import (
     ADCTimingConfig,
     DigitalFilterConfig,
     ExternalSenseConfig,
     LoadModel,
 )
-from power_codegen import generate_vienna_control_code
 from pfc_design.vienna import (
     ViennaControlLabAnalysis,
     ViennaControlLabConfig,
@@ -59,6 +59,8 @@ from pfc_design.vienna import (
     ViennaPowerStageConfig,
     ViennaSwitchingWaveforms,
 )
+from power_codegen import generate_vienna_control_code
+
 from .bode_panel import PFCBodeCurve, SelectableBodePanel
 from .inductor_design import PFCInductorDesignEditor, PFCInductorDesignResultView
 
@@ -504,6 +506,12 @@ class ViennaControlLabView(QWidget):
         self.summary.setReadOnly(True)
         self.summary.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.tabs.addTab(self.summary, "Summary")
+        from .pll_comparison_view import PLLComparisonView
+        self.pll_comparison = PLLComparisonView()
+        self.tabs.addTab(self.pll_comparison, "PLL 对比 / C99")
+        from .three_phase_performance_view import ThreePhasePerformanceView
+        self.performance = ThreePhasePerformanceView()
+        self.tabs.addTab(self.performance, "电流应力 / 器件电感电容损耗")
         layout.addWidget(self.tabs, 1)
         return page
 
@@ -632,6 +640,7 @@ class ViennaControlLabView(QWidget):
     def set_result(self, result):
         self.result = result
         analysis, line, switching = result
+        self.performance.set_vienna(analysis.config, line)
         f = analysis.frequencies_hz
 
         ci = analysis.current_loop.responses
