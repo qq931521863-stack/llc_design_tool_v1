@@ -58,6 +58,7 @@ CATALOGUE: dict[str, str] = {
     # ----------------------------------------------------------------- updater
     "点击发送邮件：maileyang@qq.com\n": "Click to send an e-mail: maileyang@qq.com\n",
     "有不懂的地方、或结果与实测不符，欢迎直接发邮件讨论（帮助 F1 → 联系方式与支持）": "If anything is unclear, or a result disagrees with measurement, feel free to e-mail me (Help F1 → Contact & Support)",
+    "作者：杨帅": "Author: Yang Shuai",
     "微信: maileyang": "WeChat: maileyang",
     "微信号: maileyang\n": "WeChat ID: maileyang\n",
     "公众号 / 技术博客: 开关电源仿真与实用设计（帮助 F1 → 联系方式与支持 内有二维码）": "Official account / blog: 开关电源仿真与实用设计 (QR code under Help F1 → Contact & Support)",

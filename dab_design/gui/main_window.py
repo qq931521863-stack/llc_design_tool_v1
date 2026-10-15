@@ -41,7 +41,7 @@ from dab_design.core import (
     save_config,
 )
 from llc_design.gui import theme
-from llc_design.gui.contact import install_contact_bar
+from llc_design.gui.contact import add_toolbar_contacts
 from llc_design.gui.help import install_help
 from llc_design.gui.i18n_ui import install_language_selector
 from llc_design.gui.workers import FunctionWorker
@@ -95,7 +95,7 @@ class DABMainWindow(QMainWindow):
             toolbar.addAction(action)
         self.export_action = action
         self.export_action.setEnabled(False)
-        install_contact_bar(self)
+        add_toolbar_contacts(toolbar)
         install_help(self, "dab")
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)

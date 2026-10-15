@@ -1,85 +1,55 @@
-"""Prominent bilingual author/contact card shared by desktop workspaces."""
+"""Compact author/contact details in the existing toolbar row."""
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QSizePolicy,
     QToolButton,
+    QWidget,
 )
 
 from . import theme
 from .help import CONTACT_AUTHOR, CONTACT_AUTHOR_EN, CONTACT_EMAIL, CONTACT_WECHAT
+from .i18n_ui import bind_text
 
 
-def create_contact_card(parent=None):
+def add_toolbar_contacts(toolbar):
     palette = theme.active_theme()
-    card = QFrame(parent)
-    card.setObjectName("author_contact_card")
-    card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-    card.setStyleSheet(
-        f"QFrame#author_contact_card {{ background:{palette.surface}; "
-        f"border:2px solid {palette.accent}; border-radius:8px; }}"
-    )
-    row = QHBoxLayout(card)
-    row.setContentsMargins(14, 7, 14, 7)
-    row.setSpacing(24)
-    author = QLabel(f"作者：{CONTACT_AUTHOR}\nAuthor: {CONTACT_AUTHOR_EN}")
+    strip = QWidget(toolbar)
+    strip.setObjectName("author_contact_strip")
+    strip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    strip.setStyleSheet("background:transparent; border:0;")
+    row = QHBoxLayout(strip)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(8)
+    row.addStretch(1)
+    author = QLabel(f"作者：{CONTACT_AUTHOR}")
     author.setObjectName("contact_author")
-    author.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    author.setStyleSheet(
-        f"color:{palette.accent}; font-size:15px; font-weight:700; border:0;"
-    )
+    author.setToolTip(f"{CONTACT_AUTHOR} / {CONTACT_AUTHOR_EN}")
+    author.setStyleSheet(f"color:{palette.text_muted}; font-size:12px;")
+    bind_text(author, f"作者：{CONTACT_AUTHOR}")
     row.addWidget(author)
     email = QLabel(
-        f'邮箱 / Email<br><a href="mailto:{CONTACT_EMAIL}" '
-        f'style="color:{palette.text_strong}; font-size:15px; font-weight:600;">{CONTACT_EMAIL}</a>'
+        f'<a href="mailto:{CONTACT_EMAIL}" style="color:{palette.text_muted};'
+        f'text-decoration:none;font-size:12px;">{CONTACT_EMAIL}</a>'
     )
     email.setObjectName("contact_email")
     email.setOpenExternalLinks(True)
-    email.setTextInteractionFlags(
-        Qt.TextInteractionFlag.TextBrowserInteraction
-        | Qt.TextInteractionFlag.TextSelectableByMouse
-    )
-    email.setStyleSheet(f"color:{palette.text}; font-size:13px; border:0;")
+    email.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
     row.addWidget(email)
     wechat = QToolButton()
     wechat.setObjectName("contact_wechat_copy")
-    wechat.setProperty("i18nSkip", True)
-    label = f"微信 / WeChat: {CONTACT_WECHAT}\n复制 / Copy"
-    wechat.setText(label)
+    wechat.setText(f"微信: {CONTACT_WECHAT}")
     wechat.setToolTip("点击复制微信号 / Click to copy WeChat ID")
+    wechat.setAutoRaise(True)
     wechat.setCursor(Qt.CursorShape.PointingHandCursor)
     wechat.setStyleSheet(
-        f"QToolButton {{ color:{palette.text_strong}; background:{palette.hover}; "
-        f"border:1px solid {palette.accent}; border-radius:5px; padding:5px 12px; "
-        "font-size:14px; font-weight:600; }"
+        f"color:{palette.text_muted};font-size:12px;padding:0 2px;"
+        "background:transparent;border:0;"
     )
-    timer = QTimer(wechat)
-    timer.setSingleShot(True)
-    timer.timeout.connect(lambda: wechat.setText(label))
-
-    def copy_wechat():
-        QApplication.clipboard().setText(CONTACT_WECHAT)
-        wechat.setText(f"微信 / WeChat: {CONTACT_WECHAT}\n已复制 / Copied")
-        timer.start(1800)
-
-    wechat.clicked.connect(copy_wechat)
+    wechat.clicked.connect(lambda: QApplication.clipboard().setText(CONTACT_WECHAT))
     row.addWidget(wechat)
-    row.addStretch(1)
-    return card
-
-
-def install_contact_bar(window):
-    if hasattr(window, "author_contact_bar"):
-        return window.author_contact_bar
-    window.addToolBarBreak(Qt.ToolBarArea.TopToolBarArea)
-    bar = window.addToolBar("Author / Contact")
-    bar.setObjectName("author_contact_toolbar")
-    bar.setMovable(False)
-    bar.setFloatable(False)
-    bar.addWidget(create_contact_card(bar))
-    window.author_contact_bar = bar
-    return bar
+    toolbar.addWidget(strip)
+    return strip

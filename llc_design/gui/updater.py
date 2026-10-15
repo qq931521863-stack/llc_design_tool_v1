@@ -16,7 +16,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QMessageBox, QToolButton
 
 from llc_design import __version__
-from llc_design.gui.contact import install_contact_bar
+from llc_design.gui.contact import add_toolbar_contacts
 from llc_design.i18n import t
 
 APP_VERSION = __version__
@@ -187,8 +187,8 @@ def _remember_release(tag_name: str) -> None:
 
 
 def add_toolbar_right_side(toolbar, main_window) -> None:
-    """Keep updates in the command row; reserve a visible row for contacts."""
-    install_contact_bar(main_window)
+    """Append compact contacts and updates to the existing toolbar row."""
+    add_toolbar_contacts(toolbar)
 
     update_button = QToolButton()
     update_button.setText("检查更新")

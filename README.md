@@ -36,7 +36,7 @@ One toolkit connects power-stage design, magnetics, loss estimation, voltage/cur
 
 **Latest engineering additions:** [Detailed notes, limitations and reproduction (Chinese)](docs/engineering-expansion.md) · [Control validation](docs/benchmarks/control_validation.json) · [Independent magnetic-model test](docs/benchmarks/magnetic_ai.json) · [Optimization comparison](docs/benchmarks/dab_optimization.json) · [Regression scope (Chinese)](docs/benchmarks/regression.md)
 
-**Latest reliability audit:** Fixed stale controller exports, out-of-order PFC results, DAB Cp linearization/discrete-model consistency, and LLC three-phase waveform rendering. The launcher and every workspace now display **Author: 杨帅 / Yang Shuai** with email and WeChat. See [findings, verification and remaining limits](docs/UI_ALGORITHM_AUDIT.md).
+**Latest reliability audit:** Fixed stale controller exports, out-of-order PFC results, DAB Cp linearization/discrete-model consistency, and LLC three-phase waveform rendering. Each workspace shows **Author: 杨帅 / Yang Shuai**, email and WeChat in the existing upper-right toolbar row. The launcher opens maximized with all six entries visible together. See [findings, verification and remaining limits](docs/UI_ALGORITHM_AUDIT.md).
 
 The project is built around four rules:
 

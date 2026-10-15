@@ -11,15 +11,12 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QScrollArea,
     QVBoxLayout,
-    QWidget,
 )
 
 from llc_design import __version__
 from llc_design.core.spec import LLCDesignSpec
 from llc_design.gui import theme
-from llc_design.gui.contact import create_contact_card
 from llc_design.gui.help import show_help
 from llc_design.i18n import t
 from llc_design.gui.main_window import LLCMainWindow
@@ -70,7 +67,7 @@ class _LauncherCard(QFrame):
             f"border-color:{palette.accent}; background:{palette.hover};}}"
         )
         root = QVBoxLayout(self)
-        root.setContentsMargins(22, 18, 22, 18)
+        root.setContentsMargins(16, 14, 16, 14)
         root.setSpacing(8)
         if badge:
             chip = QLabel(badge)
@@ -82,7 +79,7 @@ class _LauncherCard(QFrame):
         title_label = QLabel(title)
         title_label.setWordWrap(True)
         title_label.setStyleSheet(
-            f"font-size:{20 if primary else 16}px; font-weight:700;"
+            f"font-size:{18 if primary else 16}px; font-weight:700;"
             f"color:{palette.text_strong}; border:none; background:transparent;"
         )
         root.addWidget(title_label)
@@ -122,13 +119,14 @@ class WorkspaceSelectionDialog(QDialog):
         super().__init__(parent)
         self.selected_workspace: str | None = None
         self.setWindowTitle(t("电源设计工具箱 — 选择设计功能"))
-        self.setMinimumSize(1180, 820)
+        self.setMinimumSize(1024, 680)
+        self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
         self.setStyleSheet(theme.launcher_stylesheet(theme.active_theme()))
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(28, 24, 28, 20)
-        root.setSpacing(14)
+        root.setContentsMargins(20, 16, 20, 16)
+        root.setSpacing(10)
 
         title = QLabel(t("请选择进入的设计工作区"))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -143,17 +141,6 @@ class WorkspaceSelectionDialog(QDialog):
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("font-size: 13px; padding: 0 40px 8px 40px;")
         root.addWidget(subtitle)
-        root.addWidget(create_contact_card(self))
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        content = QWidget()
-        choices = QVBoxLayout(content)
-        choices.setContentsMargins(0, 0, 8, 0)
-        choices.setSpacing(14)
-        scroll.setWidget(content)
-        root.addWidget(scroll, 1)
 
         guided = _LauncherCard(
             t("系统建模与设计 / Guided System Design"),
@@ -167,15 +154,6 @@ class WorkspaceSelectionDialog(QDialog):
         guided.button.setObjectName("guided_system_design_button")
         guided.setObjectName("guided_system_design_card")
         guided.button.clicked.connect(lambda: self._select("system_modeling"))
-        choices.addWidget(guided)
-
-        expert_label = QLabel("Expert Workspaces")
-        expert_label.setStyleSheet(
-            f"font-size:12px; font-weight:700; letter-spacing:0.6px;"
-            f"color:{theme.active_theme().text_muted}; padding-top:6px;"
-        )
-        choices.addWidget(expert_label)
-
         grid = QGridLayout()
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(14)
@@ -218,12 +196,15 @@ class WorkspaceSelectionDialog(QDialog):
         pfc.button.clicked.connect(lambda: self._select("pfc"))
         control.button.clicked.connect(lambda: self._select("control"))
         fra.button.clicked.connect(lambda: self._select("fra"))
-        grid.addWidget(llc, 0, 0)
-        grid.addWidget(pfc, 0, 1)
+        grid.addWidget(guided, 0, 0)
+        grid.addWidget(llc, 0, 1)
+        grid.addWidget(pfc, 0, 2)
         grid.addWidget(control, 1, 0)
         grid.addWidget(fra, 1, 1)
-        grid.addWidget(dab, 2, 0, 1, 2)
-        choices.addLayout(grid)
+        grid.addWidget(dab, 1, 2)
+        for column in range(3):
+            grid.setColumnStretch(column, 1)
+        root.addLayout(grid, 1)
 
         cancel = QPushButton(t("退出"))
         cancel.clicked.connect(self.reject)

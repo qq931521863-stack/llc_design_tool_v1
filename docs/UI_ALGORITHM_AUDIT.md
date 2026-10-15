@@ -36,13 +36,16 @@ still requires its parameters and traceback.
   failure. Vienna-only fields are hidden for two-level PFC.
 - Failed magnetic imports/predictions clear old export state. Prediction input
   changes invalidate predictions without invalidating independent measurements.
-- The launcher and all five workspaces show a dedicated bilingual contact
-  card: **杨帅 / Yang Shuai**, clickable email and copyable WeChat ID. The
-  launcher scrolls workspace cards while keeping contacts visible. Chinese,
-  English, Japanese and Korean help/about pages, README and generated report
-  attribution use the same author name.
+- All five workspaces show compact author/contact details in the existing
+  upper-right toolbar row: **杨帅 / Yang Shuai**, clickable email and copyable
+  WeChat ID. There is no separate contact row or banner. The launcher opens
+  maximized and presents all six entries in a three-column, two-row grid without
+  scrolling. Chinese and English layouts were checked at 1280 × 720: every entry
+  and its button remained visible, with no overlapping cards. Chinese, English,
+  Japanese and Korean help/about pages, README and generated report attribution
+  use the same author name.
 
-![Author contact card](assets/author-contact-bar.png)
+![Compact toolbar contacts](assets/author-contact-bar.png)
 
 ## Numerical checks and boundaries
 
