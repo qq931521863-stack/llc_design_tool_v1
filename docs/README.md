@@ -16,6 +16,9 @@ The repository used to accumulate release snapshots, one-off migration notes, te
 
 | Document | Scope |
 | --- | --- |
+| [engineering-expansion.md](engineering-expansion.md) | Magnetic catalog/measured validation/AI gate, DAB voltage loop and optimization, PLL comparison, two-level/Vienna stress/loss and stability |
+| [DAB_TPS_AND_THREE_PHASE_DQ.md](DAB_TPS_AND_THREE_PHASE_DQ.md) | DAB TPS conventions, two-level dq plant, periodic waveforms and model boundaries |
+| [MULTI_PR_AND_MAGNETICS.md](MULTI_PR_AND_MAGNETICS.md) | Parallel quasi-PR 1/3/5/7/9/11, coefficient equations/C99, Litz optimization and complex-impedance fitting |
 | [DIGITAL_CONTROL_ARCHITECTURE.md](DIGITAL_CONTROL_ARCHITECTURE.md) | Exact H(z), mixed-domain loop model, sensing/ADC, FM/PWM, timing and C99 contract |
 | [LLC_MODELING.md](LLC_MODELING.md) | FHA / HB / switched TD / shared-ngspice model hierarchy and appropriate use |
 | [PFC_ENGINEERING_WORKSPACE.md](PFC_ENGINEERING_WORKSPACE.md) | TTPL specification-to-hardware sizing, workflow boundaries and PFC V2 upgrade sequence |

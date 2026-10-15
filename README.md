@@ -2,7 +2,7 @@
 
 > **Open-source power electronics CAE toolkit for LLC, PFC, FRA, digital control, C99 code generation and switching verification.**
 
-LLC · DAB TPS · Totem-Pole PFC · Vienna PFC · Two-Level dq PFC · Digital Control · FRA · C99 `float32_t` · ngspice · Web API · MCP
+LLC · DAB TPS · Totem-Pole PFC · Vienna / Two-Level PFC · SRF / DDSRF / DSOGI PLL · Multi-harmonic PR · Magnetics · FRA · C99 · ngspice · Web / MCP
 
 [![Build & Test](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml)
 [![ngspice Smoke](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml)
@@ -12,6 +12,29 @@ LLC · DAB TPS · Totem-Pole PFC · Vienna PFC · Two-Level dq PFC · Digital Co
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 
 Power Design Toolkit is an engineering-oriented power-electronics design and digital-control platform. It connects **power-stage design, component/loss screening, multi-fidelity models, measured FRA data, exact discrete controller H(z), stability analysis, C99 code generation, firmware-correlated switching co-simulation and Agent/API access** in one codebase.
+
+## 当前功能总览 / Current capabilities
+
+一个工具箱连接功率级设计、磁性器件、损耗、电流电压波形、控制环设计、实测 FRA、数字系数与 C99 导出。
+
+| 模块 | 已实现功能 | 使用入口 / 说明 |
+|---|---|---|
+| **LLC 谐振变换器** | FHA、多谐波 HB、开关时域、增益/ZVS、原边/SR 器件库、磁设计、数字电压环、交错分析、可选 ngspice 对比 | LLC Design；[模型层级](docs/LLC_MODELING.md) |
+| **DAB TPS** | 多工况 TPS、L / L+Cp 周期解、功率/回流/电容应力、PWM计数、选择工况自动计算、10 fps周期回放 | DAB TPS；[约定](docs/DAB_TPS_AND_THREE_PHASE_DQ.md) |
+| **DAB 数字闭环与优化** | PI→Pcmd→TPS→Vout 小信号模型、离散Bode/极点、参考与负载阶跃、控制器导入/C99、约束优化和量化复核 | DAB → 电压环 / TPS 优化；[工程说明](docs/engineering-expansion.md#dab-电压环与约束优化) |
+| **单相 Totem-Pole PFC** | L/C选型、器件/电容/热分析、PF/THD、过零/最小脉宽、采样与双环、Exact H(z)、C99、shared-ngspice闭环 | PFC → TTPL Engineering；[工作流](docs/PFC_ENGINEERING_WORKSPACE.md) |
+| **三相两电平 PFC** | 六开关SVPWM、dq解耦双环、三种PLL可选、频率/相位/负载扰动、多速率稳定性、器件/电感/电容应力与损耗 | PFC → Three-Phase Two-Level dq / PLL |
+| **Vienna PFC** | ABC电流环、母线与中点平衡、三电平调制、扇区/波形、RMS/PK、PF/ITHD、器件/磁芯/电容损耗；两种中点开关结构 | PFC → Vienna；[新增分析范围](docs/engineering-expansion.md#电流损耗与效率的范围) |
+| **三种 PLL 对比** | SRF、DDSRF、双SOGI正序PLL；相同输入下比较锁相、相位误差、频率纹波、ABC及正序输出；框图/CSV/C99 | 两电平 / Vienna → PLL 对比；DDSOGI在此指DSOGI |
+| **数字控制与多谐波 PR** | PI/PIF/PID/Type-II/III等；可选1/3/5/7/9/11次准PR、支路/合成Bode、float32系数及每个C函数 | Control Tools；[PR实现与系数](docs/MULTI_PR_AND_MAGNETICS.md) |
+| **磁芯/材料数据库** | 46个完整磁芯/骨架预设、137条历史参考记录、搜索/筛选/自动带参、来源与异常标记、实测CSV校核 | LLC → 变压器设计 → 磁芯参数库 |
+| **磁模型与复阻抗** | 波形iGSE、Litz/Dowell、复阻抗拟合/SPICE；通过独立测试门槛的可选3C90残差模型 | [磁计算、数据与AI验证](docs/engineering-expansion.md#ai-的独立验证与接入边界) |
+| **FRA / 实测调参** | Bode100/SIMPLIS/CSV、原控制器去嵌、Fc/PM/GM/Ms/Mt、自动设计、实测PI调参Map、MATLAB/Python研究导出 | FRA Loop Designer；[实测调参Map](docs/FRA_TUNING_MAP.md) |
+| **Web / Agent** | 共用确定性内核的FastAPI/Web与MCP接口 | [Web](docs/WEB_DEPLOYMENT.md) / [MCP](docs/AGENT_MCP.md)；新增桌面功能不自动等于新增API |
+
+**源码与发行包分别说明：** 本页描述 `main` 源码；最新二进制包以对应 Release 的版本说明为准。本轮新增功能为软件模型与数据验证，未宣称实机闭环或高压验证。DAB和三相新增页面当前以桌面/Python为主；C99为控制/PLL参考函数，不含板级PWM/ADC驱动。
+
+**Latest engineering additions:** [中文工程说明、模型限制和复现步骤](docs/engineering-expansion.md) · [控制验证](docs/benchmarks/control_validation.json) · [磁模型独立测试](docs/benchmarks/magnetic_ai.json) · [优化对比](docs/benchmarks/dab_optimization.json) · [回归范围](docs/benchmarks/regression.md)
 
 The project is built around four rules:
 
@@ -37,22 +60,17 @@ See [Multi-harmonic PR and magnetics](docs/MULTI_PR_AND_MAGNETICS.md).
 ## 1. 30-second engineering workflow
 
 ```mermaid
-flowchart LR
-    A["Requirements / measured FRA"] --> B["Power-stage design"]
-    B --> C["Component / loss / thermal screening"]
-    C --> D["Plant G(s) / G(z) or switched model"]
-    A --> E["Measured G(jw)"]
-    D --> F["Control Tools / topology control"]
-    E --> F
-    F --> G["Exact controller H(z)"]
-    G --> H["PM / GM / S / T"]
-    G --> I["C99 float32_t"]
-    G --> J["Firmware-correlated runtime"]
-    J --> K["shared-ngspice switching circuit"]
-    I --> L["Firmware integration"]
-    K --> M["Reference Design evidence"]
-    L --> M
-    M --> N["Bench evidence<br/>UNKNOWN until supplied"]
+flowchart TD
+    A["Specification and measured data"] --> B["Power stage and component models"]
+    A --> C["Measured FRA and de-embedding"]
+    B --> D["Plant and digital controller"]
+    C --> D
+    D --> E["Bode, margins and sampled poles"]
+    E --> F["Exact H(z) and C99"]
+    E --> G["Closed-loop software verification"]
+    G --> H["Optional switching correlation"]
+    F --> I["Bench correlation and evidence"]
+    H --> I
 ```
 
 A typical LLC path is:
@@ -97,18 +115,39 @@ The desktop launcher opens five independent workspaces while preserving state du
 | Workspace | Main purpose | Typical outputs |
 | --- | --- | --- |
 | **LLC Design** | Resonant tank, operating region, Q/ZVS, magnetics, primary/SR devices, interleaving, waveforms, small signal and digital voltage loop | Lr/Cr/Lm, gain map, device/loss comparison, stress data, FHA/HB/TD comparison, Gvf(s/z), exact H(z), PM/GM, shared-ngspice closed-loop verification |
-| **DAB TPS** | Forward-power TPS command law and operating-point sweep from the supplied MATLAB V2 reference | D1/D2/D3, ideal L-only and L+Cp waveforms, current/capacitor stress, commutation-current diagnostics, PWM ticks, CSV and project JSON; ZVS remains UNKNOWN |
-| **PFC Design** | Single-phase TTPL engineering workflow plus three-phase Vienna PFC | L/C sizing, device/loss/thermal screening, AC PF/THD, zero-crossing and switching waveforms, sensing/ADC, current/voltage H(z), C99, shared-ngspice TTPL closed loop |
-| **Control Tools** | General digital controller/filter design | H(s), exact H(z), Bode, step/impulse, poles/zeros, SOS/DF2T, single-file C99 `float32_t` |
+| **DAB TPS** | TPS operating points, sampled voltage-loop design and constrained optimization | D1/D2/D3, periodic playback, L/L+Cp waveforms, stresses, Pcmd→Vout model, Bode/poles, closed-loop steps, PWM-verified candidates, coefficients/C99 and JSON/CSV; ZVS remains UNKNOWN |
+| **PFC Design** | TTPL, three-phase two-level dq and Vienna | Topology-specific current/voltage control, PLL comparisons, sizing/stress/loss, PF/THD, Bode, coefficients/C99; shared-ngspice closed loop currently for TTPL |
+| **Control Tools** | Digital controller/filter and parallel multi-harmonic quasi-PR design | H(s)/H(z), Bode, step/impulse, poles/zeros, SOS/DF2T, selectable PR harmonics 1/3/5/7/9/11, float32 coefficients, C99 |
 | **FRA Loop Designer** | Controller design from measured frequency response | Bode100/SIMPLIS import, controller de-embedding, Equivalent Plant, Fc/PM/GM/Ms/Mt, Auto Design, model ID, C99 |
 
-The PFC workspace also includes **Three-Phase Two-Level dq / PLL**: a separate
-six-switch averaged plant, sampled SRF-PLL, voltage PI, decoupled dq current PIs,
-SVPWM, and frequency/phase/load disturbance analysis. Its source angle is used
-only for generating the grid and evaluating phase error, never as controller feedback.
-Both new capabilities currently support desktop and Python API use; they do not
-extend the existing Web/MCP or C99 generation interfaces. See
-[DAB TPS and two-level dq model contracts](docs/DAB_TPS_AND_THREE_PHASE_DQ.md).
+The PFC workspace includes a separate **six-switch two-level dq plant** with
+SRF/DDSRF/dual-SOGI PLL selection, decoupled current loops, voltage PI, SVPWM,
+and frequency/phase/load disturbances. The source angle is used only to
+generate the grid and evaluate error, never as controller feedback. Both
+three-phase topologies provide carrier-reconstructed stress/loss analysis and
+an independent PLL comparison experiment. See [model contracts](docs/DAB_TPS_AND_THREE_PHASE_DQ.md)
+and [the current expansion](docs/engineering-expansion.md).
+
+### DAB: operating point → controller → Vout
+
+Selecting **查看工况 / Operating point** automatically starts calculation when
+needed. Electrical waveforms can replay at a 100 ms frame interval, with pause
+and phase reset. This replays one computed steady-state period; it does not
+manufacture a transient simulation.
+
+The **电压环 / TPS 优化** tab reuses LLC digital-controller coefficients and adds:
+
+- PI or imported C(z) → power command → TPS → capacitor/load → Vout;
+- local power-map linearization, ZOH/sample delay, Bode and discrete poles;
+- reference/load steps with nonlinear bus-energy integration and command limits;
+- formula/grid/multi-start constrained-search comparison and PWM-count checks;
+- frozen JSON snapshots and portable controller C99.
+
+The optional Cp path is a **periodic power map**, not a complete Cp/L transient
+state-space model. The optimizer uses exact ideal-L segment integrals and does
+not claim global optimality or ZVS proof.
+
+![DAB automatic operating-point calculation and periodic replay](docs/assets/dab-tps-periodic-replay.png)
 
 The FRA toolbar also opens a [measured PI tuning map](docs/FRA_TUNING_MAP.md): bind each scan to its actual controller and operating point, compare rounds on a sparse Kp×Ti map, and plan a local next scan. Predictions remain separate from measurements; no hardware parameters are applied.
 
@@ -167,6 +206,19 @@ Vref
 ```
 
 The analyzer reports detected gain/phase crossovers, phase/gain margins, sensitivity/complementary sensitivity, delay envelopes, discrete closed-loop poles, command headroom and polarity diagnostics.
+
+### Searchable transformer core / bobbin data
+
+Transformer design now provides search, shape filtering and parameter loading
+from **46 complete presets**, including 44 source-traced TDK core/bobbin pairs.
+Another **137 legacy records** remain searchable as reference data. Incomplete
+records and geometry conflicts are visible; core-window area is kept separate
+from usable bobbin winding area. Material fits and geometric/thermal assumptions
+retain their source pages, rows and warnings.
+
+The catalog also opens measured sinusoidal core-loss CSV comparison and an
+optional bounded 3C90 waveform predictor. It never substitutes that predictor
+for PC40/PC44 or another material. See [magnetic validation](docs/engineering-expansion.md#数据库与磁计算基准).
 
 ### ngspice boundary
 
@@ -271,7 +323,34 @@ Vienna currently includes:
 - three-level switching waveforms;
 - per-phase PF/THD and power analysis.
 
-The TTPL engineering architecture is the migration template for the future Vienna hardware-design / exact-H(z) / circuit-level closed-loop path.
+New three-phase analysis adds inductor/device RMS and peak currents, switch and
+capacitor-current waveforms, copper/core/device/capacitor loss breakdowns, and
+PF/ITHD reporting. Vienna distinguishes **back-to-back MOSFET** and **diode bridge
++ single MOSFET** center-switch implementations. Missing loss inputs are listed;
+reported efficiency includes only configured loss terms.
+
+The Vienna voltage plant now includes inductor-energy dynamics, the boost RHP
+zero, copper loss and R/CPL load slope. Existing current/voltage/midpoint Bode,
+sensing and delay models remain topology-specific. Carrier reconstruction is a
+local CCM screening model; zero-crossing DCM, device parasitics and hardware
+correlation remain outside its scope. Circuit-level Vienna closed-loop coverage
+does not follow from TTPL ngspice support.
+
+### Three-phase two-level dq control and PLL comparison
+
+The two-level model provides abc RL and bus-energy dynamics, measured-voltage PLL,
+dq current decoupling, voltage PI, current limits/slew and SVPWM. Its control page
+includes `Gi(s)=1/(Ls+R)`, the current-to-bus energy plant, PWM delay and a lifted
+multi-rate voltage-loop model with margins and discrete-pole checks.
+
+The shared PLL experiment compares **SRF / DDSRF / DDSOGI** under the same
+frequency/phase step, negative sequence, voltage harmonics and sag. DDSOGI here
+means **dual-SOGI positive-sequence DSOGI-PLL**, not an MSOGI harmonic bank.
+Outputs include abc voltage, estimated phase, phase/frequency error, lock flags,
+positive-sequence alpha/beta, block diagrams and portable C99 implementations.
+Host-C agreement is checked; no TI-target timing or hardware validation is claimed.
+
+![SRF, DDSRF and dual-SOGI PLL comparison in the actual Qt application](docs/assets/three-phase-pll-comparison.png)
 
 ---
 
@@ -281,7 +360,7 @@ The TTPL engineering architecture is the migration template for the future Vienn
 
 Current structures include:
 
-`Integrator · PI · PIF · PID · PIDF · Type-II · Type-III · Modified PI · Lead · Lag · 1P1Z · 2P2Z · 3P3Z · General`
+`Integrator · PI · PIF · PID · PIDF · Type-II · Type-III · Modified PI · Lead · Lag · 1P1Z · 2P2Z · 3P3Z · General · Parallel Multi-harmonic Quasi-PR`
 
 Supported workflows include:
 
@@ -292,6 +371,18 @@ Supported workflows include:
 - DF2T/SOS coefficient representation;
 - single-file C99 `float32_t` export;
 - generated-C verification against the Python reference when a C compiler is available.
+
+### Parallel quasi-PR: selectable harmonics 1 / 3 / 5 / 7 / 9 / 11
+
+Select any subset of harmonics, configure each branch's Kr and bandwidth, and
+add the common Kp **once**. Inspect branch/combined analog, digital and float32
+Bode curves, exact coefficients, output limits and C99 functions. The export
+includes coefficient update, IIR section, initialization, reset and controller
+step functions corresponding to the supplied control-function convention.
+
+This is a parallel resonant bank, not a cascade of resonant sections. Controller
+Bode alone does not prove power-stage closed-loop stability. See [equations,
+coefficient signs and C integration](docs/MULTI_PR_AND_MAGNETICS.md).
 
 Canonical coefficient convention:
 
@@ -358,6 +449,19 @@ analytical model
 ```
 
 Passing an earlier stage is evidence, not permission to skip a later stage.
+
+### Magnetic and optimization benchmarks
+
+| Independent check | Result | Scope |
+|---|---|---|
+| 3C90 magnetic residual model; all 70°C samples held out | MAPE **3.95%**, versus fitted iGSE **23.26%** | Public reference dataset, one material; no bench or cross-grade claim |
+| PC40 / PC44 graph fit against excluded manufacturer table point | **+12.76% / +8.28%** | Approximate 2002 catalog fit; discrepancy remains visible |
+| DAB surrogate-assisted search versus direct constrained search | About **0.78×** median online speed | No demonstrated benefit; not enabled in the production optimizer |
+| Earlier Litz calculation optimization | **2.09×** in the recorded microbenchmark | Caching/repeated-computation optimization, **not AI speedup** |
+
+Actual bench measurements are still needed to diagnose application-specific
+material, waveform or missing-loss errors. Reproduction scripts, data hashes,
+training/test boundaries and limitations are in [the engineering expansion](docs/engineering-expansion.md).
 
 Start with:
 
@@ -436,6 +540,19 @@ python -m pip install -e ".[dev,gui,web,agent]"
 pytest
 ```
 
+### Optional research and catalog-import tools
+
+```bash
+python -m pip install -e ".[research]"
+python tools/benchmark_magnetic_physics.py
+OPENBLAS_NUM_THREADS=1 python tools/benchmark_controls.py
+OPENBLAS_NUM_THREADS=1 python tools/benchmark_dab_optimization.py
+```
+
+Re-training the optional 3C90 model requires the separately sourced reference
+data; original user PDFs/XLS and third-party datasets are not bundled. Ordinary
+application inference does not require scikit-learn. See [sources and reproduction](docs/engineering-expansion.md#复现和参考来源).
+
 ### Installed CLI entry points
 
 ```text
@@ -504,7 +621,7 @@ Two CI layers are especially important:
 - **build-release** — regression suite, package/version contract, real packaged-app `--self-test`, release artifacts;
 - **ngspice-smoke** — installs real `ngspice` + `libngspice` and exercises switching integration rather than mocking the simulator.
 
-The ngspice smoke suite now covers both LLC and TTPL integration paths. The packaged-app self-test constructs all four Qt workspaces offscreen and validates bundled data provenance. A release no longer passes merely because a PyInstaller directory exists.
+The ngspice smoke suite now covers both LLC and TTPL integration paths. The packaged-app self-test constructs Qt workspaces offscreen and validates bundled data provenance. A release no longer passes merely because a PyInstaller directory exists.
 
 ### How releases are published
 
@@ -525,8 +642,9 @@ CI also produces the same screenshot as an artifact; the README should only embe
 ## 12. Repository layout
 
 ```text
-llc_design/            LLC engineering, models, dynamics, control, GUI, reports
-pfc_design/            TTPL/Vienna engineering, control, firmware runtime and GUI
+dab_design/            DAB TPS, constrained optimization, sampled voltage control and GUI
+llc_design/            LLC engineering, magnetics catalog/validation, control, GUI, reports
+pfc_design/            TTPL/Vienna/two-level dq, PLLs, stress/loss, control and GUI
 power_control_tools/   Generic controller/filter/FRA engine
 power_codegen/         Portable C99 float32_t control-code generation
 power_sim/             Backend-neutral digital runtime + LLC/PFC SPICE integration
@@ -537,7 +655,8 @@ reference_designs/     Traceable cases + evidence matrices
 engineering_data/      Cross-workspace data catalog
 schemas/               Shared project/provenance schemas
 release_validation/    Version-controlled numerical regression baselines
-docs/                  Maintained engineering documentation
+tools/                 Reproducible catalog, magnetic/AI and control benchmarks
+docs/                  Maintained engineering documentation and benchmark evidence
 .github/workflows/      CI, release and real-ngspice validation
 ```
 
@@ -548,6 +667,9 @@ docs/                  Maintained engineering documentation
 Start here instead of reading historical version notes:
 
 - [Documentation index](docs/README.md)
+- [Magnetics, DAB, PLL and three-phase expansion](docs/engineering-expansion.md)
+- [DAB / two-level dq conventions](docs/DAB_TPS_AND_THREE_PHASE_DQ.md)
+- [Multi-harmonic quasi-PR and magnetic modeling](docs/MULTI_PR_AND_MAGNETICS.md)
 - [Digital control architecture](docs/DIGITAL_CONTROL_ARCHITECTURE.md)
 - [LLC model hierarchy and boundaries](docs/LLC_MODELING.md)
 - [PFC Engineering Workspace](docs/PFC_ENGINEERING_WORKSPACE.md)
@@ -562,7 +684,7 @@ Start here instead of reading historical version notes:
 - [Release process](docs/RELEASE.md)
 - [Changelog](CHANGELOG.md)
 
-The application also contains an offline **Help / F1** system in all four workspaces, including implementation notes, model boundaries and known limitations.
+The application also contains an offline **Help / F1** system in the workspaces, including implementation notes, model boundaries and known limitations.
 
 ---
 

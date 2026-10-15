@@ -1,5 +1,10 @@
 # DAB TPS and three-phase two-level PFC
 
+Current additions: [digital DAB voltage control, automatic selection/playback,
+three PLLs, three-phase stress/loss and sampled-loop analysis](engineering-expansion.md).
+The baseline conventions below still apply to the periodic TPS solver; the new
+voltage-control model and its limits are described separately.
+
 ## Scope and evidence
 
 These are Python engineering/simulation features, available from the desktop
@@ -11,8 +16,8 @@ used as an algorithm or requirements baseline.
 ## DAB TPS
 
 Enter **DAB TPS** from the launcher or LLC toolbar. The layout follows the LLC
-parameter-dock / analysis-tab pattern. Set the sweep, run, then select an
-operating point from the table or selector. The plots cover phase/power,
+parameter-dock / analysis-tab pattern. Set the sweep and select an
+operating point to calculate automatically; a manual full scan is also available. The plots cover phase/power,
 electrical waveforms, current/backflow, capacitor stress and commutation/PWM.
 
 The supplied source is preserved at
@@ -41,7 +46,8 @@ Conventions:
   tick convention. They are not a C2000 TBPRD/phase-register configuration.
 
 Limits: steady-state ideal stiff ports, zero magnetizing current, no nonlinear
-Coss, deadtime, diode recovery, core/device switching losses or voltage loop.
+Coss, deadtime, diode recovery, core/device switching losses in the periodic solver. A separate averaged
+voltage-loop model is now available; it does not add Cp transient states.
 Commutation currents are signed, sampled primary-referred inductor currents;
 minimum absolute current or `0.5*L*I²` cannot establish ZVS. Every point reports
 `zvs_status=UNKNOWN`. Output ripple is switching-period ripple only. The
