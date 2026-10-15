@@ -61,10 +61,10 @@ def install_ttpl_solution_map(pfc_window) -> SolutionMapView:
     control.set_busy = MethodType(set_busy_with_solution_map, control)
     original_set_result = control.set_result
 
-    def set_result_with_solution_map(self, result) -> None:
+    def set_result_with_solution_map(self, result, *, engineering_v3=None) -> None:
         state["updating"] = True
         try:
-            original_set_result(result)
+            original_set_result(result, engineering_v3=engineering_v3)
         finally:
             state["updating"] = False
         if state["requested_revision"] != state["revision"]:

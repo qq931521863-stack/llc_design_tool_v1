@@ -318,8 +318,8 @@ class TTPLWorkbenchView(QWidget):
         self.power_stage_view.run_button.setEnabled(not busy)
         self.power_stage_view.apply_button.setEnabled((not busy) and self.power_stage_view.result is not None)
 
-    def set_result(self, result) -> None:
-        self.control_lab.set_result(result)
+    def set_result(self, result, *, engineering_v3=None) -> None:
+        self.control_lab.set_result(result, engineering_v3=engineering_v3)
 
 
 __all__ = ["TTPLPowerStageDesignView", "TTPLWorkbenchView"]

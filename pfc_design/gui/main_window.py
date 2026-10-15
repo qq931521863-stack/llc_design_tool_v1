@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction
@@ -86,6 +86,9 @@ class PFCMainWindow(QMainWindow):
         install_ttpl_exact_hz_stage(self)
         install_ttpl_ngspice_closed_loop_stage(self)
         install_v3_diagnostics(self.control_lab_view)
+        self.control_lab_view.switching_validation_view.zero_cross_evidence_changed.connect(
+            self._on_v3_zero_cross_changed
+        )
         self.control_lab_view.analysis_requested.connect(self.run_ttpl_analysis)
         self.vienna_view.analysis_requested.connect(self.run_vienna_analysis)
         self.subtabs.addTab(self.control_lab_view, "Single-Phase TTPL Engineering")
@@ -211,9 +214,9 @@ class PFCMainWindow(QMainWindow):
             # Control/Bode remains the owner of controller/sensing settings.
             # AC/switching, exact H(z) and shared-ngspice all consume this exact
             # analysis result; no downstream stage recreates the controller.
-            self.control_lab_view.set_result(result)
-            self.control_lab_view.ac_performance_view.set_result(result)
-            self.control_lab_view.switching_validation_view.set_result(result)
+            self.control_lab_view.set_result(result, engineering_v3=engineering)
+            self.control_lab_view.ac_performance_view.set_result(result, engineering_v3=engineering)
+            self.control_lab_view.switching_validation_view.set_result(result, engineering_v3=engineering)
             analysis, line, _ = result
             self.control_lab_view.exact_hz_view.set_analysis(analysis)
             self.control_lab_view.ngspice_closed_loop_view.set_analysis(analysis)
@@ -223,12 +226,21 @@ class PFCMainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"TTPL 完成: Li fc={current.critical_gain_crossover_hz}, "
                 f"PM={current.phase_margin_deg}; Lv fc={voltage.critical_gain_crossover_hz}, "
-                f"PM={voltage.phase_margin_deg}; PF={line.metrics.power_factor:.6g}, "
+                f"PM={voltage.phase_margin_deg}; PF={engineering.pf_thd.pf:.6g}, "
                 f"THD={engineering.pf_thd.thd_percent:.5g}%; "
-                f"V3: {engineering.line_cycle.convergence.status.value}"
+                f"V3: {engineering.line_cycle.convergence.status.value}; "
+                f"{engineering.pf_thd.status.value} (software model only)"
             )
         except Exception:
             self._worker_error("TTPL 结果绘图/GUI 更新失败\n" + traceback.format_exc())
+
+    def _on_v3_zero_cross_changed(self, zero_crossing) -> None:
+        if self.engineering_result is None:
+            return
+        self.engineering_result = replace(
+            self.engineering_result, zero_crossing=zero_crossing,
+        )
+        show_v3_diagnostics(self.control_lab_view, self.engineering_result)
 
     def run_ttpl_shared_ngspice(self, analysis, scenario, simulation) -> None:
         """Run the circuit-level TTPL path from the frozen exact-H(z) contract."""

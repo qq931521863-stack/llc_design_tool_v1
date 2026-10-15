@@ -94,7 +94,3 @@ def show_v3_diagnostics(workbench, result: PFCEngineeringV3Result) -> None:
                 f"residual={budget.residual_deg:.6g} deg; tolerance={budget.tolerance_deg:g} deg"
             )
     workbench.v3_diagnostics_view.setPlainText("\n".join(lines))
-    workbench.ac_performance_view.summary.appendPlainText(
-        f"\nV3 convergence: {convergence.status.value}; PF/THD evidence: {pf.status.value}\n"
-        "See Control / V3 diagnostics for convergence, distortion regions and model limits."
-    )

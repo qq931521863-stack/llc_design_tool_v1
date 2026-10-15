@@ -8,6 +8,7 @@ Control Lab so the PFC product workflow matches the LLC engineering structure.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 import math
 
 import numpy as np
@@ -26,6 +27,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from PySide6.QtGui import QFontDatabase
+from PySide6.QtCore import Signal
+from pfc_design.engineering.pfc_v3 import analyze_zero_crossing
 
 from pfc_design.control import (
     PFCControlLabConfig,
@@ -103,7 +106,7 @@ class TTPLACPerformanceView(QWidget):
         tabs.addTab(harmonic_page, "PF / THD / Harmonics")
         root.addWidget(tabs, 1)
 
-    def set_result(self, result: ResultTuple) -> None:
+    def set_result(self, result: ResultTuple, *, engineering_v3=None) -> None:
         self.result = result
         _, line, _ = result
         config = result[0].config if result[0] is not None else self.config_provider()
@@ -133,6 +136,13 @@ class TTPLACPerformanceView(QWidget):
         )
         self._plot_line_cycle(line, config)
         self._plot_harmonics(line)
+        if engineering_v3 is not None:
+            pf = engineering_v3.pf_thd
+            self.summary.appendPlainText(
+                f"\nV3 PF / THD: {pf.pf:.7f} / {pf.thd_percent:.5f}%; "
+                f"{pf.status.value} (software model only)\n"
+                f"Convergence: {engineering_v3.line_cycle.convergence.status.value}"
+            )
 
     def _plot_line_cycle(self, line: PFCLineCycleWaveforms, config: PFCControlLabConfig) -> None:
         sl = _last_cycle_slice(line, config.power_stage.line_frequency_hz)
@@ -212,11 +222,14 @@ class TTPLACPerformanceView(QWidget):
 class TTPLSwitchingValidationView(QWidget):
     """Local switching reconstruction plus zero-crossing state-machine view."""
 
+    zero_cross_evidence_changed = Signal(object)
+
     def __init__(self, config_provider: Callable[[], PFCControlLabConfig], parent=None) -> None:
         super().__init__(parent)
         self.config_provider = config_provider
         self.result: ResultTuple | None = None
         self.switching: PFCSwitchingWaveforms | None = None
+        self.engineering_v3 = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -249,6 +262,17 @@ class TTPLSwitchingValidationView(QWidget):
         header.addWidget(self.rebuild_button)
         root.addLayout(header)
 
+        offset_row = QHBoxLayout()
+        self.sensor_offset = QDoubleSpinBox()
+        self.sensor_offset.setRange(-100.0, 100.0)
+        self.sensor_offset.setDecimals(4)
+        self.sensor_offset.setSuffix(" A")
+        offset_row.addWidget(QLabel("Sensor offset (diagnostic only; no closed-loop rerun)"))
+        offset_row.addWidget(self.sensor_offset)
+        offset_row.addStretch(1)
+        root.addLayout(offset_row)
+        self.sensor_offset.valueChanged.connect(self._refresh_zero_cross_evidence)
+
         self.summary = QLabel("Run the TTPL control/time-domain analysis first.")
         self.summary.setWordWrap(True)
         root.addWidget(self.summary)
@@ -271,14 +295,33 @@ class TTPLSwitchingValidationView(QWidget):
 
         self.rebuild_button.clicked.connect(self.rebuild)
 
-    def set_result(self, result: ResultTuple) -> None:
+    def set_result(self, result: ResultTuple, *, engineering_v3=None) -> None:
         self.result = result
+        self.engineering_v3 = engineering_v3
         switching = result[2]
         self.switching = switching
         self.angle.setValue(float(switching.line_angle_deg) % 360.0)
         self._show_switching(switching)
         config = result[0].config if result[0] is not None else self.config_provider()
         self._plot_zero_crossing(result[1], config)
+        self._refresh_zero_cross_evidence()
+
+    def _refresh_zero_cross_evidence(self) -> None:
+        if self.engineering_v3 is None or self.result is None:
+            return
+        config = self.result[0].config
+        zc = analyze_zero_crossing(
+            config, line=self.engineering_v3.line_cycle,
+            sensor_offset_a=self.sensor_offset.value(),
+        )
+        self.engineering_v3 = replace(self.engineering_v3, zero_crossing=zc)
+        self._plot_zero_crossing(self.result[1], config)
+        self.summary.setText(
+            f"V3 zero crossing: sensor offset={self.sensor_offset.value():.4f} A; "
+            f"duty deadzone={zc.effective_duty_deadzone:.5f}; "
+            "software model diagnostic; offset does not rerun the controller"
+        )
+        self.zero_cross_evidence_changed.emit(zc)
 
     def rebuild(self) -> None:
         if self.result is None:
@@ -298,6 +341,7 @@ class TTPLSwitchingValidationView(QWidget):
             return
         self.switching = switching
         self._show_switching(switching)
+        self._refresh_zero_cross_evidence()
 
     def _show_switching(self, switching: PFCSwitchingWaveforms) -> None:
         s = switching.signals
@@ -373,6 +417,10 @@ class TTPLSwitchingValidationView(QWidget):
         ax2 = self.zero_figure.add_subplot(412, sharex=ax1)
         ax2.plot(angle, s["current_error"], label="Current error")
         ax2.plot(angle, s["current_pi_reset_strobe"], label="PI reset", linewidth=1.0)
+        if self.engineering_v3 is not None:
+            points = self.engineering_v3.zero_crossing.points
+            ax2.plot([p.theta_deg for p in points], [p.current_error_a for p in points],
+                     "o", label="V3 current error")
         ax2.set_ylabel("A / flag")
         ax2.set_title("Tracking / PI reset")
         ax2.grid(True, alpha=0.3)
@@ -382,6 +430,9 @@ class TTPLSwitchingValidationView(QWidget):
         ax3.plot(angle, s["duty_total"], label="Duty")
         ax3.plot(angle, s["effective_duty_min"], label="Effective Dmin", linestyle="--")
         ax3.plot(angle, s["minimum_pulse_active"], label="Min pulse active", linewidth=1.0)
+        if self.engineering_v3 is not None:
+            ax3.axhline(self.engineering_v3.zero_crossing.effective_duty_deadzone,
+                        linestyle=":", label="V3 duty deadzone")
         ax3.set_ylabel("pu / flag")
         ax3.set_title("Duty / minimum-pulse constraint")
         ax3.grid(True, alpha=0.3)
@@ -404,6 +455,7 @@ class TTPLSwitchingValidationView(QWidget):
         self.angle.setEnabled(not busy)
         self.cycles.setEnabled(not busy)
         self.samples.setEnabled(not busy)
+        self.sensor_offset.setEnabled(not busy)
 
 
 __all__ = ["TTPLACPerformanceView", "TTPLSwitchingValidationView"]

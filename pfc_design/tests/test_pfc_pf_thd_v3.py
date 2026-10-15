@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from pfc_design.engineering.pfc_v3 import compute_pf_thd
+from llc_design.control.smart_control import MetricStatus
 
 
 def _grid(line_hz: float = 50.0, cycles: int = 1, fs: float = 50e3):
@@ -27,6 +28,18 @@ def test_case_a_ideal_sine_in_phase():
     assert r.distortion_factor == pytest.approx(1.0, abs=2e-3)
     assert r.thd == pytest.approx(0.0, abs=2e-3)
     assert abs(r.pf - r.dpf * r.distortion_factor) < 5e-3
+    assert r.as_dict()["evidence_scope"] == "software_model_only"
+
+
+def test_unaccounted_harmonics_downgrade_verified_status():
+    t, fl = _grid()
+    w = 2.0 * math.pi * fl
+    result = compute_pf_thd(
+        t, np.sin(w * t), np.sin(w * t) + 0.5 * np.sin(31.0 * w * t),
+        line_hz=fl, max_harmonic=25, status_if_ok=MetricStatus.VERIFIED,
+    )
+    assert result.pf_identity_residual > 0.05
+    assert result.status == MetricStatus.WARN
 
 
 def test_case_b_phase_shifted_sine():

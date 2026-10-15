@@ -819,13 +819,20 @@ class PFCControlLabView(QWidget):
         except Exception as exc:
             show_operation_issue(self, t("PFC Control Lab 参数错误"), str(exc), critical=False)
 
-    def set_result(self, result) -> None:
+    def set_result(self, result, *, engineering_v3=None) -> None:
         self.result = result
         analysis, line_cycle, switching = result
         self.research_export.set_analysis(analysis)
         pm = analysis.current_loop.margins.phase_margin_deg
         fc = analysis.current_loop.margins.critical_gain_crossover_hz
-        if pm is not None and pm < 45.0:
+        convergence = None if engineering_v3 is None else engineering_v3.line_cycle.convergence
+        if convergence is None or convergence.status.value != "LINE_CYCLE_CONVERGED":
+            status = "UNKNOWN" if convergence is None else convergence.status.value
+            self.autotune_status.setText(
+                f"V3 AC convergence={status}；无法确认稳定性检查。请检查收敛证据及仿真周期。"
+            )
+            self.autotune_status.setStyleSheet("padding:6px;border:1px solid #fec84b;background:#fffaeb;color:#b54708;")
+        elif pm is not None and pm < 45.0:
             self.autotune_status.setText(
                 f"当前电流环裕量不足：PM={pm:.1f}°, fc={0 if fc is None else fc:.1f} Hz。建议点击“一键稳定整定并应用”。"
             )

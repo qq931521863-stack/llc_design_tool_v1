@@ -247,6 +247,7 @@ class PFTHDResult:
             "convention": self.convention.as_dict(),
             "pf_identity_residual": self.pf_identity_residual,
             "status": self.status.value,
+            "evidence_scope": "software_model_only",
             "sanity_ok": self.sanity_ok,
             "notes": list(self.notes),
         }
@@ -420,7 +421,7 @@ def _cycle_slices(time_s: FloatArray, line_hz: float, n_cycles: int) -> list[sli
     end = len(time_s)
     for _ in range(max(n_cycles, 1)):
         start = max(end - samples, 0)
-        if start >= end:
+        if end - start < samples:
             break
         out.append(slice(start, end))
         end = start
@@ -602,6 +603,7 @@ def compute_pf_thd(
     status = status_if_ok if sanity else MetricStatus.WARN
     if identity > 0.05:
         notes.append(f"PF vs DPF×Distortion residual={identity:.4g} (window/DC effects)")
+        status = MetricStatus.WARN
     return PFTHDResult(
         vac_rms_v=v_rms,
         iac_rms_a=i_rms,

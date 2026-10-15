@@ -107,6 +107,29 @@ def test_desktop_routes_v3_to_existing_stages_and_uses_frozen_config(
         v3.line_cycle.convergence.status.value
         in bench.ac_performance_view.summary.toPlainText()
     )
+    assert "V3 PF / THD" in bench.ac_performance_view.summary.toPlainText()
+    zc_view = bench.switching_validation_view
+    old_actual = zc_view.engineering_v3.zero_crossing.points[0].iactual_a
+    zc_view.sensor_offset.setValue(0.1)
+    assert zc_view.engineering_v3.zero_crossing.points[0].iactual_a == pytest.approx(
+        old_actual - 0.1
+    )
+    assert "sensor offset=0.1000 A" in zc_view.summary.text()
+    trace = next(
+        line for line in zc_view.zero_figure.axes[2].get_lines()
+        if line.get_label() == "V3 current error"
+    )
+    assert trace.get_ydata()[0] == pytest.approx(
+        zc_view.engineering_v3.zero_crossing.points[0].current_error_a
+    )
+
+    bad_convergence = replace(
+        v3.line_cycle.convergence, status=pfc_v3.ConvergenceStatus.NOT_CONVERGED,
+    )
+    bad_v3 = replace(v3, line_cycle=replace(v3.line_cycle, convergence=bad_convergence))
+    bench.set_result(window.result, engineering_v3=bad_v3)
+    assert "NOT_CONVERGED" in bench.control_lab.autotune_status.text()
+    assert "稳定性检查通过" not in bench.control_lab.autotune_status.text()
 
     # Pending input edits must not reinterpret an already completed waveform.
     monkeypatch.setattr(
@@ -137,6 +160,17 @@ def test_desktop_routes_v3_to_existing_stages_and_uses_frozen_config(
     assert window.result[0].config is changed
     assert_handoff_matches_analysis(
         window.result[0], window.engineering_result.smart_control.handoff
+    )
+    old_deadzone = window.engineering_result.zero_crossing.effective_duty_deadzone
+    wider_pulse = replace(
+        changed, power_stage=replace(changed.power_stage, minimum_effective_pulse_s=2e-6),
+    )
+    window.run_ttpl_analysis(wider_pulse)
+    assert not errors
+    assert window.engineering_result.zero_crossing.effective_duty_deadzone > old_deadzone
+    assert (
+        f"duty deadzone={window.engineering_result.zero_crossing.effective_duty_deadzone:.5f}"
+        in zc_view.summary.text()
     )
     window.subtabs.setCurrentIndex(0)
     bench.tabs.setCurrentWidget(bench.control_lab)
