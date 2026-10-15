@@ -13,10 +13,10 @@ from functools import total_ordering
 
 from PySide6.QtCore import QObject, QSettings, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QLabel, QMessageBox, QToolButton
+from PySide6.QtWidgets import QMessageBox, QToolButton
 
 from llc_design import __version__
-from llc_design.gui import theme
+from llc_design.gui.contact import install_contact_bar
 from llc_design.i18n import t
 
 APP_VERSION = __version__
@@ -187,30 +187,8 @@ def _remember_release(tag_name: str) -> None:
 
 
 def add_toolbar_right_side(toolbar, main_window) -> None:
-    """在工具栏最右侧追加联系方式与t("检查更新")按钮。
-
-    ``toolbar`` 必须已添加过可伸缩 spacer,此函数只在 spacer 之后追加内容。
-    """
-    muted = theme.active_theme().text_muted
-    email_label = QLabel(
-        f'<a href="mailto:maileyang@qq.com" style="color:{muted};'
-        f'text-decoration:none;font-size:12px;">maileyang@qq.com</a>'
-    )
-    email_label.setToolTip(
-        t("点击发送邮件：maileyang@qq.com\n")
-        + t("有不懂的地方、或结果与实测不符，欢迎直接发邮件讨论（帮助 F1 → 联系方式与支持）")
-    )
-    email_label.setOpenExternalLinks(True)
-    toolbar.addWidget(email_label)
-
-    wechat_label = QLabel(t("微信: maileyang"))
-    wechat_label.setToolTip(
-        t("微信号: maileyang\n")
-        + t("公众号 / 技术博客: 开关电源仿真与实用设计（帮助 F1 → 联系方式与支持 内有二维码）")
-    )
-    wechat_label.setStyleSheet(
-        f"color:{muted};font-size:12px;padding:0 6px;background:transparent;")
-    toolbar.addWidget(wechat_label)
+    """Keep updates in the command row; reserve a visible row for contacts."""
+    install_contact_bar(main_window)
 
     update_button = QToolButton()
     update_button.setText("检查更新")

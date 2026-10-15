@@ -282,7 +282,7 @@ def install_language_selector(window) -> QToolButton:
 
 
 ABOUT_SOURCE = """电源设计工具箱 Power Design Toolkit V{version}
-工具设计人：杨帅锅
+工具设计人：杨帅
 邮箱  maileyang@qq.com
 微信  maileyang
 公众号 / 技术博客  开关电源仿真与实用设计

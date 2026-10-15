@@ -35,6 +35,7 @@ class ThreePhasePerformanceView(QWidget):
         super().__init__(parent)
         self.source = None
         self.report = None
+        self._result_dirty = True
         root = QVBoxLayout(self)
         self.note = QLabel(
             "每相电感、每个功率器件、电容 RMS/PK 与损耗。0 表示损耗参数未提供；总损耗和效率只包含已配置项。"
@@ -47,6 +48,7 @@ class ThreePhasePerformanceView(QWidget):
         scroll.setWidgetResizable(True)
         panel = QWidget()
         form = QFormLayout(panel)
+        self.form = form
         self.vienna_kind = QComboBox()
         self.vienna_kind.addItem("反串双 MOSFET / 每相 2 管", "back_to_back")
         self.vienna_kind.addItem("二极管桥 + 单 MOSFET / 每相 1 管", "diode_bridge")
@@ -89,9 +91,10 @@ class ThreePhasePerformanceView(QWidget):
         run = QPushButton("按当前损耗参数重新计算")
         run.clicked.connect(self.calculate)
         form.addRow(run)
-        export = QPushButton("导出完整性能快照 JSON")
-        export.clicked.connect(self.export)
-        form.addRow(export)
+        self.export_button = QPushButton("导出完整性能快照 JSON")
+        self.export_button.clicked.connect(self.export)
+        self.export_button.setEnabled(False)
+        form.addRow(self.export_button)
         scroll.setWidget(panel)
         splitter.addWidget(scroll)
         self.tabs = QTabWidget()
@@ -114,6 +117,12 @@ class ThreePhasePerformanceView(QWidget):
         self.tabs.addTab(self.summary, "PF / ITHD / 明细 / 边界")
         self.status = QLabel("先运行主电路分析。")
         root.addWidget(self.status)
+        for widget, _ in self.inputs.values():
+            widget.valueChanged.connect(self._mark_dirty)
+        self.material.currentIndexChanged.connect(self._mark_dirty)
+        self.vienna_kind.currentIndexChanged.connect(self._mark_dirty)
+        self.vienna_kind.currentIndexChanged.connect(self._update_topology_fields)
+        self._update_topology_fields()
 
     def _apply_core(self):
         key = self.preset.currentData()
@@ -122,24 +131,43 @@ class ThreePhasePerformanceView(QWidget):
         p = load_transformer_core_presets()[key]
         for k in ("ae_mm2", "ve_mm3"):
             self.inputs[k][0].setValue(getattr(p, k))
-        self.material.setCurrentIndex(self.material.findData(p.material_grade))
-        if self.material.currentIndex() < 0:
-            self.material.setCurrentIndex(self.material.findText(p.material_grade))
+        self.material.setCurrentIndex(self.material.findData(p.material_key))
         self.status.setText(
-            "已加载几何与材料；仅用于已知电感的损耗校核，未自动设计气隙。"
+            "已加载几何与材料，请重新计算；匝数和气隙需按实际电感设计。"
         )
+
+    def _mark_dirty(self, *_):
+        self._result_dirty = True
+        self.export_button.setEnabled(False)
+        if self.report is not None:
+            self.status.setText(
+                "Loss inputs changed. Recalculate before exporting; plots show the previous snapshot."
+            )
+
+    def _update_topology_fields(self, *_):
+        vienna = self.source is not None and self.source[0] == "vienna"
+        bridge = vienna and self.vienna_kind.currentData() == "diode_bridge"
+        self.form.setRowVisible(self.vienna_kind, vienna)
+        for key in ("diode_vf_v", "diode_resistance_ohm"):
+            self.form.setRowVisible(self.inputs[key][0], vienna)
+        for key in ("bridge_diode_vf_v", "bridge_diode_resistance_ohm"):
+            self.form.setRowVisible(self.inputs[key][0], bridge)
 
     def set_two_level(self, result):
         self.source = ("two_level", result)
+        self._update_topology_fields()
         self.calculate()
 
     def set_vienna(self, config, line):
         self.source = ("vienna", config, line)
+        self._update_topology_fields()
         self.calculate()
 
     def calculate(self):
         if self.source is None:
             return
+        self._result_dirty = True
+        self.export_button.setEnabled(False)
         try:
             loss = LossParameters(
                 **{k: w.value() / scale for k, (w, scale) in self.inputs.items()},
@@ -202,6 +230,8 @@ class ThreePhasePerformanceView(QWidget):
             ax[1, 1].set_ylabel("Included loss / W")
             for axis in ax.ravel():
                 axis.grid(True, alpha=0.25)
+            self._result_dirty = False
+            self.export_button.setEnabled(True)
             self.canvas.draw_idle()
             self.device_choice.blockSignals(True)
             self.device_choice.clear()
@@ -214,6 +244,12 @@ class ThreePhasePerformanceView(QWidget):
                 else "损耗参数已配置；仍需实测校核。"
             )
         except (ValueError, KeyError) as exc:
+            self.report = None
+            self.summary.clear()
+            self.figure.clear()
+            self.device_figure.clear()
+            self.canvas.draw_idle()
+            self.device_canvas.draw_idle()
             self.status.setText("性能计算失败：" + str(exc))
 
     def _plot_device(self, *_):
@@ -245,7 +281,7 @@ class ThreePhasePerformanceView(QWidget):
         self.device_canvas.draw_idle()
 
     def export(self):
-        if self.report is None:
+        if self.report is None or self._result_dirty:
             return
         name, _ = QFileDialog.getSaveFileName(
             self, "导出性能", "pfc_performance.json", "JSON (*.json)"

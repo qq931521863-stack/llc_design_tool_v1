@@ -36,6 +36,8 @@ One toolkit connects power-stage design, magnetics, loss estimation, voltage/cur
 
 **Latest engineering additions:** [Detailed notes, limitations and reproduction (Chinese)](docs/engineering-expansion.md) · [Control validation](docs/benchmarks/control_validation.json) · [Independent magnetic-model test](docs/benchmarks/magnetic_ai.json) · [Optimization comparison](docs/benchmarks/dab_optimization.json) · [Regression scope (Chinese)](docs/benchmarks/regression.md)
 
+**Latest reliability audit:** Fixed stale controller exports, out-of-order PFC results, DAB Cp linearization/discrete-model consistency, and LLC three-phase waveform rendering. The launcher and every workspace now display **Author: 杨帅 / Yang Shuai** with email and WeChat. See [findings, verification and remaining limits](docs/UI_ALGORITHM_AUDIT.md).
+
 The project is built around four rules:
 
 1. **One engineering model, multiple front ends.** Desktop GUI, CLI, Web/API, MCP and code generation reuse shared Python kernels instead of re-implementing equations in each interface.
@@ -138,7 +140,7 @@ manufacture a transient simulation.
 The **Voltage Loop / TPS Optimization** tab reuses LLC digital-controller coefficients and adds:
 
 - PI or imported C(z) → power command → TPS → capacitor/load → Vout;
-- local power-map linearization, ZOH/sample delay, Bode and discrete poles;
+- local power-map linearization, matched discrete bus-energy update and sample delay, Bode and discrete poles;
 - reference/load steps with nonlinear bus-energy integration and command limits;
 - formula/grid/multi-start constrained-search comparison and PWM-count checks;
 - frozen JSON snapshots and portable controller C99.
@@ -703,7 +705,7 @@ Engineering identifiers such as `Bode`, `H(z)`, `C99`, `Kp`, `PM`, `GM`, `FRA` a
 
 ## 15. Contact
 
-**Yang Shuai**
+**Author: 杨帅 (Yang Shuai)**
 
 Power Electronics · Digital Power · Embedded Control · Control Algorithms
 

@@ -1,5 +1,6 @@
 """Shell translations for magnetic validation, PLLs and sampled control tools."""
 _ROWS = [
+    ("电压环 / TPS 优化", "Voltage Loop / TPS Optimization", "電圧ループ / TPS 最適化", "전압 루프 / TPS 최적화"),
     ('ABC / 锁相过程 / 输出', 'ABC / Locking / Outputs', 'ABC / 同期過程 / 出力', 'ABC / 위상 동기 / 출력'),
     ('Bode / 闭环响应', 'Bode / Closed-loop response', 'Bode / 閉ループ応答', 'Bode / 폐루프 응답'),
     ('C99 函数实现', 'C99 functions', 'C99 関数実装', 'C99 함수 구현'),

@@ -112,7 +112,8 @@ Ctrl+R        LLC: run the analysis for the current page
 Toolbar       Top of each workspace: switch workspace, run/recompute, export,
               help, contact, update check
 """,
-    "helpbody.common.contact": """E-mail    maileyang@qq.com
+    "helpbody.common.contact": """Author    Yang Shuai (杨帅)
+E-mail    maileyang@qq.com
 WeChat    maileyang
 Official account / blog  开关电源仿真与实用设计 (scan the QR code below)
 
@@ -139,7 +140,7 @@ sweep points, or a Complete Loop record without the real C_old. Each workspace's
 "Model boundary and known limits" section covers these.
 """,
     "helpbody.common.about": """Power Design Toolkit V{version}
-Author: Yang Shuaiguo (杨帅锅)
+Author: Yang Shuai (杨帅)
 E-mail    maileyang@qq.com
 WeChat    maileyang
 Official account / blog  开关电源仿真与实用设计

@@ -5,15 +5,16 @@ switching model of Cp/L. Controller coefficients are reused exactly from LLC.
 """
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import numpy as np
 
 from llc_design.control.digital_loop import PIControllerConfig
 from power_control_tools.physical_loop import sampled_loop
 
-from .core import periodic_waveform, tps_command
+from .core import tps_command
 from .optimization import exact_tps_metrics
+from .periodic_power import periodic_lc_power
 
 
 @dataclass(frozen=True)
@@ -73,12 +74,7 @@ class DABVoltageControlConfig:
 def mapped_power(stage, vb, pref, include_cp=False):
     command = tps_command(stage, vb, max(0, pref))
     if include_cp:
-        return periodic_waveform(
-            replace(stage, wave_samples=min(stage.wave_samples, 2048)),
-            vb,
-            command,
-            include_cp=True,
-        ).metrics["pout_w"]
+        return periodic_lc_power(stage, vb, (command.d1, command.d2, command.d3))
     return exact_tps_metrics(stage, vb, (command.d1, command.d2, command.d3)).power_w
 
 
@@ -93,6 +89,16 @@ def build_dab_voltage_loop(stage, vb_v, target_w, control, controller=None):
         raise ValueError("Operating command is clipped; no local linear model")
     dp = min(target_w / 4, max(0.01, target_w * 1e-4))
     dv = min(vb_v / 4, max(0.001, vb_v * 1e-4))
+    for voltage, power in (
+        (vb_v, target_w + dp),
+        (vb_v, target_w - dp),
+        (vb_v + dv, target_w),
+        (vb_v - dv, target_w),
+    ):
+        if tps_command(stage, voltage, power).limited:
+            raise ValueError(
+                "Linearization stencil reaches command clipping; choose an interior operating point"
+            )
     kp = (
         mapped_power(stage, vb_v, target_w + dp, control.include_cp)
         - mapped_power(stage, vb_v, target_w - dp, control.include_cp)
@@ -102,13 +108,24 @@ def build_dab_voltage_loop(stage, vb_v, target_w, control, controller=None):
         - mapped_power(stage, vb_v - dv, target_w, control.include_cp)
     ) / (2 * dv)
     equilibrium = mapped_power(stage, vb_v, target_w, control.include_cp)
+    if (
+        not all(math.isfinite(value) for value in (kp, kv, equilibrium))
+        or equilibrium <= 0
+    ):
+        raise ValueError("Finite positive operating output power required")
+    if abs(kp) < 1e-9:
+        raise ValueError(
+            "No local power-command control authority at this operating point"
+        )
     load_slope = 2 * equilibrium / vb_v if control.load_model == "resistance" else 0
     pole = (load_slope - kv) / (stage.output_capacitance_f * vb_v)
     gain = kp / (stage.output_capacitance_f * vb_v)
     ctrl = controller or control.controller()
     if not np.isclose(ctrl.sample_time_s, 1 / control.sample_hz, rtol=1e-9):
         raise ValueError("Controller sample period must match voltage-loop sample rate")
-    loop = sampled_loop([gain], [1, pole], ctrl, delay_ticks=control.delay_ticks)
+    loop = sampled_loop(
+        [gain], [1, pole], ctrl, delay_ticks=control.delay_ticks, method="euler"
+    )
     return loop, {
         "operating_voltage_v": vb_v,
         "power_command_w": target_w,
@@ -118,6 +135,10 @@ def build_dab_voltage_loop(stage, vb_v, target_w, control, controller=None):
         "dpout_dvout_w_per_v": kv,
         "plant_numerator": [gain],
         "plant_denominator": [1, pole],
+        "plant_discretization": "Forward Euler: Jacobian of the same capacitor-energy update used in time simulation",
+        "power_map": "Event-exact periodic RLC"
+        if control.include_cp
+        else "Exact ideal-L segments",
         "transfer": "GvP(s) = (dPout/dPcmd)/(C*V0*s + dPload/dV - dPout/dV)",
         "actuator": "PI output Pcmd [W] -> p=Pcmd/Pbase(Vout) -> TPS(D1,D2,D3)",
         "boundary": "Averaged bus + periodic steady-state power; no Cp transient states",

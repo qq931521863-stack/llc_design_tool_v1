@@ -53,9 +53,12 @@ class MagneticValidationView(QWidget):
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         root.addWidget(self.output, 1)
-        button = QPushButton("导出校核 / 预测快照 JSON")
-        button.clicked.connect(self.export)
-        root.addWidget(button)
+        self.export_button = QPushButton("导出校核 / 预测快照 JSON")
+        self.export_button.clicked.connect(self.export)
+        self.export_button.setEnabled(False)
+        root.addWidget(self.export_button)
+        self.frequency.valueChanged.connect(self._prediction_inputs_changed)
+        self.temperature.valueChanged.connect(self._prediction_inputs_changed)
 
     def measurements(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -63,6 +66,7 @@ class MagneticValidationView(QWidget):
         )
         if not path:
             return
+        self._invalidate()
         try:
             self._display(compare_measurements(path))
         except (ValueError, OSError) as exc:
@@ -74,6 +78,7 @@ class MagneticValidationView(QWidget):
         )
         if not path:
             return
+        self._invalidate()
         try:
             b = np.loadtxt(path, delimiter=",")
             if b.ndim != 1:
@@ -97,8 +102,20 @@ class MagneticValidationView(QWidget):
         except (ValueError, OSError) as exc:
             self.output.setPlainText(str(exc))
 
+    def _invalidate(self):
+        self.snapshot = None
+        self.export_button.setEnabled(False)
+
+    def _prediction_inputs_changed(self, *_):
+        if self.snapshot is not None and "pv_w_m3" in self.snapshot:
+            self._invalidate()
+            self.output.setPlainText(
+                "Waveform inputs changed. Run the prediction again before exporting."
+            )
+
     def _display(self, data):
         self.snapshot = data
+        self.export_button.setEnabled(True)
         self.output.setPlainText(json.dumps(data, indent=2, ensure_ascii=False))
 
     def export(self):

@@ -42,12 +42,16 @@ class SampledLoop:
         }
 
 
-def sampled_loop(numerator, denominator, controller, *, delay_ticks=1, points=1200):
-    """Exact ZOH plant plus integer sample delay; negative unity feedback."""
+def sampled_loop(
+    numerator, denominator, controller, *, delay_ticks=1, points=1200, method="zoh"
+):
+    """ZOH or Euler plant plus integer sample delay; negative unity feedback."""
     ts = controller.sample_time_s
     if type(delay_ticks) is not int or not 0 <= delay_ticks <= 10:
         raise ValueError("Delay ticks must be an integer from 0 to 10")
-    b, a, _ = signal.cont2discrete((numerator, denominator), ts, method="zoh")
+    if method not in ("zoh", "euler"):
+        raise ValueError("Plant method must be zoh or euler")
+    b, a, _ = signal.cont2discrete((numerator, denominator), ts, method=method)
     b = np.r_[np.zeros(delay_ticks), b.ravel()]
     return discrete_loop(b, a, controller, points=points)
 

@@ -41,6 +41,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from llc_design.gui import theme
+from llc_design.gui.contact import install_contact_bar
 from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
 from llc_design.gui.help import install_help
@@ -121,6 +122,7 @@ class FRALoopDesignerWindow(QMainWindow):
 
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("FRA Loop Designer")
+        install_contact_bar(self)
         tb.setMovable(False)
         for name, target in [("LLC", "llc"), ("PFC", "pfc"), ("Control Tools", "control"), ("功能选择", "home")]:
             action = QAction(name, self)

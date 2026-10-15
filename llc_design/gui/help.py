@@ -51,6 +51,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Single source of truth for how users can reach the author.  Keep in sync with
 # llc_design/gui/updater.py (toolbar) and README.md.
+CONTACT_AUTHOR = "杨帅"
+CONTACT_AUTHOR_EN = "Yang Shuai"
 CONTACT_EMAIL = "maileyang@qq.com"
 CONTACT_WECHAT = "maileyang"
 CONTACT_BLOG = "开关电源仿真与实用设计"
@@ -730,7 +732,8 @@ _LANGUAGE = HelpSection(
 
 _CONTACT = HelpSection(
     "联系方式与支持",
-    f"""邮箱    {CONTACT_EMAIL}
+    f"""作者    {CONTACT_AUTHOR} / {CONTACT_AUTHOR_EN}
+邮箱    {CONTACT_EMAIL}
 微信    {CONTACT_WECHAT}
 公众号 / 技术博客  {CONTACT_BLOG}（见下方二维码，微信扫码关注）
 
@@ -755,7 +758,7 @@ _CONTACT = HelpSection(
 _ABOUT = HelpSection(
     "关于",
     f"""电源设计工具箱 Power Design Toolkit V{__version__}
-工具设计人：杨帅锅
+工具设计人：杨帅
 邮箱  {CONTACT_EMAIL}
 微信  {CONTACT_WECHAT}
 公众号  {CONTACT_BLOG}

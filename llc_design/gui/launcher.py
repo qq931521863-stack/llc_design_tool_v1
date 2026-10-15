@@ -11,12 +11,15 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
+    QWidget,
 )
 
 from llc_design import __version__
 from llc_design.core.spec import LLCDesignSpec
 from llc_design.gui import theme
+from llc_design.gui.contact import create_contact_card
 from llc_design.gui.help import show_help
 from llc_design.i18n import t
 from llc_design.gui.main_window import LLCMainWindow
@@ -140,6 +143,17 @@ class WorkspaceSelectionDialog(QDialog):
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("font-size: 13px; padding: 0 40px 8px 40px;")
         root.addWidget(subtitle)
+        root.addWidget(create_contact_card(self))
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        choices = QVBoxLayout(content)
+        choices.setContentsMargins(0, 0, 8, 0)
+        choices.setSpacing(14)
+        scroll.setWidget(content)
+        root.addWidget(scroll, 1)
 
         guided = _LauncherCard(
             t("系统建模与设计 / Guided System Design"),
@@ -153,14 +167,14 @@ class WorkspaceSelectionDialog(QDialog):
         guided.button.setObjectName("guided_system_design_button")
         guided.setObjectName("guided_system_design_card")
         guided.button.clicked.connect(lambda: self._select("system_modeling"))
-        root.addWidget(guided)
+        choices.addWidget(guided)
 
         expert_label = QLabel("Expert Workspaces")
         expert_label.setStyleSheet(
             f"font-size:12px; font-weight:700; letter-spacing:0.6px;"
             f"color:{theme.active_theme().text_muted}; padding-top:6px;"
         )
-        root.addWidget(expert_label)
+        choices.addWidget(expert_label)
 
         grid = QGridLayout()
         grid.setHorizontalSpacing(16)
@@ -209,7 +223,7 @@ class WorkspaceSelectionDialog(QDialog):
         grid.addWidget(control, 1, 0)
         grid.addWidget(fra, 1, 1)
         grid.addWidget(dab, 2, 0, 1, 2)
-        root.addLayout(grid, 1)
+        choices.addLayout(grid)
 
         cancel = QPushButton(t("退出"))
         cancel.clicked.connect(self.reject)

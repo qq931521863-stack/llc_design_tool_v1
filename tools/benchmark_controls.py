@@ -1,6 +1,7 @@
 """Produce reproducible control/PLL/stress verification metrics (software only)."""
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,12 +18,16 @@ from pfc_design.vienna.config import ViennaControlLabConfig
 
 def run():
     _, _, dab_metrics, _ = simulate_dab_voltage_loop(DABConfig(), 400, 3500, DABVoltageControlConfig())
+    _, _, dab_cp_metrics, _ = simulate_dab_voltage_loop(
+        DABConfig(), 400, 3500, replace(DABVoltageControlConfig(), include_cp=True)
+    )
     pfc = simulate_three_phase(ThreePhaseConfig())
     loops = build_three_phase_loops(pfc.config)
     stress = evaluate_two_level(pfc)
     vienna = build_vienna_control_lab_analysis(ViennaControlLabConfig())
     report = {'evidence': 'SOFTWARE_MODEL_ONLY; no hardware measurement',
-                  'dab_voltage': dab_metrics, 'pll_comparison': compare_plls()['metrics'],
+                  'dab_voltage': dab_metrics, 'dab_voltage_cp': dab_cp_metrics,
+                  'pll_comparison': compare_plls()['metrics'],
                   'two_level_nonlinear': pfc.metrics,
                   'two_level_loops': {k: loops[k].summary() for k in ('current','voltage')},
                   'two_level_stress': {k:v for k,v in stress.items() if k not in ('replay','harmonic_rms_a')},

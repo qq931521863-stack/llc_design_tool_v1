@@ -41,6 +41,7 @@ from dab_design.core import (
     save_config,
 )
 from llc_design.gui import theme
+from llc_design.gui.contact import install_contact_bar
 from llc_design.gui.help import install_help
 from llc_design.gui.i18n_ui import install_language_selector
 from llc_design.gui.workers import FunctionWorker
@@ -73,6 +74,8 @@ class DABMainWindow(QMainWindow):
         self.setStyleSheet(theme.workspace_stylesheet(theme.active_theme()))
         self.result: DABResult | None = None
         self._worker = None
+        self._running_config = None
+        self._rerun_requested = False
         self._dirty = True
         self._pending_point = 0
         self._animation_phase = 0
@@ -92,6 +95,7 @@ class DABMainWindow(QMainWindow):
             toolbar.addAction(action)
         self.export_action = action
         self.export_action.setEnabled(False)
+        install_contact_bar(self)
         install_help(self, "dab")
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
@@ -187,7 +191,6 @@ class DABMainWindow(QMainWindow):
         scroll.setWidget(panel)
         dock.setWidget(scroll)
         dock.setMinimumWidth(340)
-        install_language_selector(self)
         from .control_view import DABControlView
 
         self.control_view = DABControlView(self.config_from_widgets)
@@ -196,6 +199,7 @@ class DABMainWindow(QMainWindow):
         self.animation_timer.setInterval(100)
         self.animation_timer.timeout.connect(self._animate_waveform)
         self.animation_timer.start()
+        install_language_selector(self)
 
     def _point_activated(self, index):
         if self._dirty:
@@ -220,7 +224,7 @@ class DABMainWindow(QMainWindow):
         if (
             not self.animate.isChecked()
             or not self.isVisible()
-            or self.tabs.tabText(self.tabs.currentIndex()) != "电气波形"
+            or self.tabs.currentWidget() is not self.canvases["电气波形"].parentWidget()
         ):
             return
         self._animation_phase = (self._animation_phase + 1) % 40
@@ -232,6 +236,8 @@ class DABMainWindow(QMainWindow):
 
     def _inputs_changed(self):
         self._dirty = True
+        if hasattr(self, "control_view"):
+            self.control_view.mark_stale()
         if hasattr(self, "point_choice"):
             try:
                 config = self.config_from_widgets()
@@ -273,13 +279,17 @@ class DABMainWindow(QMainWindow):
         return config
 
     def run_analysis(self):
-        if self._worker is not None:
-            return
         try:
             config = self.config_from_widgets()
         except (ValueError, TypeError) as exc:
             self._error(str(exc))
             return
+        if self._worker is not None:
+            self._rerun_requested = config != self._running_config
+            if self._rerun_requested:
+                self.statusBar().showMessage("计算完成后将自动使用最新参数重算。")
+            return
+        self._running_config = config
         self.run_button.setEnabled(False)
         self.statusBar().showMessage("正在计算 TPS 工况…")
         worker = FunctionWorker(analyze_dab, config)
@@ -291,7 +301,11 @@ class DABMainWindow(QMainWindow):
 
     def _finished(self):
         self._worker = None
+        self._running_config = None
         self.run_button.setEnabled(True)
+        if self._rerun_requested:
+            self._rerun_requested = False
+            QTimer.singleShot(0, self.run_analysis)
 
     def _error(self, message):
         self.statusBar().showMessage("分析失败；未生成新结果")

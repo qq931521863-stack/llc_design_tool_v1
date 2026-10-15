@@ -137,9 +137,10 @@ def test_every_workspace_installs_a_help_button_and_f1_shortcut():
 def test_contact_details_are_present_in_help_and_match_the_readme():
     from pathlib import Path
 
-    from llc_design.gui.help import CONTACT_BLOG, CONTACT_EMAIL, CONTACT_QR_FILE, CONTACT_WECHAT, help_topic
+    from llc_design.gui.help import CONTACT_AUTHOR, CONTACT_BLOG, CONTACT_EMAIL, CONTACT_QR_FILE, CONTACT_WECHAT, help_topic
 
     assert CONTACT_EMAIL == "maileyang@qq.com"
+    assert CONTACT_AUTHOR == "杨帅"
     assert CONTACT_WECHAT == "maileyang"
     assert CONTACT_BLOG == "开关电源仿真与实用设计"
 
@@ -148,6 +149,7 @@ def test_contact_details_are_present_in_help_and_match_the_readme():
     for key in ("selector", "llc", "pfc", "control", "fra"):
         body = "\n".join(section.body for section in help_topic(key).sections)
         assert CONTACT_EMAIL in body, key
+        assert CONTACT_AUTHOR in body, key
         assert CONTACT_WECHAT in body, key
         assert CONTACT_BLOG in body, key
         assert "直接发邮件" in body, key

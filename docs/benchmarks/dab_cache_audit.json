@@ -1,0 +1,82 @@
+{
+  "baseline_git_ref": "0e5df08bcdf7c36b6d1a9a7d7b613e9fc8aa916e",
+  "method": "3 alternating-order repeats; 5^3 grid; exact-float local callback cache; one BLAS thread; total time includes PWM verification; evaluation counts exclude PWM verification",
+  "scope": "Three 400V points only. Repeated-computation optimization, not AI. No global-optimality claim.",
+  "cases": [
+    {
+      "target_w": 1000,
+      "baseline_seconds": [
+        0.4756499140021333,
+        0.4648653109979932,
+        0.4348623299993051
+      ],
+      "current_seconds": [
+        0.4269252609992691,
+        0.4828104589978466,
+        0.4126009690007777
+      ],
+      "median_speed_ratio": 1.0888681309462012,
+      "same_pwm_candidate": true,
+      "baseline_physics_calls": 713,
+      "current_physics_calls": 284,
+      "solver_cache_hits": 429,
+      "phases": [
+        0.0,
+        0.0128,
+        0.0496
+      ],
+      "pout_w": 996.2666666666669,
+      "irms_a": 2.555457544014234
+    },
+    {
+      "target_w": 3500,
+      "baseline_seconds": [
+        0.06248960400262149,
+        0.0605273790024512,
+        0.05948732000251766
+      ],
+      "current_seconds": [
+        0.034777207001752686,
+        0.03439920799792162,
+        0.03413861300214194
+      ],
+      "median_speed_ratio": 1.7595573423117248,
+      "same_pwm_candidate": true,
+      "baseline_physics_calls": 601,
+      "current_physics_calls": 251,
+      "solver_cache_hits": 350,
+      "phases": [
+        0.0016,
+        0.1184,
+        0.1216
+      ],
+      "pout_w": 3499.605333333332,
+      "irms_a": 9.530204179539053
+    },
+    {
+      "target_w": 6000,
+      "baseline_seconds": [
+        0.5567832729975635,
+        0.583771469999192,
+        0.6078538250003476
+      ],
+      "current_seconds": [
+        0.23169460400094977,
+        0.2260079459992994,
+        0.23243184400052996
+      ],
+      "median_speed_ratio": 2.5195730065288835,
+      "same_pwm_candidate": true,
+      "baseline_physics_calls": 6339,
+      "current_physics_calls": 1812,
+      "solver_cache_hits": 4527,
+      "phases": [
+        0.0016,
+        0.2336,
+        0.2368
+      ],
+      "pout_w": 5981.781333333334,
+      "irms_a": 17.942046028914984
+    }
+  ]
+}

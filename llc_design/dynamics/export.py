@@ -62,7 +62,7 @@ def write_waveform_markdown(bundle: WaveformBundle, path: str | Path) -> Path:
     lines = [
         "# LLC 关键节点波形计算书",
         "",
-        "> 版权说明：工具设计人 **杨帅锅** · 开关电源仿真与实用设计",
+        "> 版权说明：工具设计人 **杨帅** · 开关电源仿真与实用设计",
         "",
         f"- 模型：`{bundle.model_name}`",
         f"- 开关频率：{bundle.switching_frequency_hz/1e3:.6f} kHz",

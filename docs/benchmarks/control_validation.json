@@ -4,18 +4,18 @@
     "loop": {
       "sample_time_s": 0.0002,
       "stable": true,
-      "max_pole_radius": 0.9897341557741233,
-      "phase_margin_deg": 84.30547926717877,
-      "gain_margin_db": 26.015082753176188,
-      "crossover_hz": 39.97158089667492,
+      "max_pole_radius": 0.9897459901975623,
+      "phase_margin_deg": 84.33502264293871,
+      "gain_margin_db": 25.977112482333226,
+      "crossover_hz": 40.14088710776466,
       "plant_b": [
         0.0,
         0.0,
-        0.0004978188662755345
+        0.0004999999999995008
       ],
       "plant_a": [
         1.0,
-        -0.9912881698401979
+        -0.9912500000000284
       ],
       "controller_b": [
         100.49999999999999,
@@ -27,15 +27,15 @@
       ],
       "closed_loop_poles": [
         [
-          0.9897341557741233,
+          0.9897459901975623,
           0.0
         ],
         [
-          0.9488069853223802,
+          0.9485099174850269,
           0.0
         ],
         [
-          0.052747028743695246,
+          0.05299409231743835,
           0.0
         ]
       ]
@@ -54,12 +54,78 @@
         1,
         43.74999999985789
       ],
+      "plant_discretization": "Forward Euler: Jacobian of the same capacitor-energy update used in time simulation",
+      "power_map": "Exact ideal-L segments",
       "transfer": "GvP(s) = (dPout/dPcmd)/(C*V0*s + dPload/dV - dPout/dV)",
       "actuator": "PI output Pcmd [W] -> p=Pcmd/Pbase(Vout) -> TPS(D1,D2,D3)",
       "boundary": "Averaged bus + periodic steady-state power; no Cp transient states"
     },
     "final_error_v": -3.757882927857281e-05,
     "max_energy_error_j": 3.299582829185965e-13,
+    "saturation_fraction": 0.0
+  },
+  "dab_voltage_cp": {
+    "loop": {
+      "sample_time_s": 0.0002,
+      "stable": true,
+      "max_pole_radius": 0.9898199895815992,
+      "phase_margin_deg": 84.52303586804408,
+      "gain_margin_db": 25.736159266718808,
+      "crossover_hz": 41.23273196567087,
+      "plant_b": [
+        0.0,
+        0.0,
+        0.0005140656561135604
+      ],
+      "plant_a": [
+        1.0,
+        -0.990998023442559
+      ],
+      "controller_b": [
+        100.49999999999999,
+        -99.5
+      ],
+      "controller_a": [
+        1.0,
+        -1.0
+      ],
+      "closed_loop_poles": [
+        [
+          0.9898199895815992,
+          0.0
+        ],
+        [
+          0.9465865203259957,
+          0.0
+        ],
+        [
+          0.054591513534963644,
+          0.0
+        ]
+      ]
+    },
+    "model": {
+      "operating_voltage_v": 400,
+      "power_command_w": 3500,
+      "operating_output_w": 3590.879351764271,
+      "load_resistance_ohm": 44.557331039648766,
+      "dpout_dpcmd": 1.0281313122270928,
+      "dpout_dvout_w_per_v": -0.04955635606052056,
+      "plant_numerator": [
+        2.5703282805677317
+      ],
+      "plant_denominator": [
+        1,
+        45.00988278720469
+      ],
+      "plant_discretization": "Forward Euler: Jacobian of the same capacitor-energy update used in time simulation",
+      "power_map": "Event-exact periodic RLC",
+      "transfer": "GvP(s) = (dPout/dPcmd)/(C*V0*s + dPload/dV - dPout/dV)",
+      "actuator": "PI output Pcmd [W] -> p=Pcmd/Pbase(Vout) -> TPS(D1,D2,D3)",
+      "boundary": "Averaged bus + periodic steady-state power; no Cp transient states"
+    },
+    "final_error_v": -4.019119467102428e-05,
+    "max_energy_error_j": 1.9628743075372768e-13,
     "saturation_fraction": 0.0
   },
   "pll_comparison": {

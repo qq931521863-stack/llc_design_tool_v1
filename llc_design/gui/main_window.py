@@ -273,7 +273,7 @@ class LLCMainWindow(QMainWindow):
             self.statusBar().showMessage(t("就绪"))
 
     def _run_current_page(self) -> None:
-        if not hasattr(self, "tabs"):
+        if not hasattr(self, "tabs") or self._active_workers:
             return
         current = self.tabs.currentWidget()
         if current is self.q_zvs_view:
@@ -281,15 +281,15 @@ class LLCMainWindow(QMainWindow):
         elif current is self.transformer_design_view:
             self.run_transformer_design(None, None)
         elif current is self.model_comparison_view:
-            self.run_model_comparison({})
+            self.model_comparison_view.run_button.click()
         elif current is self.sr_design_view:
-            self.run_sr_design({})
+            self.sr_design_view.run.click()
         elif current is self.interleaved_view:
-            self.run_interleaved(2, {})
+            self.interleaved_view.run.click()
         elif current is self.waveform_view:
             self.run_waveforms(False)
         elif current is self.small_signal_view:
-            self.run_small_signal({})
+            self.small_signal_view.run_button.click()
         elif current is self.digital_loop_view:
             self.digital_loop_view.request_analysis()
         else:
@@ -713,13 +713,7 @@ class LLCMainWindow(QMainWindow):
         self.statusBar().showMessage(f"公式计算书已导出：{path}", 8000)
 
     def show_about(self) -> None:
-        QMessageBox.about(
-            self, "关于",
-            "<h3>电源设计工具箱 LLC Design / Waveform / Control</h3>"
-            "<p>工具设计人：<b>杨帅锅</b></p>"
-            "<p>开关电源仿真与实用设计</p>"
-            "<p>LLC 谐振变换器设计、波形仿真与数字控制小信号建模工具。</p>",
-        )
+        QMessageBox.about(self, t("关于"), about_text())
 
     def _run_worker(self, label: str, function, callback) -> None:
         self._set_busy(True, label)

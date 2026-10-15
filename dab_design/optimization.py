@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from itertools import product
 
 import numpy as np
@@ -28,8 +29,8 @@ class TPSMetrics:
     secondary_active_pu: float
 
 
-def exact_tps_metrics(config: DABConfig, vb_v: float, phases) -> TPSMetrics:
-    """Exact integral of piecewise-linear zero-mean current over one period."""
+def bridge_segments(config: DABConfig, vb_v: float, phases):
+    """Normalized event times and exact bridge voltages on each interval."""
     d1, d2, d3 = map(float, phases)
     if (
         not all(math.isfinite(v) for v in (vb_v, d1, d2, d3))
@@ -40,11 +41,19 @@ def exact_tps_metrics(config: DABConfig, vb_v: float, phases) -> TPSMetrics:
         raise ValueError("Require VB>0 and 0<=D1<=1, 0<=D2<=D3<=1")
     shifts = np.array([0, d1 / 2, d2 / 2, d3 / 2])
     events = np.unique(np.r_[0, 1, shifts, (shifts + 0.5) % 1])
-    width = np.diff(events)
     mid = (events[:-1] + events[1:]) / 2
     legs = np.where((mid[:, None] - shifts) % 1 < 0.5, 1.0, -1.0)
     va = config.va_v * (legs[:, 0] + legs[:, 1]) / 2
     vb = vb_v / config.turns_ratio * (legs[:, 2] + legs[:, 3]) / 2
+    return events, va, vb
+
+
+def exact_tps_metrics(config: DABConfig, vb_v: float, phases) -> TPSMetrics:
+    """Exact integral of piecewise-linear zero-mean current over one period."""
+    d1, d2, d3 = map(float, phases)
+    events, va, vb = bridge_segments(config, vb_v, (d1, d2, d3))
+    width = np.diff(events)
+    shifts = np.array([0, d1 / 2, d2 / 2, d3 / 2])
     delta = (va - vb) * width / (config.inductance_h * config.switching_hz)
     current = np.r_[0, np.cumsum(delta)]
     if abs(current[-1]) > 1e-7 * max(1, np.max(abs(current))):
@@ -104,10 +113,20 @@ class TPSConstraints:
 
 
 def constraint_violations(metrics, target_w, limits):
-    reasons = []
-    if abs(metrics.power_w - target_w) > max(
-        1.0, target_w * limits.power_tolerance_fraction
+    if not all(
+        math.isfinite(value)
+        for value in (
+            metrics.power_w,
+            metrics.irms_a,
+            metrics.ipeak_a,
+            metrics.commutation_margin_a,
+            metrics.primary_active_pu,
+            metrics.secondary_active_pu,
+        )
     ):
+        return ("nonfinite physical metrics",)
+    reasons = []
+    if abs(metrics.power_w - target_w) > target_w * limits.power_tolerance_fraction:
         reasons.append("power error exceeds tolerance")
     if metrics.ipeak_a > limits.peak_current_limit_a + 1e-8:
         reasons.append("peak current exceeds limit")
@@ -125,11 +144,19 @@ def constraint_violations(metrics, target_w, limits):
 
 
 def quantize_phases(config, phases):
+    """Round to full-period TBCLK ticks without leaving the phase domain.
+
+    For an odd full-period count the exact half-period endpoint is unavailable;
+    use the largest representable phase at or below one.
+    """
+    d1, d2, d3 = map(float, phases)
+    if not 0 <= d1 <= 1 or not 0 <= d2 <= d3 <= 1:
+        raise ValueError("Require 0<=D1<=1 and 0<=D2<=D3<=1")
     half_ticks = math.floor(config.tbclk_hz / config.switching_hz + 0.5) / 2
-    return tuple(
-        float(np.floor(np.asarray(phases) * half_ticks + 0.5)[i] / half_ticks)
-        for i in range(3)
+    counts = np.minimum(
+        np.floor(np.array([d1, d2, d3]) * half_ticks + 0.5), math.floor(half_ticks)
     )
+    return tuple(float(value / half_ticks) for value in counts)
 
 
 @dataclass(frozen=True)
@@ -186,6 +213,7 @@ class TPSOptimizationResult:
     limits: TPSConstraints
     timings_s: dict[str, float]
     evaluations: int  # grid + SLSQP calls; excludes PWM verification
+    solver_cache_hits: int = 0
     zvs_status: str = "UNKNOWN: ideal-L commutation proxy only"
     model: str = "Exact ideal-L; Cp/deadtime/Coss excluded"
 
@@ -270,11 +298,18 @@ def optimize_tps(
     candidates = [baseline] + ([grid] if grid is not None else [])
     scale = max(1.0, baseline.metrics.irms_a)
 
-    def physical(x):
+    @lru_cache(maxsize=4096)
+    def physical_at(phases):
         nonlocal evaluations
         evaluations += 1
-        # SLSQP may evaluate just outside its inequality-feasible region.
-        return exact_tps_metrics(config, vb_v, (x[0], min(x[1], x[2]), max(x[1], x[2])))
+        return exact_tps_metrics(config, vb_v, phases)
+
+    def physical(x):
+        # Objective, power and inequality callbacks often request the same x.
+        # Cache exact float tuples within this one immutable operating point.
+        return physical_at(
+            (float(x[0]), float(min(x[1], x[2])), float(max(x[1], x[2])))
+        )
 
     def inequality(x):
         m = physical(x)
@@ -348,4 +383,5 @@ def optimize_tps(
             "constrained_search": time.perf_counter() - start,
         },
         evaluations,
+        solver_cache_hits=physical_at.cache_info().hits,
     )

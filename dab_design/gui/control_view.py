@@ -1,6 +1,7 @@
 """DAB voltage-loop and constrained-TPS workspace using shared control tools."""
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -13,10 +14,13 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -41,6 +45,9 @@ class DABControlView(QWidget):
         self._worker = None
         self.snapshot = None
         self.custom_controller = None
+        self._revision = 0
+        self._request_revision = 0
+        self._request_context = {}
         root = QVBoxLayout(self)
         self.diagram = ControlBlockDiagram()
         blocks = [
@@ -60,8 +67,14 @@ class DABControlView(QWidget):
         self.diagram.set_diagram(blocks, edges)
         self.diagram.setMinimumHeight(180)
         root.addWidget(self.diagram)
-        form = QFormLayout()
-        root.addLayout(form)
+        parameters = QHBoxLayout()
+        root.addLayout(parameters)
+        loop_group = QGroupBox("Voltage-loop model")
+        point_group = QGroupBox("Operating point / TPS constraints")
+        loop_form = QFormLayout(loop_group)
+        point_form = QFormLayout(point_group)
+        parameters.addWidget(loop_group)
+        parameters.addWidget(point_group)
         self.inputs = {}
         for key, label, value, lo, hi in [
             ("vb", "工况 Vout / V", 400, 10, 5000),
@@ -78,17 +91,24 @@ class DABControlView(QWidget):
             w.setValue(value)
             w.setKeyboardTracking(False)
             self.inputs[key] = w
+            form = (
+                loop_form if key in ("sample_hz", "kp_w_per_v", "ti_s") else point_form
+            )
             form.addRow(label, w)
         self.load = QComboBox()
         self.load.addItem("电阻负载", "resistance")
         self.load.addItem("恒功率负载", "constant_power")
-        form.addRow("负载模型", self.load)
+        loop_form.addRow("负载模型", self.load)
         self.cp = QCheckBox("周期功率映射包含 Cp（不含 Cp 瞬态状态）")
-        form.addRow(self.cp)
+        self.cp.setToolTip(
+            "Voltage-loop power map only. TPS optimization uses the ideal-L model."
+        )
+        loop_form.addRow(self.cp)
         self.proxy = QCheckBox("优化中约束换流极性（最小电流 0 A；非 ZVS 证明）")
-        form.addRow(self.proxy)
+        point_form.addRow(self.proxy)
         buttons = QHBoxLayout()
         root.addLayout(buttons)
+        self.action_buttons = []
         for text, callback in [
             ("运行电压环 / 闭环验证", self.run_control),
             ("TPS 约束优化对比", self.run_optimization),
@@ -98,11 +118,28 @@ class DABControlView(QWidget):
             b = QPushButton(text)
             b.clicked.connect(callback)
             buttons.addWidget(b)
+            self.action_buttons.append(b)
+        self.export_button = self.action_buttons[-1]
+        self.export_button.setEnabled(False)
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, 1)
         self.summary = QPlainTextEdit()
         self.summary.setReadOnly(True)
         self.tabs.addTab(self.summary, "模型 / 稳定性 / 约束")
+        self.optimization_table = QTableWidget(0, 7)
+        self.optimization_table.setHorizontalHeaderLabels(
+            [
+                "Method",
+                "Pout / W",
+                "Power error / %",
+                "Irms / A",
+                "Ipeak / A",
+                "Feasible",
+                "Violations",
+            ]
+        )
+        self.optimization_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.tabs.addTab(self.optimization_table, "Optimization comparison")
         self.fig = Figure(figsize=(10, 6), layout="constrained")
         self.canvas = FigureCanvasQTAgg(self.fig)
         self.tabs.addTab(self.canvas, "Bode / 闭环响应")
@@ -113,6 +150,18 @@ class DABControlView(QWidget):
         root.addWidget(self.status)
         self.inputs["kp_w_per_v"].valueChanged.connect(self._use_pi)
         self.inputs["ti_s"].valueChanged.connect(self._use_pi)
+        for widget in self.inputs.values():
+            widget.valueChanged.connect(self.mark_stale)
+        self.load.currentIndexChanged.connect(self.mark_stale)
+        self.cp.toggled.connect(self.mark_stale)
+        self.proxy.toggled.connect(self.mark_stale)
+
+    def mark_stale(self, *_):
+        self._revision += 1
+        if self.snapshot is not None or self._worker is not None:
+            self.status.setText(
+                "Inputs changed; displayed/exported results use the completed run snapshot."
+            )
 
     def _use_pi(self):
         self.custom_controller = None
@@ -121,9 +170,20 @@ class DABControlView(QWidget):
         self.inputs["vb"].setValue(vb)
         self.inputs["power"].setValue(max(1, power))
 
-    def _start(self, func, *args):
+    def _start(self, func, *args, context=None):
         if self._worker is not None:
             return
+        self._request_context = context or {}
+        self._request_revision = self._revision
+        self.snapshot = None
+        self.summary.clear()
+        self.code.clear()
+        self.fig.clear()
+        self.canvas.draw_idle()
+        self.optimization_table.setRowCount(0)
+        for button in self.action_buttons[:2]:
+            button.setEnabled(False)
+        self.export_button.setEnabled(False)
         worker = FunctionWorker(func, *args)
         self._worker = worker
         worker.signals.result.connect(self._display)
@@ -136,6 +196,8 @@ class DABControlView(QWidget):
 
     def _finished(self):
         self._worker = None
+        for button in self.action_buttons[:2]:
+            button.setEnabled(True)
 
     def run_control(self):
         try:
@@ -154,6 +216,11 @@ class DABControlView(QWidget):
                 self.inputs["power"].value(),
                 control,
                 self.custom_controller,
+                context={
+                    "analysis_kind": "voltage_loop",
+                    "stage": asdict(stage),
+                    "control": asdict(control),
+                },
             )
         except ValueError as exc:
             self.status.setText(str(exc))
@@ -166,12 +233,14 @@ class DABControlView(QWidget):
                 0.02,
                 0 if self.proxy.isChecked() else None,
             )
+            stage = self.stage_provider()
             self._start(
                 optimize_tps,
-                self.stage_provider(),
+                stage,
                 self.inputs["vb"].value(),
                 self.inputs["power"].value(),
                 limits,
+                context={"analysis_kind": "tps_optimization", "stage": asdict(stage)},
             )
         except ValueError as exc:
             self.status.setText(str(exc))
@@ -200,14 +269,48 @@ class DABControlView(QWidget):
 
     def _display(self, result):
         if hasattr(result, "to_dict"):
-            self.snapshot = result.to_dict()
+            self.code.clear()
+            self.snapshot = {**result.to_dict(), "run_context": self._request_context}
             self.summary.setPlainText(
                 json.dumps(self.snapshot, indent=2, ensure_ascii=False)
             )
-            self.status.setText("优化完成；仅显示经 PWM 计数量化复核的候选。")
+            self.optimization_table.setRowCount(3)
+            for row, (name, candidate) in enumerate(
+                (
+                    ("Reference formula", result.baseline),
+                    ("Coarse grid", result.grid),
+                    ("Constrained search", result.optimized),
+                )
+            ):
+                values = [name, "—", "—", "—", "—", "No", "No feasible grid candidate"]
+                if candidate is not None:
+                    m = candidate.metrics
+                    values = [
+                        name + ": " + candidate.method,
+                        f"{m.power_w:.6g}",
+                        f"{100 * (m.power_w / result.target_w - 1):.4g}",
+                        f"{m.irms_a:.6g}",
+                        f"{m.ipeak_a:.6g}",
+                        "Yes" if candidate.feasible else "No",
+                        "; ".join(candidate.violations),
+                    ]
+                for col, value in enumerate(values):
+                    self.optimization_table.setItem(row, col, QTableWidgetItem(value))
+            self.optimization_table.resizeColumnsToContents()
+            self.tabs.setTabEnabled(self.tabs.indexOf(self.optimization_table), True)
+            self.tabs.setTabEnabled(self.tabs.indexOf(self.canvas), False)
+            self.tabs.setTabEnabled(self.tabs.indexOf(self.code), False)
+            self.tabs.setCurrentWidget(self.optimization_table)
+            status = (
+                "Feasible PWM-quantized candidate found."
+                if result.optimized.feasible
+                else "No feasible candidate found within the search; inspect violations."
+            )
+            self._completed(status)
             return
         t, data, metrics, loop = result
         self.snapshot = {
+            "run_context": self._request_context,
             "metrics": metrics,
             "time_s": t.tolist(),
             "signals": {k: v.tolist() for k, v in data.items()},
@@ -249,11 +352,21 @@ class DABControlView(QWidget):
             name="DAB voltage controller",
         )
         self.code.setPlainText(render_c99_single_file(digital, prefix="DAB_VOLTAGE"))
-        self.status.setText(
+        self.tabs.setTabEnabled(self.tabs.indexOf(self.optimization_table), False)
+        self.tabs.setTabEnabled(self.tabs.indexOf(self.canvas), True)
+        self.tabs.setTabEnabled(self.tabs.indexOf(self.code), True)
+        self.tabs.setCurrentWidget(self.canvas)
+        self._completed(
             "闭环完成；离散极点 "
             + ("稳定" if loop.stable else "不稳定")
             + "；C99 为线性控制器，应用层需处理限幅和许可。"
         )
+
+    def _completed(self, status):
+        self.export_button.setEnabled(True)
+        if self._revision != self._request_revision:
+            status += " Inputs changed during calculation; result belongs to the earlier snapshot."
+        self.status.setText(status)
 
     def export_snapshot(self):
         if self.snapshot is None:

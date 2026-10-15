@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
+
 import numpy as np
 from numpy.typing import NDArray
 from scipy import signal
+
 from .models import AnalogTransferFunction, DigitalTransferFunction, StabilityClass
 
 
@@ -51,10 +54,16 @@ def analyze_digital_filter(digital: DigitalTransferFunction, *, analog: AnalogTr
     with np.errstate(all='ignore'):
         _,gd=signal.group_delay((np.asarray(d.b),np.asarray(d.a)),w=w,fs=2*np.pi)
     gd=np.nan_to_num(gd,nan=0.0,posinf=0.0,neginf=0.0)/fs
-    system=(np.asarray(d.b),np.asarray(d.a),1.0/fs)
-    ti,yi=signal.dimpulse(system,n=int(response_samples)); ts,ys=signal.dstep(system,n=int(response_samples))
-    ti=np.asarray(ti,dtype=float).reshape(-1); imp=np.asarray(yi[0],dtype=float).reshape(-1)
-    ts=np.asarray(ts,dtype=float).reshape(-1); step=np.asarray(ys[0],dtype=float).reshape(-1)
+    # b/a are ascending z^-1 coefficients. lfilter preserves feedthrough and
+    # numerator delays and supports causal FIR/BE derivative controllers.
+    count = int(response_samples)
+    if count < 1:
+        raise ValueError("response_samples must be positive")
+    ti = np.arange(count, dtype=float)/fs
+    ts = ti.copy()
+    impulse_input = np.zeros(count); impulse_input[0] = 1.0
+    imp = signal.lfilter(np.asarray(d.b), np.asarray(d.a), impulse_input)
+    step = signal.lfilter(np.asarray(d.b), np.asarray(d.a), np.ones(count))
     final=float(step[-1]); peak=float(np.max(step)) if final>=0 else float(np.min(step)); over=max(0.0,(peak-final)/max(abs(final),1e-12)*100.0) if final>=0 else max(0.0,(final-peak)/max(abs(final),1e-12)*100.0)
     dc=float(np.sum(d.b)/np.sum(d.a)) if abs(np.sum(d.a))>1e-15 else float('inf')
     return ControlResponseAnalysis(f,mag,phase,amag,aph,gd,ti,imp,ts,step,d.poles,d.zeros,d.stable,d.stability_class,d.max_pole_radius,dc,final,peak,float(over),_settling_time(ts,step,final))

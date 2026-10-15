@@ -45,9 +45,16 @@ class InterleavedLLCView(QWidget):
             axg.axvline(r.common_switching_frequency_hz/1e3,linestyle=':',label='Operating Fsw')
             axg.set_ylabel('DC gain  Vo/Vin');axg.set_xlabel('Frequency (kHz)');axg.grid(True,which='both',alpha=.3);axg.legend()
         t=r.waveform.time_s*1e6
-        for p in range(r.phase_count): ax.plot(t,r.waveform.signal(f'i_rectified_p{p+1}').values,label=f'P{p+1} {r.phase_offsets_deg[p]:g}°')
+        # The shared 3P rectifier has signed winding currents, not independent
+        # rectified phase outputs as in the 2P independent-cell topology.
+        phase_signal = 'i_secondary' if r.phase_count == 3 else 'i_rectified'
+        for p in range(r.phase_count):
+            label = f'P{p+1} {r.phase_offsets_deg[p]:g}°'
+            if r.phase_count == 3:
+                label += ' secondary'
+            ax.plot(t,r.waveform.signal(f'{phase_signal}_p{p+1}').values,label=label)
         ax.plot(t,r.waveform.signal('i_rectified_total').values,label='Total',linewidth=2)
-        ax.set_xlabel('Time (us)'); ax.set_ylabel('Rectified current (A)'); ax.grid(True,alpha=.3); ax.legend(); self.figure.tight_layout(); self.canvas.draw_idle()
+        ax.set_xlabel('Time (us)'); ax.set_ylabel('Secondary / rectified current (A)' if r.phase_count == 3 else 'Rectified current (A)'); ax.grid(True,alpha=.3); ax.legend(); self.figure.tight_layout(); self.canvas.draw_idle()
         exact = r.electrical_point.exact_common_solution if r.electrical_point is not None else True
         residual = r.electrical_point.solver_residual if r.electrical_point is not None else 0.0
         topology = r.electrical_point.topology.value if r.electrical_point is not None else f"{r.phase_count}P"

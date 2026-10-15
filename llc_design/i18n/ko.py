@@ -113,7 +113,8 @@ F9            LLC: 집중 모드 (파라미터와 실행 로그 숨김)
 Ctrl+R        LLC: 현재 페이지 해석 실행
 툴바          각 워크스페이스 상단: 전환, 실행/재계산, 내보내기, 도움말, 연락처, 업데이트 확인
 """,
-    "helpbody.common.contact": """메일    maileyang@qq.com
+    "helpbody.common.contact": """제작    杨帅 (Yang Shuai)
+메일    maileyang@qq.com
 WeChat    maileyang
 공식 계정 / 기술 블로그  开关电源仿真与实用设计 (아래 QR 코드를 스캔)
 
@@ -136,7 +137,7 @@ WeChat    maileyang
 "모델 적용 범위와 알려진 한계"에 정리되어 있습니다.
 """,
     "helpbody.common.about": """전원 설계 툴박스 Power Design Toolkit V{version}
-제작: 杨帅锅 (Yang Shuaiguo)
+제작: 杨帅 (Yang Shuai)
 메일    maileyang@qq.com
 WeChat    maileyang
 공식 계정 / 기술 블로그  开关电源仿真与实用设计

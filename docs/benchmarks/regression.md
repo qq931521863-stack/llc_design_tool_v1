@@ -1,3 +1,10 @@
+# Latest desktop audit
+
+The October 2026 fixes, 479-test combined regression, independent DAB model
+checks and remaining headless Qt teardown issue are recorded in
+[UI_ALGORITHM_AUDIT.md](../UI_ALGORITHM_AUDIT.md). The earlier results below
+remain historical evidence for their stated revision and scope.
+
 # 本轮回归范围（2026-10-15）
 
 ## 通过的定向回归

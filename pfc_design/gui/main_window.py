@@ -21,16 +21,17 @@ from llc_design.gui.help import install_help
 from llc_design.gui.i18n_ui import install_language_selector
 from llc_design.gui.updater import add_toolbar_right_side, check_for_updates
 from llc_design.gui.workers import FunctionWorker
-from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
+from llc_design.user_messages import show_operation_issue
 from pfc_design.control import (
     PFCControlLabConfig,
     build_pfc_control_handoff,
     build_pfc_switching_waveforms,
 )
-from pfc_design.engineering.pfc_v3 import PFCEngineeringV3Result, build_pfc_engineering_v3
-from .v3_diagnostics_view import install_v3_diagnostics, show_v3_diagnostics
-
+from pfc_design.engineering.pfc_v3 import (
+    PFCEngineeringV3Result,
+    build_pfc_engineering_v3,
+)
 from pfc_design.vienna import (
     ViennaControlLabConfig,
     build_vienna_control_lab_analysis,
@@ -47,9 +48,10 @@ from .cap_thermal_install import install_ttpl_capacitor_thermal_stage
 from .device_loss_install import install_ttpl_device_loss_stage
 from .exact_hz_install import install_ttpl_exact_hz_stage
 from .ngspice_closed_loop_install import install_ttpl_ngspice_closed_loop_stage
-from .ttpl_engineering_view import TTPLWorkbenchView
-from .vienna_control_view import ViennaControlLabView
 from .three_phase_view import ThreePhaseDQView
+from .ttpl_engineering_view import TTPLWorkbenchView
+from .v3_diagnostics_view import install_v3_diagnostics, show_v3_diagnostics
+from .vienna_control_view import ViennaControlLabView
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,7 @@ class PFCMainWindow(QMainWindow):
         self.resize(1920, 1080)
         self.thread_pool = QThreadPool.globalInstance()
         self._active_workers = []
+        self._worker_request_id = 0
         self.result = None
         self.engineering_result = None
 
@@ -156,8 +159,10 @@ class PFCMainWindow(QMainWindow):
             widget.run_analysis()
 
     def closeEvent(self, event):
-        if self.three_phase_view._worker is not None:
-            self.statusBar().showMessage("三相 dq 仿真进行中，请完成后关闭。")
+        if (self._active_workers or self.three_phase_view._worker is not None
+                or self.three_phase_view.pll_comparison._worker is not None
+                or self.vienna_view.pll_comparison._worker is not None):
+            self.statusBar().showMessage("后台计算进行中，请完成后关闭。")
             event.ignore()
         else:
             super().closeEvent(event)
@@ -181,19 +186,30 @@ class PFCMainWindow(QMainWindow):
         if hasattr(self.control_lab_view, "ngspice_closed_loop_view"):
             self.control_lab_view.ngspice_closed_loop_view.set_busy(busy)
         self.vienna_view.set_busy(busy)
-        self.statusBar().showMessage(message if busy else t("PFC 工作区就绪"))
+        if busy or message:
+            self.statusBar().showMessage(message)
 
     def _run_worker(self, label, function, callback):
+        self._worker_request_id += 1
+        request_id = self._worker_request_id
         self.set_busy(True, label)
         worker = FunctionWorker(function)
         self._active_workers.append(worker)
-        worker.signals.result.connect(callback)
-        worker.signals.error.connect(self._worker_error)
-        worker.signals.finished.connect(lambda: self.set_busy(False))
-        worker.signals.finished.connect(lambda: self._active_workers.remove(worker))
+        worker.signals.result.connect(
+            lambda result: callback(result) if request_id == self._worker_request_id else None)
+        worker.signals.error.connect(
+            lambda error: self._worker_error(error) if request_id == self._worker_request_id else None)
+        worker.signals.finished.connect(lambda: self._worker_finished(worker, request_id))
         self.thread_pool.start(worker)
 
+    def _worker_finished(self, worker, request_id):
+        if worker in self._active_workers:
+            self._active_workers.remove(worker)
+        if request_id == self._worker_request_id:
+            self.set_busy(False)
+
     def _worker_error(self, error):
+        self.statusBar().showMessage("Calculation failed; no new result was accepted.")
         show_operation_issue(self, t("计算失败"), str(error), critical=True)
 
     def run_ttpl_analysis(self, config: PFCControlLabConfig):

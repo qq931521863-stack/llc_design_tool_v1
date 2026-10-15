@@ -8,32 +8,68 @@ V8.3-alpha2 interaction rules:
 * C99 export is one header-only float32_t file using DF2T/SOS.
 """
 from __future__ import annotations
+
 import math
 from pathlib import Path
+
 import numpy as np
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
-    QScrollArea, QSlider, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+    QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QSpinBox,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
 
 from llc_design.gui import theme
-from llc_design.user_messages import show_operation_issue
-from llc_design.i18n import t
 from llc_design.gui.help import install_help
 from llc_design.gui.i18n_ui import install_language_selector
 from llc_design.gui.updater import add_toolbar_right_side
+from llc_design.i18n import t
+from llc_design.user_messages import show_operation_issue
 from power_control_tools.analysis import analyze_digital_filter
-from power_control_tools.codegen import export_c99_filter, render_c99_single_file, verify_c99_filter
-from power_control_tools.controllers import CONTROLLER_LABELS, controller_parameter_keys, design_controller
+from power_control_tools.codegen import (
+    export_c99_filter,
+    render_c99_single_file,
+    verify_c99_filter,
+)
+from power_control_tools.controllers import (
+    CONTROLLER_LABELS,
+    controller_parameter_keys,
+    design_controller,
+)
 from power_control_tools.discretize import discretize_transfer_function
-from power_control_tools.filters import design_iir_filter, design_fir_filter, design_moving_average, design_dc_blocker
+from power_control_tools.filters import (
+    design_dc_blocker,
+    design_fir_filter,
+    design_iir_filter,
+    design_moving_average,
+)
 from power_control_tools.gui.type_compensator_schematic import TypeCompensatorSchematic
-from power_control_tools.models import ControllerKind, DiscretizationMethod, FilterResponse, IIRFamily, StabilityClass
+from power_control_tools.models import (
+    ControllerKind,
+    DiscretizationMethod,
+    FilterResponse,
+    IIRFamily,
+    StabilityClass,
+)
 
 
 class SliderSpin(QWidget):
@@ -101,6 +137,7 @@ class ControlToolsMainWindow(QMainWindow):
         self._build_toolbar(); self.setStyleSheet(theme.workspace_stylesheet(theme.active_theme()))
         self.timer = QTimer(self); self.timer.setSingleShot(True); self.timer.setInterval(45)
         self.timer.timeout.connect(self.recalculate)
+        self.workspace_pages.currentChanged.connect(lambda *_: self.recalculate())
         self._update_dynamic_visibility(); self.recalculate()
 
     def _build_toolbar(self):
@@ -108,7 +145,7 @@ class ControlToolsMainWindow(QMainWindow):
         for name, target in [("LLC", "llc"), ("PFC", "pfc"), ("功能选择", "home")]:
             a = QAction(name, self); a.triggered.connect(lambda checked=False, t=target: self.workspace_switch_requested.emit(t)); tb.addAction(a)
         tb.addSeparator(); a = QAction("重新计算", self); a.triggered.connect(self.recalculate); tb.addAction(a)
-        a = QAction("导出单文件 C99", self); a.triggered.connect(self.export_c99); tb.addAction(a)
+        a = QAction("导出单文件 C99", self); a.triggered.connect(self.export_c99); tb.addAction(a); self.export_action = a
         install_help(self, "control")
         add_toolbar_right_side(tb, self)
         install_language_selector(self)
@@ -120,7 +157,32 @@ class ControlToolsMainWindow(QMainWindow):
     def _changed(self):
         self._update_dynamic_visibility(); self.schedule()
 
-    def schedule(self): self.timer.start()
+    def schedule(self):
+        self._invalidate_design()
+        self.timer.start()
+
+    def _set_export_enabled(self, enabled):
+        self.export.setEnabled(enabled)
+        if hasattr(self, "export_action"):
+            pr = self.workspace_pages.currentWidget() is self.pr_view
+            self.export_action.setEnabled(self.pr_view.export_button.isEnabled() if pr else enabled)
+
+    def _invalidate_design(self, *, clear_plots=False):
+        self.current_analog = None
+        self.current_digital = None
+        self.current_analysis = None
+        self._set_export_enabled(False)
+        for output in (self.live_hs, self.live_hz, self.coeff, self.tf, self.c99):
+            output.clear()
+        for figure, canvas in ((self.bode_fig, self.bode_canvas), (self.step_fig, self.step_canvas),
+                               (self.imp_fig, self.imp_canvas), (self.pz_fig, self.pz_canvas),
+                               (self.gd_fig, self.gd_canvas)):
+            canvas.setEnabled(False)
+            if clear_plots:
+                for axis in figure.axes:
+                    axis.set_xscale("linear")
+                figure.clear()
+                canvas.draw_idle()
 
     @staticmethod
     def _field_visible(form: QFormLayout, widget: QWidget, visible: bool):
@@ -301,7 +363,7 @@ class ControlToolsMainWindow(QMainWindow):
     def _refresh_type_schematic(self) -> None:
         if not hasattr(self, "type_schematic"):
             return
-        kind = self.ctrl.currentData()
+        kind = ControllerKind(self.ctrl.currentData())
         if kind not in (ControllerKind.TYPE_II, ControllerKind.TYPE_III):
             return
         mode = str(self.type_input_mode.currentData() or "pz")
@@ -372,9 +434,12 @@ class ControlToolsMainWindow(QMainWindow):
         )
 
     def recalculate(self):
+        self.timer.stop()
         if hasattr(self, "workspace_pages") and self.workspace_pages.currentWidget() is self.pr_view:
             self.pr_view.recalculate()
+            self._set_export_enabled(False)
             return
+        self._invalidate_design()
         try:
             self._update_dynamic_visibility(); a, d = self._design(); self._update_live_transfer(a, d)
             self._refresh_type_schematic()
@@ -390,9 +455,12 @@ class ControlToolsMainWindow(QMainWindow):
             label = {StabilityClass.STABLE:"STABLE", StabilityClass.MARGINAL:"MARGINAL / INTEGRATOR", StabilityClass.UNSTABLE:"UNSTABLE"}[d.stability_class]
             if d.stability_class == StabilityClass.MARGINAL: warn.append("Pole on the unit circle is expected for ideal integral/derivative controllers; check closed-loop stability with the plant.")
             self.status.setText(label + f" | max |p|={d.max_pole_radius:.8f} | Nyquist={d.sample_rate_hz/2:.1f} Hz" + (("\n"+"\n".join(warn)) if warn else ""))
-            self.export.setEnabled(d.implementable)
+            self._set_export_enabled(d.implementable)
+            for canvas in (self.bode_canvas, self.step_canvas, self.imp_canvas, self.pz_canvas, self.gd_canvas):
+                canvas.setEnabled(True)
         except Exception as exc:
-            self.live_hz.setPlainText("ERROR: " + str(exc)); self.status.setText("ERROR: " + str(exc)); self.export.setEnabled(False)
+            self._invalidate_design(clear_plots=True)
+            self.live_hz.setPlainText("ERROR: " + str(exc)); self.status.setText("ERROR: " + str(exc))
 
     def _render(self):
         r = self.current_analysis; d = self.current_digital; a = self.current_analog
@@ -425,7 +493,7 @@ class ControlToolsMainWindow(QMainWindow):
         if self.workspace_pages.currentWidget() is self.pr_view:
             self.pr_view.export_c99()
             return
-        if self.current_digital is None: return
+        if self.current_digital is None or not self.current_digital.implementable: return
         prefix = self.export_prefix.text().strip() or "POWER_CTRL"
         default = str(Path.cwd() / f"{prefix.lower()}.h")
         path, _ = QFileDialog.getSaveFileName(self, "导出单文件 C99", default, "C99 Header (*.h)")
