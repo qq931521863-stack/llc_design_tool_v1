@@ -60,12 +60,15 @@ class LoopMapSource:
     current_loop_response: np.ndarray | None = None
     operating_point: str = ""
     compatibility_key: str = ""
+    model_inputs: dict | None = None
+    replay_verified: bool = True
 
 
 class SolutionMapView(QWidget):
     """Fc × PM design-space browser driven by an already-built loop model."""
 
     controller_selected = Signal(str, object)
+    evidence_context_changed = Signal()
 
     def __init__(self, title: str = "Fc × PM Solution Map", parent=None) -> None:
         super().__init__(parent)
@@ -139,6 +142,9 @@ class SolutionMapView(QWidget):
             self.gm_min, self.ms_max, self.switch_max, self.fc_tol, self.pm_tol,
         ):
             widget.valueChanged.connect(self._inputs_changed)
+        for widget in (self.live_fc, self.live_pm, self.gm_min, self.ms_max, self.switch_max,
+                       self.fc_tol, self.pm_tol):
+            widget.valueChanged.connect(lambda *_args: self.evidence_context_changed.emit())
         self._source_changed()
 
     @staticmethod
@@ -288,7 +294,7 @@ class SolutionMapView(QWidget):
         self.sources = {source.key: self._freeze_source(source) for source in sources}
         current = self.source_combo.currentData() or self._last_source_key
         incompatible = [corner_id for corner_id, retained in self._retained_sources.items()
-                        if retained.key in self.sources
+                        if retained.replay_verified and retained.key in self.sources
                         and not self._compatible(retained, self.sources[retained.key])]
         for corner_id in incompatible:
             self._retained_sources.pop(corner_id)
@@ -319,6 +325,9 @@ class SolutionMapView(QWidget):
                 frozen = np.array(value, copy=True)
                 frozen.setflags(write=False)
                 arrays[name] = frozen
+        if source.model_inputs is not None:
+            from copy import deepcopy
+            arrays["model_inputs"] = deepcopy(source.model_inputs)
         return replace(source, **arrays)
 
     @staticmethod
@@ -347,6 +356,16 @@ class SolutionMapView(QWidget):
             return "Invalid current-loop comparison response."
         return ""
 
+    def _pending_snapshot_problem(self) -> str:
+        source = self._source()
+        pending = [key for key, retained in self._retained_sources.items()
+                   if key in self._checked_corner_ids and not retained.replay_verified
+                   and (source is None or retained.key == source.key)]
+        if pending:
+            return ("Checked snapshots need recomputation: " + ", ".join(pending)
+                    + ". Run successfully, or explicitly uncheck/remove them before designing a candidate.")
+        return ""
+
     def _refresh_corners(self) -> None:
         source = self._source()
         self.corner_list.blockSignals(True)
@@ -354,7 +373,8 @@ class SolutionMapView(QWidget):
         for corner_id, retained in self._retained_sources.items():
             if source is not None and retained.key != source.key:
                 continue
-            item = QListWidgetItem(f"{corner_id}: {retained.operating_point or retained.label}")
+            suffix = " [recompute required]" if not retained.replay_verified else ""
+            item = QListWidgetItem(f"{corner_id}: {retained.operating_point or retained.label}{suffix}")
             item.setData(Qt.ItemDataRole.UserRole, corner_id)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked if corner_id in self._checked_corner_ids
@@ -373,7 +393,12 @@ class SolutionMapView(QWidget):
                                       and bool(source.compatibility_key))
         self.remove_corner_button.setEnabled(self.corner_list.count() > 0)
         self.clear_corners_button.setEnabled(bool(self._retained_sources))
-        self.corner_notice.setText(self._corner_notice)
+        pending = self._pending_snapshot_problem()
+        self.corner_notice.setText(pending or self._corner_notice)
+        supported = self._intent is None or self._intent.design_mode != "auto" or self._intent.structure == "PI"
+        enabled = source is not None and not self._source_problem(source) and not pending and supported
+        self.generate_button.setEnabled(enabled)
+        self.run_button.setEnabled(enabled)
 
     def retain_current_source(self) -> None:
         source = self._source()
@@ -388,6 +413,7 @@ class SolutionMapView(QWidget):
                 self._corner_notice = "This operating point is already retained."
                 self._refresh_corners()
                 return
+        self.evidence_context_changed.emit()
         self._corner_sequence += 1
         corner_id = f"OP{self._corner_sequence}"
         self._retained_sources[corner_id] = self._freeze_source(source)
@@ -401,6 +427,7 @@ class SolutionMapView(QWidget):
         if item is None:
             return
         corner_id = item.data(Qt.ItemDataRole.UserRole)
+        self.evidence_context_changed.emit()
         self._retained_sources.pop(corner_id, None)
         self._checked_corner_ids.discard(corner_id)
         self._corner_notice = "Removed the selected operating-point snapshot."
@@ -408,6 +435,8 @@ class SolutionMapView(QWidget):
         self._refresh_corners()
 
     def clear_corners(self) -> None:
+        if self._retained_sources:
+            self.evidence_context_changed.emit()
         self._retained_sources.clear()
         self._checked_corner_ids.clear()
         self._corner_notice = "Retained operating points cleared."
@@ -415,6 +444,7 @@ class SolutionMapView(QWidget):
         self._refresh_corners()
 
     def _corner_toggled(self, item) -> None:
+        self.evidence_context_changed.emit()
         corner_id = item.data(Qt.ItemDataRole.UserRole)
         if item.checkState() == Qt.CheckState.Checked:
             self._checked_corner_ids.add(corner_id)
@@ -429,7 +459,8 @@ class SolutionMapView(QWidget):
             return ()
         selected = [("Current nominal", source)] + [
             (corner_id, retained) for corner_id, retained in self._retained_sources.items()
-            if corner_id in self._checked_corner_ids and self._compatible(source, retained)
+            if corner_id in self._checked_corner_ids and retained.replay_verified
+            and self._compatible(source, retained)
         ]
         return tuple(FixedLoopCorner(
             corner_id=f"{corner_id}: {item.operating_point or item.label}",
@@ -485,7 +516,7 @@ class SolutionMapView(QWidget):
         if source is None:
             self.source_info.setText("No current loop source. Run the maintained analysis first.")
             return
-        problem = self._source_problem(source)
+        problem = self._source_problem(source) or self._pending_snapshot_problem()
         if problem:
             self.run_button.setEnabled(False)
             self.generate_button.setEnabled(False)
@@ -545,8 +576,9 @@ class SolutionMapView(QWidget):
         if source is None:
             self.details.setPlainText("Run the maintained loop analysis before generating a candidate.")
             return
-        if self._source_problem(source):
-            self.details.setPlainText(self._source_problem(source))
+        problem = self._source_problem(source) or self._pending_snapshot_problem()
+        if problem:
+            self.details.setPlainText(problem)
             return
         if self._intent is not None and self._intent.design_mode == "auto" and self._intent.structure != "PI":
             self.details.setPlainText(f"Auto synthesis for {self._intent.structure} is not implemented; no controller changed.")
@@ -586,8 +618,9 @@ class SolutionMapView(QWidget):
         source = self._source()
         if source is None:
             return
-        if self._source_problem(source):
-            self.details.setPlainText(self._source_problem(source))
+        problem = self._source_problem(source) or self._pending_snapshot_problem()
+        if problem:
+            self.details.setPlainText(problem)
             return
         if self.fc_max.value() <= self.fc_min.value():
             self.details.setPlainText("Fc max must exceed Fc min.")
@@ -839,7 +872,8 @@ class SolutionMapView(QWidget):
         )
 
     def can_apply(self, point: SolutionMapPoint) -> bool:
-        return (point.kp is not None and point.ti_s is not None
+        return (not self._pending_snapshot_problem()
+                and point.kp is not None and point.ti_s is not None
                 and (point.feasible or (point.status == SolutionStatus.CONDITIONAL
                                        and self.allow_conditional.isChecked())))
 

@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from PySide6.QtCore import QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QFileDialog,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -120,6 +121,12 @@ class PFCMainWindow(QMainWindow):
         toolbar.addAction(action)
         toolbar.addSeparator()
 
+        for label, callback in (("保存 TTPL 会话", self.save_ttpl_session),
+                                ("打开 TTPL 会话", self.load_ttpl_session)):
+            action = QAction(label, self)
+            action.triggered.connect(callback)
+            toolbar.addAction(action)
+
         action = QAction("TTPL Engineering", self)
         action.triggered.connect(lambda: self.subtabs.setCurrentIndex(0))
         toolbar.addAction(action)
@@ -144,6 +151,38 @@ class PFCMainWindow(QMainWindow):
         add_toolbar_right_side(toolbar, self)
         install_language_selector(self)
         QTimer.singleShot(2500, self._auto_check_update)
+
+    def save_ttpl_session(self):
+        path, _ = QFileDialog.getSaveFileName(self, "保存 TTPL 设计会话", "ttpl_session.json", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            from .solution_map_install import install_ttpl_solution_map
+            from llc_design.control.design_session import write_session
+            install_ttpl_solution_map(self)
+            write_session(self.control_lab_view.control_lab._session_capture(), path)
+            self.statusBar().showMessage(f"TTPL session saved: {path}")
+        except Exception as exc:
+            show_operation_issue(self, t("保存失败"), str(exc), critical=True)
+
+    def load_ttpl_session(self):
+        path, _ = QFileDialog.getOpenFileName(self, "打开 TTPL 设计会话", "", "JSON (*.json)")
+        if not path:
+            return
+        try:
+            from .solution_map_install import install_ttpl_solution_map
+            from llc_design.control.design_session import read_session
+            from llc_design.gui.design_session_install import validate_map_state
+            document = read_session(path)
+            if document["workspace"] != "ttpl":
+                raise ValueError("Choose a TTPL design session")
+            view = install_ttpl_solution_map(self)
+            prepared = validate_map_state(view, document.get("solution_map"), "ttpl")
+            self.control_lab_view.control_lab._session_restore(document, prepared)
+            self.subtabs.setCurrentIndex(0)
+            self.statusBar().showMessage("TTPL inputs restored. Run analysis and regenerate candidate before Apply.")
+        except Exception as exc:
+            show_operation_issue(self, t("加载失败"), str(exc), critical=True)
 
     def _auto_check_update(self):
         check_for_updates(self, notify_up_to_date=False)

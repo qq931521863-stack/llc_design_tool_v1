@@ -16,6 +16,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from llc_design.control.candidate_evidence import (
+    build_candidate_evidence, check_evidence,
+    invalidate_evidence, llc_model_signature, validate_saved_evidence,
+)
 from llc_design.control.digital_loop import (
     ControllerKind,
     PIControllerConfig,
@@ -114,6 +118,57 @@ def _guard_loop_completions(host, callback_name: str, view, state) -> None:
     host._run_worker = MethodType(run_worker, host)
 
 
+def _show_candidate_evidence(view, evidence) -> None:
+    if not evidence or not view.sources:
+        return
+    assessment = evidence.get("assessment", {})
+    rows = [
+        "\nAPPLIED CANDIDATE EVIDENCE",
+        f"{assessment.get('status', 'UNKNOWN')} | {evidence.get('freshness', 'historical')}",
+        str(assessment.get("message", "")),
+        str(evidence.get("freshness_reason", "")),
+    ]
+    rows.extend(f"{item['id']}: {item['assessment']['status']} | {item['assessment']['message']}"
+                for item in evidence.get("operating_points", []))
+    rows.append("Controller SHA256: " + str(evidence.get("controller", {}).get("sha256", "unknown")))
+    rows.append(str(evidence.get("scope", "")))
+    view.details.appendPlainText("\n".join(rows))
+
+
+def _candidate_source_models(view) -> dict:
+    source = view._source()
+    selected = [("Current nominal", source)] + list(view._retained_sources.items())
+    return {f"{key}: {item.operating_point or item.label}": item.model_inputs
+            for key, item in selected if item is not None}
+
+
+def llc_source(result, *, provenance="LLC maintained digital-loop analysis") -> LoopMapSource:
+    """Build a source only from a newly completed maintained-model result."""
+    from llc_design.control.design_session import encode_model, llc_inputs
+    f = np.asarray(result.frequencies_hz, dtype=float)
+    responses = result.responses
+    return LoopMapSource(
+        key="voltage",
+        label="LLC voltage loop",
+        frequencies_hz=f,
+        fixed_loop_response=_remove_controller(
+            responses["open_loop_nominal"], responses["controller"]
+        ),
+        current_loop_response=responses["open_loop_nominal"],
+        sample_rate_hz=1.0 / result.controller.sample_time_s,
+        switching_frequency_hz=result.small_signal.operating_point.switching_frequency_hz,
+        provenance=(provenance + " | fixed: Gvf + FM slope + analog sense + ADC/averaging + ZOH/application delay"),
+        operating_point=(
+            f"Vbus={result.small_signal.operating_point.vbus_v:.9g} V; "
+            f"load={result.small_signal.operating_point.load_fraction * 100:.9g}%; "
+            f"Fsw={result.small_signal.operating_point.switching_frequency_hz:.9g} Hz; "
+            f"PCMD={result.fm_operating_point.command_pu:.9g}"
+        ),
+        compatibility_key=_llc_source_compatibility(result),
+        model_inputs=encode_model(llc_inputs(result)),
+    )
+
+
 def install_llc_solution_map(host) -> SolutionMapView:
     """Add candidate comparison to the existing LLC Digital Control result tabs."""
     loop_view = host.digital_loop_view
@@ -123,7 +178,7 @@ def install_llc_solution_map(host) -> SolutionMapView:
     view = SolutionMapView("LLC Fc × PM Solution Map", parent=loop_view)
     loop_view.solution_map_view = view
     loop_view.result_tabs.addTab(view, "Fc × PM Solution Map")
-    state = {"updating": False, "revision": 0, "requested_revision": 0}
+    state = {"updating": False, "revision": 0, "requested_revision": 0, "evidence": None, "pending_evidence": None}
     loop_view._solution_map_controller = None
     _guard_loop_completions(host, "_digital_loop_ready", view, state)
 
@@ -131,6 +186,8 @@ def install_llc_solution_map(host) -> SolutionMapView:
         if state["updating"]:
             return
         state["revision"] += 1
+        invalidate_evidence(state["evidence"], "LLC inputs changed; recompute and Apply required.")
+        invalidate_evidence(state["pending_evidence"], "LLC inputs changed during Apply.")
         view.invalidate("LLC inputs changed. Run the maintained loop again before comparing or applying a candidate.",
                         clear_corners=clear_corners)
 
@@ -158,6 +215,26 @@ def install_llc_solution_map(host) -> SolutionMapView:
             return edited
         return _merge_model_edits(frozen, state["displayed_controller"], edited)
 
+    def restore_controller(controller, source="LLC restored controller") -> None:
+        state["revision"] += 1
+        state["request_id"] += 1
+        state["pending_evidence"] = None
+        adopt_controller(controller, source)
+        state["requested_revision"] = state["revision"]
+
+    def restore_evidence(evidence) -> None:
+        restored = validate_saved_evidence("llc", evidence)
+        invalidate_evidence(state["evidence"], "A different session was loaded.")
+        state["evidence"] = restored or None
+
+    def context_changed() -> None:
+        for evidence in (state["evidence"], state["pending_evidence"]):
+            invalidate_evidence(evidence, "Candidate targets, constraints or operating-point selection changed; regenerate and Apply required.")
+
+    view.evidence_context_changed.connect(context_changed)
+    loop_view._candidate_evidence = lambda: state["evidence"]
+    loop_view._restore_candidate_evidence = restore_evidence
+    loop_view._solution_map_restore_controller = restore_controller
     loop_view._solution_map_set_controller = adopt_controller
     loop_view._solution_map_current_controller = current_controller
     state["controller_source"] = "LLC local controller"
@@ -196,6 +273,7 @@ def install_llc_solution_map(host) -> SolutionMapView:
             if controller is not None:
                 options["loop"]["controller_config"] = controller
                 options["loop"]["controller_source"] = state["controller_source"]
+                options["loop"]["candidate_evidence"] = state["evidence"]
             if sample_time is not None:
                 options["small_signal"]["sample_time_s"] = sample_time
                 options["loop"]["controller_config"] = replace(
@@ -221,6 +299,13 @@ def install_llc_solution_map(host) -> SolutionMapView:
     original_set_analysis = loop_view.set_analysis
 
     def set_analysis_with_solution_map(self, result) -> None:
+        evidence = result.candidate_evidence or state["evidence"]
+        if evidence:
+            check_evidence(evidence, controller=result.controller, config=result.controller_config,
+                           model_signature=llc_model_signature(result))
+            result.candidate_evidence.update(evidence)
+            state["evidence"] = result.candidate_evidence
+        state["pending_evidence"] = None
         state["updating"] = True
         try:
             original_set_analysis(result)
@@ -229,35 +314,15 @@ def install_llc_solution_map(host) -> SolutionMapView:
         if state["requested_revision"] != state["revision"]:
             view.invalidate("LLC inputs changed during analysis. Run again before applying a candidate.")
             return
-        f = np.asarray(result.frequencies_hz, dtype=float)
-        responses = result.responses
         provenance = (
             "V9.3 Guided System Definition → maintained LLC digital-loop analysis"
-            if hasattr(host, "guided_system_definition")
-            else "LLC Expert workspace → maintained LLC digital-loop analysis"
+            if hasattr(host, "guided_system_definition") else "LLC Expert workspace → maintained LLC digital-loop analysis"
         )
-        source = LoopMapSource(
-            key="voltage",
-            label="LLC voltage loop",
-            frequencies_hz=f,
-            fixed_loop_response=_remove_controller(
-                responses["open_loop_nominal"], responses["controller"]
-            ),
-            current_loop_response=responses["open_loop_nominal"],
-            sample_rate_hz=1.0 / result.controller.sample_time_s,
-            switching_frequency_hz=result.small_signal.operating_point.switching_frequency_hz,
-            provenance=(provenance + " | fixed: Gvf + FM slope + analog sense + ADC/averaging + ZOH/application delay"),
-            operating_point=(
-                f"Vbus={result.small_signal.operating_point.vbus_v:.9g} V; "
-                f"load={result.small_signal.operating_point.load_fraction * 100:.9g}%; "
-                f"Fsw={result.small_signal.operating_point.switching_frequency_hz:.9g} Hz; "
-                f"PCMD={result.fm_operating_point.command_pu:.9g}"
-            ),
-            compatibility_key=_llc_source_compatibility(result),
-        )
+        source = llc_source(result, provenance=provenance)
         if result.controller_config is not None:
             adopt_controller(result.controller_config, result.controller_source)
         view.set_sources([source])
+        _show_candidate_evidence(view, state["evidence"])
         intent = getattr(host, "_pending_controller_intent", None)
         if intent is not None:
             host._pending_controller_intent = None
@@ -287,6 +352,16 @@ def install_llc_solution_map(host) -> SolutionMapView:
             output_min=float(getattr(old, "output_min", loop_view.out_min.value())),
             output_max=float(getattr(old, "output_max", loop_view.out_max.value())),
         )
+        evidence = build_candidate_evidence(
+            point=point, corners=view._active_corners(), constraints=view._constraints(),
+            controller=controller, loop_key=loop_key,
+            model_signature=llc_model_signature(source_result),
+            compatibility_key=view.sources[loop_key].compatibility_key,
+            conditional_approved=view.allow_conditional.isChecked(),
+            source_models=_candidate_source_models(view),
+        )
+        invalidate_evidence(state["evidence"], "A new candidate is being applied.")
+        state["pending_evidence"] = evidence
         state["updating"] = True
         try:
             loop_view.external_controller_check.setChecked(False)
@@ -309,6 +384,7 @@ def install_llc_solution_map(host) -> SolutionMapView:
             lambda: build_digital_loop_analysis(
                 source_result.small_signal, controller_config=controller,
                 controller_source="LLC applied Fc/PM candidate",
+                candidate_evidence=evidence,
                 fm_lut=source_result.fm_lut,
                 command_pu=source_result.fm_operating_point.command_pu,
                 analog_sense=source_result.analog_sense,
@@ -320,7 +396,9 @@ def install_llc_solution_map(host) -> SolutionMapView:
         )
 
     view.controller_selected.connect(apply_selected)
+    from llc_design.gui.design_session_install import install_llc_session
+    install_llc_session(host)
     return view
 
 
-__all__ = ["install_llc_solution_map"]
+__all__ = ["install_llc_solution_map", "llc_source"]

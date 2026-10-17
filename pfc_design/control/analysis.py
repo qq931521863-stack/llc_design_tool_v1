@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import math
 from typing import Any
 
@@ -64,9 +64,12 @@ class PFCControlLabAnalysis:
     vbus_sense_summary: SenseChainSummary
     angle_margins: dict[float, StabilityMargins]
     warnings: tuple[str, ...]
+    candidate_evidence: dict = field(default_factory=dict)
 
     def summary_dict(self) -> dict[str, Any]:
+        from llc_design.control.candidate_evidence import ttpl_export_evidence
         return {
+            "candidate_evidence": ttpl_export_evidence(self),
             "operating_point": asdict(self.operating_point),
             "current_loop": {
                 "controller": self.current_loop.controller.name,

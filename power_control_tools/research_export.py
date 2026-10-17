@@ -194,7 +194,9 @@ def build_llc_research_export(analysis: DigitalLoopAnalysis) -> ResearchExport:
     input_kind_note = ()
     if small.control_input_kind.value != "frequency_hz":
         input_kind_note = ("SOURCE MODEL CAVEAT: the LLC mixed-loop builder multiplies its power stage by an FM slope in Hz/pu even for a non-Hz control input. These samples preserve that source behavior; the Gfm_s and full-loop physical unit conversion is not validated. G_s retains its original input units.",)
+    from llc_design.control.candidate_evidence import llc_export_evidence
     metadata = {
+        "candidate_evidence": llc_export_evidence(a),
         "analysis_kind": "LLC DigitalLoopAnalysis", "controller_source": a.controller_source,
         "controller_config": a.controller_config, "design_spec": small.spec,
         "operating_point": small.operating_point, "plant_parameters": small.parameters,
@@ -255,7 +257,7 @@ def build_pfc_research_export(analysis: PFCControlLabAnalysis, loop: str = "both
         # This is only the continuous bus factor; multiplying by the current
         # closed-loop response is required to recover the actual outer plant.
         load_slope = (2.0 * stage.output_power_w / stage.bus_voltage_v
-                      if stage.load_model.value == "resistive" else 0.0)
+                      if stage.load_model == "resistive" else 0.0)
         num = [stage.vin_rms_v**2 * stage.bus_capacitance_f * stage.bus_cap_esr_ohm,
                stage.vin_rms_v**2]
         den = [stage.bus_capacitance_f * stage.bus_voltage_v, load_slope]
@@ -303,8 +305,10 @@ def build_pfc_research_export(analysis: PFCControlLabAnalysis, loop: str = "both
                              input_unit="A" if short == "i" else "V",
                              output_unit=("A" if short == "i" else "V") if sense.normalize_to_engineering_units else "ADC input V",
                              source=which + "_sense analog RC/amplifier configuration"))
+    from llc_design.control.candidate_evidence import ttpl_export_evidence
     return _bundle("PFC " + loop + "-loop research export", f, models, loops,
                    {"analysis_kind": "PFCControlLabAnalysis", "selected_loop": loop,
+                    "candidate_evidence": ttpl_export_evidence(a),
                     "config": cfg, "operating_point": a.operating_point,
                     "current_sample_time_s": a.current_loop.controller.sample_time_s,
                     "voltage_sample_time_s": a.voltage_loop.controller.sample_time_s,

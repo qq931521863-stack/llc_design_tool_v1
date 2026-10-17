@@ -809,69 +809,72 @@ class DigitalLoopView(QWidget):
         """Public wrapper used by the global Run Current action."""
         self._request()
 
+    def _analysis_options(self) -> dict:
+        """Build inputs without starting work, for exact session persistence."""
+        sample_time_s = self.sample_us.value() * 1e-6
+        lut = FrequencyModulatorLUT.from_text(
+            self.lut_text.toPlainText(),
+            mode=self.fm_mode.currentData(),
+            timer_clock_hz=self.timer_mhz.value() * 1e6,
+            count_mode=self.count_mode.currentData(),
+        )
+        use_external = bool(
+            self.external_controller_check.isChecked()
+            and self._external_controller is not None
+        )
+        if use_external:
+            external_fs = float(getattr(self._external_controller, "sample_rate_hz"))
+            sample_time_s = 1.0 / external_fs
+            controller = None
+        else:
+            controller = self._controller_config(sample_time_s)
+        analog = AnalogSenseConfig(
+            rup_ohm=self.rup_k.value() * 1e3,
+            rlow_ohm=self.rlow_k.value() * 1e3,
+            divider_capacitance_f=self.cdiv_nf.value() * 1e-9,
+            opamp_gain=self.opamp_gain.value(),
+            opamp_bandwidth_hz=self.opamp_bw_khz.value() * 1e3,
+            adc_series_resistance_ohm=self.adc_r.value(),
+            adc_shunt_capacitance_f=self.adc_c_nf.value() * 1e-9,
+            normalize_to_engineering_units=True,
+        )
+        adc = ADCSamplingConfig(
+            control_sample_time_s=sample_time_s,
+            adc_clock_hz=self.adc_clock_mhz.value() * 1e6,
+            acquisition_time_s=self.acq_ns.value() * 1e-9,
+            conversion_cycles=self.conversion_cycles.value(),
+            soc_count=self.soc_count.value(),
+            recursive_previous_weight=self.previous_weight.value(),
+        )
+        timing = CommandTimingConfig(
+            computation_delay_s=self.computation_us.value() * 1e-6,
+            pwm_update_delay_s=self.pwm_update_us.value() * 1e-6,
+            include_zero_order_hold=self.include_zoh.isChecked(),
+        )
+        return {
+            "small_signal": {
+                "vbus_v": self.vbus.value(),
+                "load_fraction": self.load_percent.value() / 100.0,
+                "sample_time_s": sample_time_s,
+                "control_input_kind": ControlInputKind.FREQUENCY_HZ,
+                "timer_clock_hz": self.timer_mhz.value() * 1e6,
+                "input_delay_samples": 0,
+            },
+            "loop": {
+                "controller_config": controller,
+                "controller_transfer_function": self._external_controller if use_external else None,
+                "controller_source": self._external_controller_label if use_external else "LLC local controller",
+                "fm_lut": lut,
+                "command_pu": None if self.auto_pcmd.isChecked() else self.pcmd.value(),
+                "analog_sense": analog,
+                "adc_sampling": adc,
+                "command_timing": timing,
+            },
+        }
+
     def _request(self) -> None:
         try:
-            sample_time_s = self.sample_us.value() * 1e-6
-            lut = FrequencyModulatorLUT.from_text(
-                self.lut_text.toPlainText(),
-                mode=self.fm_mode.currentData(),
-                timer_clock_hz=self.timer_mhz.value() * 1e6,
-                count_mode=self.count_mode.currentData(),
-            )
-            use_external = bool(
-                self.external_controller_check.isChecked()
-                and self._external_controller is not None
-            )
-            if use_external:
-                external_fs = float(getattr(self._external_controller, "sample_rate_hz"))
-                sample_time_s = 1.0 / external_fs
-                self.sample_us.setValue(sample_time_s * 1e6)
-                controller = None
-            else:
-                controller = self._controller_config(sample_time_s)
-            analog = AnalogSenseConfig(
-                rup_ohm=self.rup_k.value() * 1e3,
-                rlow_ohm=self.rlow_k.value() * 1e3,
-                divider_capacitance_f=self.cdiv_nf.value() * 1e-9,
-                opamp_gain=self.opamp_gain.value(),
-                opamp_bandwidth_hz=self.opamp_bw_khz.value() * 1e3,
-                adc_series_resistance_ohm=self.adc_r.value(),
-                adc_shunt_capacitance_f=self.adc_c_nf.value() * 1e-9,
-                normalize_to_engineering_units=True,
-            )
-            adc = ADCSamplingConfig(
-                control_sample_time_s=sample_time_s,
-                adc_clock_hz=self.adc_clock_mhz.value() * 1e6,
-                acquisition_time_s=self.acq_ns.value() * 1e-9,
-                conversion_cycles=self.conversion_cycles.value(),
-                soc_count=self.soc_count.value(),
-                recursive_previous_weight=self.previous_weight.value(),
-            )
-            timing = CommandTimingConfig(
-                computation_delay_s=self.computation_us.value() * 1e-6,
-                pwm_update_delay_s=self.pwm_update_us.value() * 1e-6,
-                include_zero_order_hold=self.include_zoh.isChecked(),
-            )
-            self.analysis_requested.emit({
-                "small_signal": {
-                    "vbus_v": self.vbus.value(),
-                    "load_fraction": self.load_percent.value() / 100.0,
-                    "sample_time_s": sample_time_s,
-                    "control_input_kind": ControlInputKind.FREQUENCY_HZ,
-                    "timer_clock_hz": self.timer_mhz.value() * 1e6,
-                    "input_delay_samples": 0,
-                },
-                "loop": {
-                    "controller_config": controller,
-                    "controller_transfer_function": self._external_controller if use_external else None,
-                    "controller_source": self._external_controller_label if use_external else "LLC local controller",
-                    "fm_lut": lut,
-                    "command_pu": None if self.auto_pcmd.isChecked() else self.pcmd.value(),
-                    "analog_sense": analog,
-                    "adc_sampling": adc,
-                    "command_timing": timing,
-                },
-            })
+            self.analysis_requested.emit(self._analysis_options())
         except Exception as exc:
             show_operation_issue(self, t("数字环路参数错误"), str(exc), critical=False)
 
@@ -1144,7 +1147,9 @@ class DigitalLoopView(QWidget):
             f"  sampling Fs/Fc={model.sampling.fs_over_fc}  "
             f"status={model.sampling.status.value}",
             f"  headroom PCMD={model.headroom.command_pu:.5g} "
-            f"sat={model.headroom.saturated}",
+            f"sat={model.headroom.saturated}  status={model.headroom.status.value}",
+            f"  effective PCMD range={model.headroom.command_min} .. {model.headroom.command_max}",
+            f"  {model.headroom.notes}",
         ]
         if model.phase_budget is not None:
             pb = model.phase_budget

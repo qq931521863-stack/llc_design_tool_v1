@@ -54,7 +54,7 @@ from ..analysis import (
 from ..control.analysis import SmallSignalAnalysis, build_small_signal_analysis
 from ..control.digital_loop import DigitalLoopAnalysis, build_digital_loop_analysis
 from ..control.linearize import ControlInputKind
-from ..core.config import load_spec, save_project
+from ..core.config import load_project, load_spec, save_project
 from ..core.spec import LLCDesignSpec, PrimaryTopology, TankParameterMode
 from ..core.tank import design_tank, equivalent_ac_load_ohm, gain, target_gain
 from ..core.q_zvs import LLCQZVSAnalysis, build_q_zvs_analysis
@@ -653,9 +653,26 @@ class LLCMainWindow(QMainWindow):
         if not path:
             return
         try:
-            self.spec = load_spec(path)
+            spec, session = load_project(path)
+            prepared = None
+            if session is not None:
+                from .solution_map_install import install_llc_solution_map
+                from .design_session_install import validate_map_state
+                from ..control.design_session import decode_model
+                import json
+                view = install_llc_solution_map(self)
+                prepared = validate_map_state(view, session.get("solution_map"), "llc")
+                exact_spec = decode_model(session["inputs"])["spec"]
+                if json.dumps(asdict(spec), sort_keys=True) != json.dumps(asdict(exact_spec), sort_keys=True):
+                    raise ValueError("Project spec and control-session spec do not match")
+                spec = exact_spec
+            self.spec = spec
             self._load_spec_to_widgets(self.spec)
-            self._append_log(f"Loaded: {path}")
+            if session is not None:
+                self.digital_loop_view._session_restore(session, prepared)
+            self._append_log(f"Loaded: {path}" + (
+                " — exact control inputs restored; Run and regenerate candidate before Apply."
+                if session is not None else ""))
         except Exception as exc:
             show_operation_issue(self, t("加载失败"), str(exc), critical=True)
 
@@ -670,7 +687,10 @@ class LLCMainWindow(QMainWindow):
                 if self.system_analysis and self.system_analysis.spec == self.spec
                 else None
             )
-            save_project(self.spec, path, analysis)
+            from .solution_map_install import install_llc_solution_map
+            install_llc_solution_map(self)
+            session = self.digital_loop_view._session_capture()
+            save_project(self.spec, path, analysis, control_session=session)
             self._append_log(f"Saved: {path}")
         except Exception as exc:
             show_operation_issue(self, t("保存失败"), str(exc), critical=True)

@@ -1097,7 +1097,9 @@ void LLC_ISR_Template(void)
 }
 '''
     files["isr_template"] = _write(out / "isr_template.c", isr)
+    from llc_design.control.candidate_evidence import llc_export_evidence
     snapshot = {
+        "candidate_evidence": llc_export_evidence(analysis),
         "topology": "llc_frequency_control",
         "numeric_format": "C99 float32",
         "bsp_generated": False,

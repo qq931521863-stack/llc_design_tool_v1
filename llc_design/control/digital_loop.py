@@ -910,6 +910,7 @@ class DigitalLoopAnalysis:
     margins_maximum_delay: StabilityMargins
     discrete_approximation: DiscreteClosedLoopApproximation
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    candidate_evidence: dict = field(default_factory=dict)
 
     @property
     def nominal_open_loop(self) -> ComplexArray:
@@ -934,6 +935,7 @@ def build_digital_loop_analysis(
     controller_config: ControllerConfig | None = None,
     controller_transfer_function: object | None = None,
     controller_source: str | None = None,
+    candidate_evidence: dict | None = None,
     fm_lut: FrequencyModulatorLUT | None = None,
     command_pu: float | None = None,
     analog_sense: AnalogSenseConfig | None = None,
@@ -950,6 +952,8 @@ def build_digital_loop_analysis(
     designed in Control Tools is used without re-fitting PI/PID parameters.
     """
     if controller_transfer_function is not None:
+        # External H(z) owns this result; inactive local settings are not its limits.
+        controller_config = None
         ext = controller_transfer_function
         if isinstance(ext, DigitalTransferFunction):
             controller = ext
@@ -1098,7 +1102,7 @@ def build_digital_loop_analysis(
         "Linear Bode validity requires voltage-loop ownership: no current-limit min-selector takeover, burst, soft-start, saturation, OVP/UVP/OPP or hardware trip."
     )
 
-    return DigitalLoopAnalysis(
+    result = DigitalLoopAnalysis(
         small_signal=small_signal,
         controller_config=controller_config,
         controller=controller,
@@ -1115,7 +1119,13 @@ def build_digital_loop_analysis(
         margins_maximum_delay=margins[DelayEnvelope.MAXIMUM],
         discrete_approximation=discrete_approx,
         warnings=tuple(warnings),
+        candidate_evidence=candidate_evidence if candidate_evidence is not None else {},
     )
+    if candidate_evidence:
+        from .candidate_evidence import check_evidence, llc_model_signature
+        check_evidence(candidate_evidence, controller=controller, config=controller_config,
+                       model_signature=llc_model_signature(result))
+    return result
 
 
 def export_controller_c99(
@@ -1216,7 +1226,9 @@ def export_digital_loop_analysis(result: DigitalLoopAnalysis, directory: str | P
     )
 
     settings_path = output / "digital_loop_settings.json"
+    from .candidate_evidence import llc_export_evidence
     payload = {
+        "candidate_evidence": llc_export_evidence(result),
         "controller_source": result.controller_source,
         "controller_kind": controller_kind(result.controller_config).value if result.controller_config is not None else "external_hz",
         "controller_config": asdict(result.controller_config) if result.controller_config is not None else None,

@@ -18,9 +18,12 @@ from .digital_loop import (
     DigitalLoopAnalysis,
     DigitalTransferFunction,
     PIControllerConfig,
+    PIFControllerConfig,
     StabilityMargins,
+    TwoP2ZControllerConfig,
     calculate_stability_margins,
 )
+from .linearize import ControlInputKind
 from .phase_budget import PhaseBudgetEntry, phase_budget
 from .solution_map import (
     SolutionMapConstraints,
@@ -249,11 +252,11 @@ class StabilityMetricsResult:
 @dataclass(frozen=True)
 class ControllerHeadroomResult:
     command_pu: float
-    command_min: float
-    command_max: float
-    headroom_to_max: float
-    headroom_to_min: float
-    saturated: bool
+    command_min: float | None
+    command_max: float | None
+    headroom_to_max: float | None
+    headroom_to_min: float | None
+    saturated: bool | None
     status: MetricStatus
     notes: str = ""
 
@@ -592,10 +595,61 @@ def compute_gain_budget(
 def compute_headroom(
     analysis: DigitalLoopAnalysis,
     *,
-    command_min: float = 0.0,
-    command_max: float = 1.0,
+    command_min: float | None = None,
+    command_max: float | None = None,
 ) -> ControllerHeadroomResult:
+    """Static absolute-PCMD headroom, limited by the controller and FM path.
+
+    Omitted limits come from the selected local controller. An external H(z)
+    alone carries no absolute output-clamp/bias contract; callers must supply
+    both limits in normalized absolute PCMD to evaluate its headroom.
+    """
     cmd = float(analysis.fm_operating_point.command_pu)
+    if not math.isfinite(cmd):
+        raise ValueError("headroom operating command must be finite")
+
+    config = analysis.controller_config
+    known_config = isinstance(config, (PIControllerConfig, PIFControllerConfig, TwoP2ZControllerConfig))
+    unknown_reason = None
+    if (
+        analysis.small_signal.control_input_kind != ControlInputKind.FREQUENCY_HZ
+        or analysis.small_signal.continuous_transfer.input_unit != "Hz"
+        or analysis.controller.output_name not in {"command", "command_pu", "pcmd"}
+    ):
+        unknown_reason = "Headroom requires a compatible normalized-PCMD → FM (Hz/pu) → frequency-Hz plant coordinate."
+    elif not known_config and (command_min is None or command_max is None):
+        unknown_reason = "The selected external controller has no absolute normalized-PCMD output limits; headroom and saturation are unknown."
+    if unknown_reason is not None:
+        return ControllerHeadroomResult(
+            command_pu=cmd,
+            command_min=None,
+            command_max=None,
+            headroom_to_max=None,
+            headroom_to_min=None,
+            saturated=None,
+            status=MetricStatus.UNKNOWN,
+            notes=unknown_reason,
+        )
+
+    command_min = float(config.output_min if command_min is None else command_min)
+    command_max = float(config.output_max if command_max is None else command_max)
+    if not math.isfinite(command_min) or not math.isfinite(command_max):
+        raise ValueError("headroom command limits must be finite")
+    if command_min >= command_max:
+        raise ValueError("headroom command_min must be less than command_max")
+
+    lut_pcmd = analysis.fm_lut.pcmd
+    if (
+        lut_pcmd.ndim != 1 or len(lut_pcmd) < 2
+        or not np.all(np.isfinite(lut_pcmd)) or np.any(np.diff(lut_pcmd) <= 0.0)
+    ):
+        raise ValueError("headroom FM LUT PCMD axis must be finite and strictly increasing")
+    # evaluate_fm_operating_point clips to 0..1, even for an extended LUT.
+    # Intersect in the LUT's input (PCMD) coordinate, never its Hz/TBPRD output.
+    command_min = max(command_min, 0.0, float(lut_pcmd[0]))
+    command_max = min(command_max, 1.0, float(lut_pcmd[-1]))
+    if command_min > command_max:
+        raise ValueError("controller output limits and reachable FM PCMD range do not overlap")
     sat = cmd <= command_min + 1e-9 or cmd >= command_max - 1e-9
     return ControllerHeadroomResult(
         command_pu=cmd,
@@ -605,7 +659,7 @@ def compute_headroom(
         headroom_to_min=cmd - command_min,
         saturated=sat,
         status=MetricStatus.WARN if sat else MetricStatus.APPROXIMATION,
-        notes="Static PCMD headroom at the analyzed operating point (linear Bode does not include anti-windup).",
+        notes="Static absolute PCMD headroom at the analyzed operating point, using controller limits intersected with the reachable FM command range (linear Bode does not include anti-windup).",
     )
 
 

@@ -13,7 +13,7 @@ from H(z) alone.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from typing import Any
 
@@ -131,6 +131,7 @@ class PFCControlHandoff:
     duty_max: float
     switching_frequency_hz: float
     provenance: str
+    candidate_evidence: dict = field(default_factory=dict)
 
     def validate(self) -> None:
         self.current.validate()
@@ -146,6 +147,7 @@ class PFCControlHandoff:
         self.validate()
         return {
             "schema": "power-design-toolkit-pfc-exact-hz-v1",
+            "candidate_evidence": self.candidate_evidence,
             "topology": self.topology,
             "coefficient_convention": COEFFICIENT_CONVENTION,
             "controllers": {
@@ -219,8 +221,10 @@ def _artifact(
 
 def build_pfc_control_handoff(analysis: PFCControlLabAnalysis) -> PFCControlHandoff:
     """Build the downstream contract directly from analyzed exact H(z) objects."""
+    from llc_design.control.candidate_evidence import ttpl_export_evidence
     cfg = analysis.config
     handoff = PFCControlHandoff(
+        candidate_evidence=ttpl_export_evidence(analysis),
         topology="single_phase_ttpl_pfc",
         current=_artifact(
             loop_name="current",
