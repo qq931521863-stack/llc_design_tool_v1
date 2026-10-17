@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import math
 from typing import Any, Mapping, Sequence
@@ -17,6 +17,7 @@ from .digital_loop import (
     DelayEnvelope,
     DigitalLoopAnalysis,
     DigitalTransferFunction,
+    PIControllerConfig,
     StabilityMargins,
     calculate_stability_margins,
 )
@@ -24,8 +25,11 @@ from .phase_budget import PhaseBudgetEntry, phase_budget
 from .solution_map import (
     SolutionMapConstraints,
     SolutionMapPoint,
+    SolutionMapResult,
     SolutionStatus,
     evaluate_solution_point,
+    evaluate_fixed_controller_point,
+    _validate_frequency_response,
     synthesize_tustin_pi_at_target,
 )
 
@@ -366,7 +370,7 @@ class LoopCornerResult:
     ms: float
     mt: float
     delay_margin_s: float | None
-    pole_stable: bool
+    pole_stable: bool | None
     constraint_status: MetricStatus
     tags: tuple[str, ...] = ()
 
@@ -425,6 +429,8 @@ class ControllerCandidate:
             "target_fc_hz": self.target_fc_hz,
             "target_pm_deg": self.target_pm_deg,
             "feasible": self.nominal.feasible,
+            "status": self.nominal.status.name,
+            "message": self.nominal.message,
             "actual_fc_hz": self.nominal.actual_crossover_hz,
             "actual_pm_deg": self.nominal.actual_phase_margin_deg,
             "gm_db": self.nominal.gain_margin_db,
@@ -761,38 +767,173 @@ def evaluate_solution_map_v2_point(
         target_phase_margin_deg=target_phase_margin_deg,
         constraints=constraints,
     )
-    if not point.feasible:
+    return _apply_v2_gates(point, sample_rate_hz=sample_rate_hz,
+                           mt_max=mt_max, sampling_warn_threshold=sampling_warn_threshold)
+
+
+def _apply_v2_gates(
+    point: SolutionMapPoint, *, sample_rate_hz: float,
+    mt_max: float | None, sampling_warn_threshold: float,
+) -> SolutionMapPoint:
+    if mt_max is not None and (not math.isfinite(mt_max) or mt_max <= 0.0):
+        raise ValueError("Mt maximum must be finite and positive")
+    if not math.isfinite(sampling_warn_threshold) or sampling_warn_threshold <= 0.0:
+        raise ValueError("sampling warning threshold must be finite and positive")
+    if point.kp is None:
         return point
-    # Extra V2 gates: Mt and sampling ratio.
+    # Known V2 failures take precedence over incomplete frequency coverage.
     messages = []
     status = point.status
-    if mt_max is not None and point.mt is not None and point.mt > mt_max:
-        status = SolutionStatus.MS_CONSTRAINT_FAIL
+    if mt_max is not None and point.mt is not None and (not math.isfinite(point.mt) or point.mt > mt_max):
+        if point.status in (SolutionStatus.FEASIBLE, SolutionStatus.UNKNOWN, SolutionStatus.CONDITIONAL):
+            status = SolutionStatus.MS_CONSTRAINT_FAIL
         messages.append(f"Mt={point.mt:.3f} exceeds Mt_max={mt_max:g}")
     if point.actual_crossover_hz and point.actual_crossover_hz > 0.0:
         ratio = sample_rate_hz / point.actual_crossover_hz
         if ratio < sampling_warn_threshold:
             messages.append(f"Fs/Fc={ratio:.2f} below warn threshold {sampling_warn_threshold:g}")
-            # Warn does not flip FEASIBLE → keep FEASIBLE but annotate.
     note = point.message
     if messages:
         note = (note + "; " if note else "") + "; ".join(messages)
-    if status == point.status and note == point.message:
-        return point
-    return SolutionMapPoint(
-        target_crossover_hz=point.target_crossover_hz,
-        target_phase_margin_deg=point.target_phase_margin_deg,
-        status=status,
-        kp=point.kp,
-        ti_s=point.ti_s,
-        actual_crossover_hz=point.actual_crossover_hz,
-        actual_phase_margin_deg=point.actual_phase_margin_deg,
-        gain_margin_db=point.gain_margin_db,
-        ms=point.ms,
-        mt=point.mt,
-        switching_loop_gain_db=point.switching_loop_gain_db,
-        controller_phase_deg=point.controller_phase_deg,
-        message=note,
+    return replace(point, status=status, message=note)
+
+
+@dataclass(frozen=True)
+class FixedLoopCorner:
+    """One genuine maintained-model or measured fixed return path.
+
+    Callers own model compatibility; all corners must share the same controller
+    sample rate. The first is the nominal synthesis point. Responses retain
+    each corner's own frequency grid and switching frequency without extrapolation.
+    """
+
+    corner_id: str
+    frequencies_hz: FloatArray
+    fixed_loop_response: ComplexArray
+    sample_rate_hz: float
+    switching_frequency_hz: float
+    provenance: str = ""
+
+
+def _validate_corners(corners: Sequence[FixedLoopCorner]) -> None:
+    if not corners:
+        raise ValueError("at least one operating point is required")
+    ids = [corner.corner_id for corner in corners]
+    if len(set(ids)) != len(ids) or any(not value.strip() for value in ids):
+        raise ValueError("operating-point IDs must be nonempty and unique")
+    fs = corners[0].sample_rate_hz
+    for corner in corners:
+        if not math.isfinite(corner.sample_rate_hz) or corner.sample_rate_hz <= 0.0:
+            raise ValueError("corner sample rate must be finite and positive")
+        if not math.isclose(corner.sample_rate_hz, fs, rel_tol=1e-12, abs_tol=0.0):
+            raise ValueError("all operating points must use the same controller sample rate")
+        if not math.isfinite(corner.switching_frequency_hz) or corner.switching_frequency_hz <= 0.0:
+            raise ValueError("corner switching frequency must be finite and positive")
+        f = np.asarray(corner.frequencies_hz, dtype=float)
+        _validate_frequency_response(f, np.asarray(corner.fixed_loop_response, dtype=complex))
+        if f[-1] >= 0.5 * corner.sample_rate_hz:
+            raise ValueError("corner frequency grid must remain below controller Nyquist")
+
+
+def evaluate_common_solution_point(
+    corners: Sequence[FixedLoopCorner], *, target_crossover_hz: float,
+    target_phase_margin_deg: float, constraints: SolutionMapConstraints | None = None,
+    mt_max: float | None = None, sampling_warn_threshold: float = 10.0,
+) -> SolutionMapPoint:
+    """Synthesize once on nominal, then test that identical H(z) at every corner.
+
+    Fc/PM target matching is a nominal synthesis condition. At other points PM
+    is a minimum (with the stated tolerance), while GM/Ms/Mt/Fsw limits remain
+    identical. No model, transfer function, or pole evidence is fabricated.
+    """
+    _validate_corners(corners)
+    constraints = constraints or SolutionMapConstraints()
+    nominal = corners[0]
+    point = evaluate_solution_map_v2_point(
+        nominal.frequencies_hz, nominal.fixed_loop_response,
+        sample_rate_hz=nominal.sample_rate_hz,
+        switching_frequency_hz=nominal.switching_frequency_hz,
+        target_crossover_hz=target_crossover_hz,
+        target_phase_margin_deg=target_phase_margin_deg,
+        constraints=constraints, mt_max=mt_max,
+        sampling_warn_threshold=sampling_warn_threshold,
+    )
+    if point.kp is None or point.ti_s is None:
+        return replace(point, corner_ids=(nominal.corner_id,), corner_results=(point,))
+    controller = PIControllerConfig(kp=point.kp, ti_s=point.ti_s,
+                                    sample_time_s=1.0 / nominal.sample_rate_hz)
+    results = [point]
+    for corner in corners[1:]:
+        evaluated = evaluate_fixed_controller_point(
+            corner.frequencies_hz, corner.fixed_loop_response,
+            controller_cfg=controller, switching_frequency_hz=corner.switching_frequency_hz,
+            target_crossover_hz=target_crossover_hz,
+            target_phase_margin_deg=target_phase_margin_deg,
+            constraints=constraints, match_nominal_target=False,
+        )
+        results.append(_apply_v2_gates(evaluated, sample_rate_hz=corner.sample_rate_hz,
+                                      mt_max=mt_max, sampling_warn_threshold=sampling_warn_threshold))
+    ids = tuple(corner.corner_id for corner in corners)
+    failures = [(name, result) for name, result in zip(ids, results)
+                if result.status not in (SolutionStatus.FEASIBLE, SolutionStatus.UNKNOWN, SolutionStatus.CONDITIONAL)]
+    unknowns = [(name, result) for name, result in zip(ids, results)
+                if result.status == SolutionStatus.UNKNOWN]
+    conditional = [(name, result) for name, result in zip(ids, results)
+                   if result.status == SolutionStatus.CONDITIONAL]
+    blocking = failures or unknowns or conditional
+    if blocking:
+        status = blocking[0][1].status
+        note = "; ".join(f"{name}: {result.message}" for name, result in blocking)
+    else:
+        status = SolutionStatus.FEASIBLE
+        note = f"common frequency-grid checks satisfied at {len(corners)} operating point(s); " + point.message
+    # Reuse the maintained robustness aggregator, keeping missing pole evidence
+    # explicitly UNKNOWN. This summary never upgrades a frequency-band result
+    # into a global closed-loop stability guarantee.
+    tf = controller.transfer_function()
+    report = build_robustness_report({
+        corner.corner_id: (np.asarray(corner.frequencies_hz, dtype=float),
+                          np.asarray(corner.fixed_loop_response, dtype=complex)
+                          * tf.frequency_response(corner.frequencies_hz))
+        for corner in corners
+    })
+    if report.worst_pm is not None:
+        note += f"; worst PM: {report.worst_pm.corner_id} ({report.worst_pm.pm_deg:.4g} deg)"
+    note += "; pole stability UNKNOWN (frequency responses only)"
+    return replace(point, status=status, message=note, corner_ids=ids,
+                   corner_results=tuple(results))
+
+
+def build_common_fc_pm_solution_map(
+    corners: Sequence[FixedLoopCorner], *,
+    crossover_targets_hz: Sequence[float] | FloatArray,
+    phase_margin_targets_deg: Sequence[float] | FloatArray,
+    loop_label: str = "loop", constraints: SolutionMapConstraints | None = None,
+    mt_max: float | None = None, sampling_warn_threshold: float = 10.0,
+) -> SolutionMapResult:
+    """Common feasible region for one synthesized PI across genuine corners."""
+    _validate_corners(corners)
+    constraints = constraints or SolutionMapConstraints()
+    constraints.validate()
+    fc = np.asarray(crossover_targets_hz, dtype=float)
+    pm = np.asarray(phase_margin_targets_deg, dtype=float)
+    if (fc.ndim != 1 or pm.ndim != 1 or not fc.size or not pm.size
+            or not np.all(np.isfinite(fc)) or not np.all(np.isfinite(pm))
+            or np.any(fc <= 0.0) or np.any(pm <= 0.0) or np.any(pm >= 180.0)
+            or np.any(np.diff(fc) <= 0.0) or np.any(np.diff(pm) <= 0.0)):
+        raise ValueError("Fc/PM grids must be finite, nonempty and strictly increasing")
+    rows = tuple(tuple(evaluate_common_solution_point(
+        corners, target_crossover_hz=float(target_fc), target_phase_margin_deg=float(target_pm),
+        constraints=constraints, mt_max=mt_max, sampling_warn_threshold=sampling_warn_threshold,
+    ) for target_fc in fc) for target_pm in pm)
+    codes = np.asarray([[int(point.status) for point in row] for row in rows], dtype=np.int16)
+    return SolutionMapResult(
+        frequencies_hz=np.asarray(corners[0].frequencies_hz, dtype=float),
+        crossover_targets_hz=fc, phase_margin_targets_deg=pm, points=rows,
+        status_codes=codes, feasible_mask=codes == int(SolutionStatus.FEASIBLE),
+        sample_rate_hz=corners[0].sample_rate_hz,
+        switching_frequency_hz=corners[0].switching_frequency_hz,
+        loop_label=loop_label, constraints=constraints,
     )
 
 
@@ -837,22 +978,38 @@ def synthesize_controller_candidates(
 def build_robustness_report(
     corner_loops: Mapping[str, tuple[FloatArray, ComplexArray]],
     *,
-    discrete_stable: Mapping[str, bool] | None = None,
+    discrete_stable: Mapping[str, bool | None] | None = None,
 ) -> LoopRobustnessReport:
     """Aggregate per-corner open-loop responses into a robustness report."""
 
     corners: list[LoopCornerResult] = []
     for corner_id, (freq, open_loop) in corner_loops.items():
+        freq = np.asarray(freq, dtype=float)
+        open_loop = np.asarray(open_loop, dtype=complex)
+        _validate_frequency_response(freq, open_loop)
         margins = calculate_stability_margins(freq, open_loop)
-        sens = 1.0 / (1.0 + open_loop)
-        comp = open_loop / (1.0 + open_loop)
-        ms = float(np.nanmax(np.abs(sens)))
-        mt = float(np.nanmax(np.abs(comp)))
-        pole_ok = True if discrete_stable is None else bool(discrete_stable.get(corner_id, True))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            sens = 1.0 / (1.0 + open_loop)
+            comp = open_loop / (1.0 + open_loop)
+        ms = float(np.max(np.abs(sens)))
+        mt = float(np.max(np.abs(comp)))
+        pole_ok = None if discrete_stable is None else discrete_stable.get(corner_id)
+        if pole_ok is not None:
+            if not isinstance(pole_ok, (bool, np.bool_)):
+                raise ValueError("discrete stability evidence must be bool or None")
+            pole_ok = bool(pole_ok)
         pm = margins.phase_margin_deg
-        gm = margins.gain_margin_db
-        status = MetricStatus.APPROXIMATION
-        if pm is None or pm <= 0.0 or (gm is not None and gm <= 0.0) or not pole_ok:
+        gm = min(margins.gain_margins_db, default=None)
+        tags = []
+        if pole_ok is None:
+            tags.append("POLE_STABILITY_UNKNOWN")
+        if pm is None:
+            tags.append("GAIN_CROSSOVER_NOT_OBSERVED")
+        if gm is None:
+            tags.append("PHASE_CROSSOVER_NOT_OBSERVED")
+        status = MetricStatus.UNKNOWN if pole_ok is None or pm is None else MetricStatus.APPROXIMATION
+        if ((pm is not None and pm <= 0.0) or (gm is not None and gm <= 0.0)
+                or pole_ok is False or not math.isfinite(ms) or not math.isfinite(mt)):
             status = MetricStatus.WARN
         corners.append(LoopCornerResult(
             corner_id=corner_id,
@@ -864,6 +1021,7 @@ def build_robustness_report(
             delay_margin_s=margins.delay_margin_s,
             pole_stable=pole_ok,
             constraint_status=status,
+            tags=tuple(tags),
         ))
 
     def _worst(key, prefer_min: bool = True):
@@ -1045,6 +1203,9 @@ def fixed_loop_without_controller(analysis: DigitalLoopAnalysis) -> ComplexArray
 
 __all__ = [
     "ControllerCandidate",
+    "FixedLoopCorner",
+    "evaluate_common_solution_point",
+    "build_common_fc_pm_solution_map",
     "ControllerHeadroomResult",
     "ExactHzChainResult",
     "GainBudgetResult",

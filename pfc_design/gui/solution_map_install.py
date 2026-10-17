@@ -1,7 +1,7 @@
 """Connect controller candidates to the maintained TTPL loop model."""
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from types import MethodType
 
 import numpy as np
@@ -11,10 +11,24 @@ from llc_design.control.digital_loop import ControllerKind, PIControllerConfig
 from llc_design.gui.solution_map_install import (
     _guard_loop_completions,
     _merge_model_edits,
+    _model_signature,
     _remove_controller,
     _watch_input,
 )
 from llc_design.gui.widgets.solution_map_view import LoopMapSource, SolutionMapView
+
+
+def _ttpl_source_compatibility(config, loop_key: str) -> str:
+    stage = asdict(config.power_stage)
+    for name in ("vin_rms_v", "bus_voltage_v", "output_power_w", "line_angle_deg"):
+        stage.pop(name)
+    # The outer-loop plant contains the closed current loop. An inner PI change
+    # must therefore invalidate retained outer-loop responses.
+    inner = config.current_controller if loop_key == "voltage" else None
+    return _model_signature(
+        loop_key, stage, config.firmware, config.current_sense,
+        config.vac_sense, config.vbus_sense, inner,
+    )
 
 
 def install_ttpl_solution_map(pfc_window) -> SolutionMapView:
@@ -40,15 +54,21 @@ def install_ttpl_solution_map(pfc_window) -> SolutionMapView:
 
     control._config = MethodType(config_with_exact_values, control)
 
-    def invalidate(*_args) -> None:
+    def invalidate(*_args, clear_corners=False) -> None:
         if not state["updating"]:
             state["revision"] += 1
-            view.invalidate("TTPL inputs changed. Run the maintained model again before comparing or applying a candidate.")
+            view.invalidate("TTPL inputs changed. Run the maintained model again before comparing or applying a candidate.",
+                            clear_corners=clear_corners)
 
+    operating_or_controller = {
+        control.vin_rms, control.vbus, control.pout, control.angle,
+        *control.current_ctrl.values(), *control.voltage_ctrl.values(),
+    }
     for widget in control.input_tabs.findChildren(QWidget):
-        _watch_input(widget, invalidate)
+        _watch_input(widget, lambda *_args, clear=widget not in operating_or_controller:
+                     invalidate(clear_corners=clear))
     for widget in workbench.power_stage_view.findChildren(QWidget):
-        _watch_input(widget, invalidate)
+        _watch_input(widget, lambda *_args: invalidate(clear_corners=True))
 
     original_set_busy = control.set_busy
 
@@ -76,27 +96,38 @@ def install_ttpl_solution_map(pfc_window) -> SolutionMapView:
         f = np.asarray(analysis.frequencies_hz, dtype=float)
         ci = analysis.current_loop.responses
         cv = analysis.voltage_loop.responses
+        current_band = f < 0.5 / analysis.current_loop.controller.sample_time_s
+        voltage_band = f < 0.5 / analysis.voltage_loop.controller.sample_time_s
         provenance = (
             "V9.3 Guided System Definition → maintained TTPL analysis"
             if hasattr(pfc_window, "guided_system_definition")
             else "TTPL Expert workspace → maintained TTPL analysis"
         )
+        stage = analysis.config.power_stage
+        operating_point = (f"Vin={stage.vin_rms_v:.9g} Vrms; Vbus={stage.bus_voltage_v:.9g} V; "
+                           f"Pout={stage.output_power_w:.9g} W; line phase={stage.line_angle_deg:.9g}°")
         sources = [
             LoopMapSource(
-                key="current", label="Current inner loop Li", frequencies_hz=f,
-                fixed_loop_response=_remove_controller(ci["open_current"], ci["controller_ci"]),
-                current_loop_response=ci["open_current"],
+                key="current", label="Current inner loop Li", frequencies_hz=f[current_band],
+                fixed_loop_response=_remove_controller(ci["open_current"], ci["controller_ci"])[current_band],
+                current_loop_response=ci["open_current"][current_band],
                 sample_rate_hz=1.0 / analysis.current_loop.controller.sample_time_s,
                 switching_frequency_hz=analysis.config.power_stage.switching_frequency_hz,
-                provenance=provenance + " | fixed: plant + Kindu + PWM/ZOH/delay + current sense/ADC",
+                provenance=(provenance + " | fixed: plant + Kindu + PWM/ZOH/delay + current sense/ADC"
+                            + (" | retained samples below current-loop Nyquist" if not np.all(current_band) else "")),
+                operating_point=operating_point,
+                compatibility_key=_ttpl_source_compatibility(analysis.config, "current"),
             ),
             LoopMapSource(
-                key="voltage", label="Bus-voltage outer loop Lv", frequencies_hz=f,
-                fixed_loop_response=_remove_controller(cv["open_voltage"], cv["controller_cv"]),
-                current_loop_response=cv["open_voltage"],
+                key="voltage", label="Bus-voltage outer loop Lv", frequencies_hz=f[voltage_band],
+                fixed_loop_response=_remove_controller(cv["open_voltage"], cv["controller_cv"])[voltage_band],
+                current_loop_response=cv["open_voltage"][voltage_band],
                 sample_rate_hz=1.0 / analysis.voltage_loop.controller.sample_time_s,
                 switching_frequency_hz=analysis.config.power_stage.switching_frequency_hz,
-                provenance=provenance + " | fixed: closed current loop + AMC/Vrms + bus plant + Vbus sense/ADC",
+                provenance=(provenance + " | fixed: closed current loop + AMC/Vrms + bus plant + Vbus sense/ADC"
+                            + (" | retained samples below voltage-loop Nyquist" if not np.all(voltage_band) else "")),
+                operating_point=operating_point,
+                compatibility_key=_ttpl_source_compatibility(analysis.config, "voltage"),
             ),
         ]
         view.set_sources(sources)
@@ -114,7 +145,7 @@ def install_ttpl_solution_map(pfc_window) -> SolutionMapView:
     control.set_result = MethodType(set_result_with_solution_map, control)
 
     def apply_selected(loop_key: str, point) -> None:
-        if (loop_key not in view.sources or not point.feasible
+        if (loop_key not in view.sources or not view.can_apply(point)
                 or point.kp is None or point.ti_s is None or pfc_window.result is None):
             return
         analysis = pfc_window.result[0]

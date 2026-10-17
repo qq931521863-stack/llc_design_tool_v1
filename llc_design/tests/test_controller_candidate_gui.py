@@ -173,11 +173,35 @@ def test_unsupported_intent_cannot_reuse_previous_map(view):
 
 
 def test_missing_switching_frequency_coverage_is_explicit(view):
+    from llc_design.control.solution_map import SolutionStatus
     source = view._source()
     view.set_sources([replace(source, switching_frequency_hz=100000)])
     view.generate_candidate()
-    assert view.selected_point.feasible
+    assert view.selected_point.status == SolutionStatus.CONDITIONAL
+    assert not view.selected_point.feasible
+    assert not view.apply_button.isEnabled()
     assert view.selected_point.switching_loop_gain_db is None
     assert "outside the analyzed range" in view.comparison_summary.text()
     assert "all configured constraints satisfied" not in view.details.toPlainText()
     assert "Closed-loop OK" not in view.details.toPlainText()
+    view.allow_conditional.setChecked(True)
+    assert view.selected_point is None  # authorization changes invalidate old candidates
+    view.generate_candidate()
+    assert view.selected_point.status == SolutionStatus.CONDITIONAL
+    assert not view.selected_point.feasible
+    assert view.apply_button.isEnabled()
+    assert view.apply_button.text() == "Apply conditional PI"
+
+
+@pytest.mark.parametrize("status_name", ["UNKNOWN", "GM_CONSTRAINT_FAIL", "MS_CONSTRAINT_FAIL",
+                                        "SWITCHING_ATTENUATION_FAIL", "LOOP_UNSTABLE"])
+def test_conditional_permission_cannot_override_unknown_or_failure(view, status_name):
+    from llc_design.control.solution_map import SolutionStatus
+    received = []
+    view.controller_selected.connect(lambda *args: received.append(args))
+    view.allow_conditional.setChecked(True)
+    view.generate_candidate()
+    view.selected_point = replace(view.selected_point, status=getattr(SolutionStatus, status_name))
+    assert not view.can_apply(view.selected_point)
+    view._apply_selected()
+    assert received == []

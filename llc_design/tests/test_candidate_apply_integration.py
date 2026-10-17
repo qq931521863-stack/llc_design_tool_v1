@@ -44,9 +44,12 @@ def _candidate(view, margins):
     view.gm_min.setValue(-100)
     view.ms_max.setValue(100)
     view.switch_max.setValue(100)
+    # Maintained models intentionally stop below Fsw. Adopting a PI with that
+    # missing evidence is an explicit conditional action, never FEASIBLE.
+    view.allow_conditional.setChecked(True)
     view.generate_candidate()
     assert view.selected_point is not None
-    assert view.selected_point.feasible, view.details.toPlainText()
+    assert view.can_apply(view.selected_point), view.details.toPlainText()
     return view.selected_point
 
 
@@ -315,3 +318,198 @@ def test_late_previous_worker_cannot_replace_newer_controller_source(app, monkey
         assert control.result is second
     assert view.sources
     window.close()
+
+
+@pytest.mark.parametrize("topology", ["llc", "ttpl"])
+def test_maintained_model_missing_fsw_requires_explicit_conditional_adoption(app, monkeypatch, topology):
+    from llc_design.control.solution_map import SolutionStatus
+    window, view = (_llc_window(monkeypatch) if topology == "llc" else _ttpl_window(monkeypatch))
+    try:
+        margins = (window.digital_loop_analysis.margins_nominal_delay if topology == "llc"
+                   else window.result[0].current_loop.margins)
+        view.live_fc.setValue(margins.critical_gain_crossover_hz)
+        view.live_pm.setValue(margins.phase_margin_deg)
+        view.gm_min.setValue(-100)
+        view.ms_max.setValue(100)
+        view.switch_max.setValue(100)
+        view.generate_candidate()
+        assert not view.allow_conditional.isChecked()
+        assert view.selected_point.status == SolutionStatus.CONDITIONAL
+        assert not view.selected_point.feasible
+        assert not view.apply_button.isEnabled()
+        assert view.selected_point.switching_loop_gain_db is None
+        assert "UNKNOWN" in view.details.toPlainText()
+        view.allow_conditional.setChecked(True)
+        view.generate_candidate()
+        assert view.selected_point.status == SolutionStatus.CONDITIONAL
+        assert not view.selected_point.feasible
+        assert view.apply_button.isEnabled()
+    finally:
+        window.close()
+
+
+def test_llc_retains_real_operating_points_and_core_edit_clears_them(app, monkeypatch):
+    from llc_design.control.analysis import build_small_signal_analysis
+    from llc_design.control.digital_loop import build_digital_loop_analysis
+    from llc_design.models.system import LLCSystemAnalyzer
+    window, view = _llc_window(monkeypatch)
+    try:
+        baseline = window.digital_loop_analysis
+        view.retain_current_source()
+        retained = next(iter(view._retained_sources.values()))
+        control = window.digital_loop_view
+        control.load_percent.setValue(75)
+        control.vbus.setValue(380)
+        assert not view.sources
+        assert len(view._retained_sources) == 1
+        spec = baseline.small_signal.spec
+        system = LLCSystemAnalyzer().analyze(spec)
+        small = build_small_signal_analysis(spec, vbus_v=380, load_fraction=.75,
+                                            system_analysis=system, sample_time_s=20e-6)
+        next_result = build_digital_loop_analysis(
+            small, controller_config=baseline.controller_config,
+            analog_sense=baseline.analog_sense, adc_sampling=baseline.adc_sampling,
+            command_timing=baseline.command_timing, fm_lut=baseline.fm_lut,
+        )
+        control.set_busy(True)
+        window._digital_loop_ready(next_result)
+        assert len(view._retained_sources) == 1
+        assert len(view._active_corners()) == 2
+        assert "Vbus=380" in view.source_info.text()
+        assert "load=75%" in view.source_info.text()
+        np.testing.assert_allclose(retained.fixed_loop_response * baseline.responses["controller"],
+                                   baseline.responses["open_loop_nominal"])
+        np.testing.assert_allclose(view._source().fixed_loop_response * next_result.responses["controller"],
+                                   next_result.responses["open_loop_nominal"])
+        margins = next_result.margins_nominal_delay
+        view.live_fc.setValue(margins.critical_gain_crossover_hz)
+        view.live_pm.setValue(margins.phase_margin_deg)
+        view.gm_min.setValue(-100)
+        view.ms_max.setValue(100)
+        view.switch_max.setValue(100)
+        view.generate_candidate()
+        point = view.selected_point
+        assert len(point.corner_results) == 2
+        assert all((item.kp, item.ti_s) == (point.kp, point.ti_s) for item in point.corner_results)
+        control.adc_r.setValue(control.adc_r.value() + 1)
+        assert not view._retained_sources
+        assert view.selected_point is None
+    finally:
+        window.close()
+
+
+def test_ttpl_retains_real_points_and_inner_change_invalidates_outer_snapshots(app, monkeypatch):
+    window, view = _ttpl_window(monkeypatch)
+    try:
+        control = window.control_lab_view.control_lab
+        baseline = window.result[0]
+        voltage_source = view.sources["voltage"]
+        voltage_band = baseline.frequencies_hz < 0.5 / baseline.voltage_loop.controller.sample_time_s
+        assert voltage_source.frequencies_hz[-1] < 0.5 * voltage_source.sample_rate_hz
+        np.testing.assert_array_equal(voltage_source.frequencies_hz, baseline.frequencies_hz[voltage_band])
+        np.testing.assert_allclose(
+            voltage_source.fixed_loop_response * baseline.voltage_loop.responses["controller_cv"][voltage_band],
+            baseline.voltage_loop.responses["open_voltage"][voltage_band],
+        )
+        assert "below voltage-loop Nyquist" in voltage_source.provenance
+        view.retain_current_source()
+        view.source_combo.setCurrentIndex(view.source_combo.findData("voltage"))
+        view.retain_current_source()
+        control.vin_rms.setValue(200)
+        control.angle.setValue(45)
+        assert not view.sources
+        assert len(view._retained_sources) == 2
+        changed = replace(baseline.config, power_stage=replace(
+            baseline.config.power_stage, vin_rms_v=200, line_angle_deg=45,
+        ))
+        window.run_ttpl_analysis(changed)
+        assert len(view._retained_sources) == 2
+        assert len(view._active_corners()) == 2
+        assert "Vin=200" in view.source_info.text()
+        assert "line phase=45" in view.source_info.text()
+        view.source_combo.setCurrentIndex(view.source_combo.findData("current"))
+        original = window.result[0]
+        point = _candidate(view, original.current_loop.margins)
+        assert len(point.corner_results) == 2
+        assert all((item.kp, item.ti_s) == (point.kp, point.ti_s) for item in point.corner_results)
+        # Rebuilding a new inner controller clears the outer-loop snapshots,
+        # whose fixed return path depended on the previous current closure.
+        new_inner = replace(changed.current_controller, kp=changed.current_controller.kp * 1.01)
+        window.run_ttpl_analysis(replace(changed, current_controller=new_inner))
+        assert all(source.key == "current" for source in view._retained_sources.values())
+        control.inductance.setValue(control.inductance.value() + 1)
+        assert not view._retained_sources
+        assert view.selected_point is None
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize("start,count", [(10000, 0), (4990, 1), (4900, 2)])
+def test_ttpl_short_outer_principal_band_is_visible_and_inactive(app, monkeypatch, start, count):
+    window, view = _ttpl_window(monkeypatch)
+    try:
+        baseline = window.result[0].config
+        view.source_combo.setCurrentIndex(view.source_combo.findData("voltage"))
+        view.retain_current_source()
+        window.run_ttpl_analysis(replace(baseline, frequency_start_hz=start,
+                                         frequency_stop_hz=20000, frequency_points=100))
+        assert view.source_combo.currentData() == "voltage"
+        assert view.sources["voltage"].frequencies_hz.size == count
+        assert not view.generate_button.isEnabled()
+        assert not view.run_button.isEnabled()
+        assert not view.apply_button.isEnabled()
+        assert not view.retain_button.isEnabled()
+        assert "Insufficient response coverage" in view.source_info.text()
+        assert "insufficient" in view.source_combo.currentText()
+        assert len(view._retained_sources) == 1
+        assert not view._active_corners()
+        view.generate_candidate()
+        assert view.selected_point is None
+        window.run_ttpl_analysis(baseline)
+        assert len(view._active_corners()) == 2
+        assert view.generate_button.isEnabled()
+    finally:
+        window.close()
+
+
+def test_llc_spec_save_load_clears_hidden_field_stale_candidates_and_cancel_preserves(app, monkeypatch, tmp_path):
+    import json
+    from dataclasses import asdict
+    from PySide6.QtWidgets import QFileDialog
+    from llc_design.core.config import load_spec, save_project
+    window, view = _llc_window(monkeypatch)
+    try:
+        original = window.digital_loop_analysis
+        view.retain_current_source()
+        candidate = _candidate(view, original.margins_nominal_delay)
+        saved_path = tmp_path / "baseline-project.json"
+        monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_args: (str(saved_path), "JSON"))
+        window.save_json()
+        saved = load_spec(saved_path)
+        # Legacy JSON stores tuple-valued family lists as lists on reload.
+        assert json.loads(json.dumps(asdict(saved))) == json.loads(json.dumps(asdict(window.spec)))
+        assert view.selected_point is candidate
+        assert len(view._retained_sources) == 1
+
+        monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_args: ("", "JSON"))
+        window.load_json()
+        assert view.selected_point is candidate
+        assert view.apply_button.isEnabled()
+        assert len(view._retained_sources) == 1
+
+        changed_path = tmp_path / "hidden-field-project.json"
+        # This field has no editing widget, so loading it emits no field signal.
+        assert "resonant_cap_esr_ohm" not in window.fields
+        changed = saved.clone(resonant_cap_esr_ohm=0.04)
+        save_project(changed, changed_path)
+        monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_args: (str(changed_path), "JSON"))
+        window.load_json()
+        assert window.spec.resonant_cap_esr_ohm == 0.04
+        assert view.selected_point is None
+        assert not view.sources
+        assert not view._retained_sources
+        assert not view.apply_button.isEnabled()
+        view._apply_selected()
+        assert window.digital_loop_analysis is original
+    finally:
+        window.close()

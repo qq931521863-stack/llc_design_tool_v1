@@ -37,6 +37,8 @@ class SolutionStatus(IntEnum):
     MS_CONSTRAINT_FAIL = 5
     SWITCHING_ATTENUATION_FAIL = 6
     INVALID_POINT = 7
+    UNKNOWN = 8
+    CONDITIONAL = 9
 
 
 STATUS_LABELS: dict[SolutionStatus, str] = {
@@ -48,6 +50,8 @@ STATUS_LABELS: dict[SolutionStatus, str] = {
     SolutionStatus.MS_CONSTRAINT_FAIL: "MS_CONSTRAINT_FAIL",
     SolutionStatus.SWITCHING_ATTENUATION_FAIL: "SWITCHING_ATTENUATION_FAIL",
     SolutionStatus.INVALID_POINT: "INVALID_POINT",
+    SolutionStatus.UNKNOWN: "UNKNOWN",
+    SolutionStatus.CONDITIONAL: "CONDITIONAL",
 }
 
 
@@ -55,11 +59,19 @@ STATUS_LABELS: dict[SolutionStatus, str] = {
 class SolutionMapConstraints:
     minimum_gain_margin_db: float = 6.0
     maximum_sensitivity: float = 2.0
-    maximum_switching_loop_gain_db: float = -20.0
+    maximum_switching_loop_gain_db: float | None = -20.0
     crossover_tolerance_fraction: float = 0.05
     phase_margin_tolerance_deg: float = 3.0
 
     def validate(self) -> None:
+        values = (
+            self.minimum_gain_margin_db, self.maximum_sensitivity,
+            self.crossover_tolerance_fraction, self.phase_margin_tolerance_deg,
+        )
+        if self.maximum_switching_loop_gain_db is not None:
+            values += (self.maximum_switching_loop_gain_db,)
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("solution-map constraints must be finite")
         if self.maximum_sensitivity <= 0.0:
             raise ValueError("maximum sensitivity must be positive")
         if self.crossover_tolerance_fraction <= 0.0:
@@ -83,6 +95,8 @@ class SolutionMapPoint:
     switching_loop_gain_db: float | None = None
     controller_phase_deg: float | None = None
     message: str = ""
+    corner_ids: tuple[str, ...] = ()
+    corner_results: tuple["SolutionMapPoint", ...] = ()
 
     @property
     def feasible(self) -> bool:
@@ -163,7 +177,8 @@ def synthesize_tustin_pi_at_target(
     This gives Ti directly from the required controller phase; Kp then enforces
     |L(j*w_c)|=1.  No continuous-PI fit or second S-to-Z conversion is used.
     """
-    if sample_rate_hz <= 0.0 or target_crossover_hz <= 0.0:
+    if (not math.isfinite(sample_rate_hz) or not math.isfinite(target_crossover_hz)
+            or sample_rate_hz <= 0.0 or target_crossover_hz <= 0.0):
         raise ValueError("sample/crossover frequencies must be positive")
     if not 0.0 < target_phase_margin_deg < 180.0:
         raise ValueError("target phase margin must lie in (0, 180) degrees")
@@ -207,8 +222,11 @@ def evaluate_solution_point(
     constraints.validate()
     f = np.asarray(frequencies_hz, dtype=float)
     fixed = np.asarray(fixed_loop_response, dtype=complex)
-    if f.ndim != 1 or fixed.shape != f.shape or len(f) < 3 or np.any(np.diff(f) <= 0.0):
-        raise ValueError("solution-map input must be a strictly increasing 1-D frequency response")
+    _validate_frequency_response(f, fixed)
+    _validate_design_frequencies(sample_rate_hz, switching_frequency_hz)
+    if f[-1] >= 0.5 * sample_rate_hz:
+        raise ValueError("digital-loop frequency grid must remain below controller Nyquist; aliased Fsw evidence is invalid")
+    _validate_targets(target_crossover_hz, target_phase_margin_deg)
 
     try:
         fixed_fc = _interp_complex_log_frequency(f, fixed, target_crossover_hz)
@@ -230,13 +248,72 @@ def evaluate_solution_point(
         )
 
     controller_cfg, controller_phase = synthesis
+    return evaluate_fixed_controller_point(
+        f, fixed, controller_cfg=controller_cfg,
+        switching_frequency_hz=switching_frequency_hz,
+        target_crossover_hz=target_crossover_hz,
+        target_phase_margin_deg=target_phase_margin_deg,
+        constraints=constraints, controller_phase_deg=controller_phase,
+    )
+
+
+def _validate_frequency_response(f: FloatArray, response: ComplexArray) -> None:
+    if (f.ndim != 1 or response.shape != f.shape or len(f) < 3
+            or not np.all(np.isfinite(f)) or np.any(f <= 0.0)
+            or np.any(np.diff(f) <= 0.0) or not np.all(np.isfinite(response))):
+        raise ValueError("solution-map input must be a finite, positive, strictly increasing 1-D frequency response")
+
+
+def _validate_design_frequencies(sample_rate_hz: float, switching_frequency_hz: float) -> None:
+    if not all(math.isfinite(value) and value > 0.0
+               for value in (sample_rate_hz, switching_frequency_hz)):
+        raise ValueError("sample/switching frequencies must be finite and positive")
+
+
+def _validate_targets(target_crossover_hz: float, target_phase_margin_deg: float) -> None:
+    if (not math.isfinite(target_crossover_hz) or target_crossover_hz <= 0.0
+            or not math.isfinite(target_phase_margin_deg)
+            or not 0.0 < target_phase_margin_deg < 180.0):
+        raise ValueError("invalid Fc/PM target")
+
+
+def evaluate_fixed_controller_point(
+    frequencies_hz: Sequence[float] | FloatArray,
+    fixed_loop_response: Sequence[complex] | ComplexArray,
+    *,
+    controller_cfg: PIControllerConfig,
+    switching_frequency_hz: float,
+    target_crossover_hz: float,
+    target_phase_margin_deg: float,
+    constraints: SolutionMapConstraints | None = None,
+    controller_phase_deg: float | None = None,
+    match_nominal_target: bool = True,
+) -> SolutionMapPoint:
+    """Evaluate an unchanged PI; nonnominal corners use the PM target as a floor.
+
+    FEASIBLE describes the sampled frequency-band checks, never a pole/Nyquist
+    stability proof. No unobserved phase crossing is promoted to infinite GM.
+    """
+    constraints = constraints or SolutionMapConstraints()
+    constraints.validate()
+    f = np.asarray(frequencies_hz, dtype=float)
+    fixed = np.asarray(fixed_loop_response, dtype=complex)
+    _validate_frequency_response(f, fixed)
+    if not all(math.isfinite(value) and value > 0.0
+               for value in (controller_cfg.kp, controller_cfg.ti_s, controller_cfg.sample_time_s)):
+        raise ValueError("PI gain, integration time and sample time must be finite and positive")
+    _validate_design_frequencies(1.0 / controller_cfg.sample_time_s, switching_frequency_hz)
+    _validate_targets(target_crossover_hz, target_phase_margin_deg)
+    if f[-1] >= 0.5 / controller_cfg.sample_time_s:
+        raise ValueError("digital-loop frequency grid must remain below controller Nyquist; aliased Fsw evidence is invalid")
     controller = controller_cfg.transfer_function()
     loop = fixed * controller.frequency_response(f)
     margins = calculate_stability_margins(f, loop)
-    sensitivity = 1.0 / (1.0 + loop)
-    complementary = loop / (1.0 + loop)
-    ms = float(np.nanmax(np.abs(sensitivity)))
-    mt = float(np.nanmax(np.abs(complementary)))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sensitivity = 1.0 / (1.0 + loop)
+        complementary = loop / (1.0 + loop)
+    ms = float(np.max(np.abs(sensitivity)))
+    mt = float(np.max(np.abs(complementary)))
 
     switching_gain = None
     if f[0] <= switching_frequency_hz <= f[-1]:
@@ -246,7 +323,8 @@ def evaluate_solution_point(
 
     fc_actual = margins.critical_gain_crossover_hz
     pm_actual = margins.phase_margin_deg
-    gm = margins.gain_margin_db
+    # A negative crossing must not be hidden by another positive gain margin.
+    gm = min(margins.gain_margins_db, default=None)
     common = dict(
         target_crossover_hz=target_crossover_hz,
         target_phase_margin_deg=target_phase_margin_deg,
@@ -258,22 +336,39 @@ def evaluate_solution_point(
         ms=ms,
         mt=mt,
         switching_loop_gain_db=switching_gain,
-        controller_phase_deg=controller_phase,
+        controller_phase_deg=controller_phase_deg,
     )
-
-    if fc_actual is None or pm_actual is None or pm_actual <= 0.0 or (gm is not None and gm <= 0.0):
-        return SolutionMapPoint(status=SolutionStatus.LOOP_UNSTABLE, message="critical loop margin is non-positive", **common)
-    fc_error = abs(fc_actual / target_crossover_hz - 1.0)
-    pm_error = abs(pm_actual - target_phase_margin_deg)
-    if fc_error > constraints.crossover_tolerance_fraction or pm_error > constraints.phase_margin_tolerance_deg:
-        return SolutionMapPoint(status=SolutionStatus.TARGET_MISMATCH, message="another crossover/phase branch dominates the requested target", **common)
+    if ((pm_actual is not None and pm_actual <= 0.0)
+            or (gm is not None and gm <= 0.0)):
+        return SolutionMapPoint(status=SolutionStatus.LOOP_UNSTABLE, message="an observed loop margin is non-positive", **common)
     if gm is not None and gm < constraints.minimum_gain_margin_db:
         return SolutionMapPoint(status=SolutionStatus.GM_CONSTRAINT_FAIL, message="gain-margin constraint violated", **common)
-    if ms > constraints.maximum_sensitivity:
+    if not np.isfinite(ms) or ms > constraints.maximum_sensitivity:
         return SolutionMapPoint(status=SolutionStatus.MS_CONSTRAINT_FAIL, message="maximum-sensitivity constraint violated", **common)
-    if switching_gain is not None and switching_gain > constraints.maximum_switching_loop_gain_db:
+    if (switching_gain is not None and constraints.maximum_switching_loop_gain_db is not None
+            and switching_gain > constraints.maximum_switching_loop_gain_db):
         return SolutionMapPoint(status=SolutionStatus.SWITCHING_ATTENUATION_FAIL, message="loop attenuation at switching frequency is insufficient", **common)
-    return SolutionMapPoint(status=SolutionStatus.FEASIBLE, message="all configured constraints satisfied", **common)
+    if fc_actual is None or pm_actual is None:
+        return SolutionMapPoint(status=SolutionStatus.UNKNOWN, message="no gain crossover observed in the analyzed range; Fc/PM are unknown", **common)
+    if match_nominal_target:
+        fc_error = abs(fc_actual / target_crossover_hz - 1.0)
+        pm_error = abs(pm_actual - target_phase_margin_deg)
+        if fc_error > constraints.crossover_tolerance_fraction or pm_error > constraints.phase_margin_tolerance_deg:
+            return SolutionMapPoint(status=SolutionStatus.TARGET_MISMATCH, message="another crossover/phase branch dominates the requested target", **common)
+    elif pm_actual < target_phase_margin_deg - constraints.phase_margin_tolerance_deg:
+        return SolutionMapPoint(status=SolutionStatus.TARGET_MISMATCH, message="corner PM is below the requested PM floor (including tolerance)", **common)
+    missing = []
+    if switching_gain is None:
+        missing.append("|L(Fsw)| UNKNOWN: switching frequency is outside the analyzed range; no extrapolation")
+    if gm is None and constraints.minimum_gain_margin_db > 0.0:
+        missing.append("GM UNKNOWN: no phase crossover observed; minimum gain margin is unverified")
+    if missing:
+        return SolutionMapPoint(status=SolutionStatus.CONDITIONAL,
+            message="; ".join(missing) + "; observed frequency-band checks only; pole/Nyquist stability is not established", **common)
+    note = "configured frequency-grid checks satisfied; pole/Nyquist stability is not established"
+    if gm is None:
+        note += "; GM UNKNOWN: no phase crossover observed, no positive GM floor requested"
+    return SolutionMapPoint(status=SolutionStatus.FEASIBLE, message=note, **common)
 
 
 def build_fc_pm_solution_map(
@@ -294,7 +389,9 @@ def build_fc_pm_solution_map(
     fixed = np.asarray(fixed_loop_response, dtype=complex)
     fc = np.asarray(crossover_targets_hz, dtype=float)
     pm = np.asarray(phase_margin_targets_deg, dtype=float)
-    if np.any(fc <= 0.0) or np.any(pm <= 0.0) or np.any(pm >= 180.0):
+    if (fc.ndim != 1 or pm.ndim != 1 or not fc.size or not pm.size
+            or not np.all(np.isfinite(fc)) or not np.all(np.isfinite(pm))
+            or np.any(fc <= 0.0) or np.any(pm <= 0.0) or np.any(pm >= 180.0)):
         raise ValueError("invalid Fc/PM target grid")
     if np.any(np.diff(fc) <= 0.0) or np.any(np.diff(pm) <= 0.0):
         raise ValueError("Fc and PM target arrays must be strictly increasing")
@@ -339,5 +436,6 @@ __all__ = [
     "SolutionStatus",
     "build_fc_pm_solution_map",
     "evaluate_solution_point",
+    "evaluate_fixed_controller_point",
     "synthesize_tustin_pi_at_target",
 ]

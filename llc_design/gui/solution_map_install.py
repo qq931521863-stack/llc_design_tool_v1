@@ -1,7 +1,9 @@
 """Connect controller candidates to the maintained LLC digital loop."""
 from __future__ import annotations
 
-from dataclasses import fields, is_dataclass, replace
+from dataclasses import asdict, fields, is_dataclass, replace
+import hashlib
+import json
 from types import MethodType
 
 import numpy as np
@@ -26,6 +28,34 @@ def _remove_controller(open_loop: np.ndarray, controller: np.ndarray) -> np.ndar
     fixed = np.zeros_like(open_loop, dtype=complex)
     np.divide(open_loop, controller, out=fixed, where=np.abs(controller) > 1e-30)
     return fixed
+
+
+def _model_signature(*models) -> str:
+    """Exact value signature; never hash rounded widget text or array reprs."""
+    def encode(value):
+        if is_dataclass(value):
+            return asdict(value)
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, np.generic):
+            return value.item()
+        raise TypeError(f"Unsupported model signature value: {type(value).__name__}")
+
+    return hashlib.sha256(json.dumps(models, sort_keys=True, default=encode).encode()).hexdigest()
+
+
+def _llc_source_compatibility(result) -> str:
+    small = result.small_signal
+    # Load resistance and loss-derived damping are recalculated by the maintained
+    # model at each operating point. The underlying design remains identical.
+    parameters = asdict(small.parameters)
+    parameters.pop("load_resistance_ohm")
+    parameters.pop("series_resistance_ohm")
+    return _model_signature(
+        small.spec, small.tank, parameters, small.control_input_kind,
+        small.timer_clock_hz, result.fm_lut, result.analog_sense,
+        result.adc_sampling, result.command_timing, result.controller.sample_time_s,
+    )
 
 
 def _merge_model_edits(frozen, displayed, edited):
@@ -97,11 +127,23 @@ def install_llc_solution_map(host) -> SolutionMapView:
     loop_view._solution_map_controller = None
     _guard_loop_completions(host, "_digital_loop_ready", view, state)
 
-    def invalidate(*_args) -> None:
+    def invalidate(*_args, clear_corners=False) -> None:
         if state["updating"]:
             return
         state["revision"] += 1
-        view.invalidate("LLC inputs changed. Run the maintained loop again before comparing or applying a candidate.")
+        view.invalidate("LLC inputs changed. Run the maintained loop again before comparing or applying a candidate.",
+                        clear_corners=clear_corners)
+
+    original_load_spec = host._load_spec_to_widgets
+
+    def load_spec_with_invalidation(self, spec) -> None:
+        # Project loads can change hidden model fields without emitting any
+        # widget signal. Invalidate before reflecting the new authoritative spec.
+        # A cancelled/failed file selection never reaches this method.
+        invalidate(clear_corners=True)
+        original_load_spec(spec)
+
+    host._load_spec_to_widgets = MethodType(load_spec_with_invalidation, host)
 
     def adopt_controller(controller, source=None) -> None:
         loop_view._solution_map_controller = controller
@@ -124,12 +166,19 @@ def install_llc_solution_map(host) -> SolutionMapView:
         if not state["updating"]:
             loop_view._solution_map_sample_time = None
 
+    operating_or_controller = {
+        loop_view.vbus, loop_view.load_percent, loop_view.auto_pcmd, loop_view.pcmd,
+        loop_view.controller_kind, loop_view.kp, loop_view.ti_ms, loop_view.pif_fc,
+        loop_view.out_min, loop_view.out_max,
+        loop_view.b0, loop_view.b1, loop_view.b2, loop_view.a1, loop_view.a2,
+    }
     for widget in loop_view.parameter_stack.findChildren(QWidget):
-        _watch_input(widget, invalidate)
+        _watch_input(widget, lambda *_args, clear=widget not in operating_or_controller:
+                     invalidate(clear_corners=clear))
     _watch_input(loop_view.external_controller_check, invalidate)
     _watch_input(loop_view.sample_us, sample_edited)
     for widget in (*host.fields.values(), host.parameter_mode_combo, host.topology, host.primary_device_combo):
-        _watch_input(widget, invalidate)
+        _watch_input(widget, lambda *_args: invalidate(clear_corners=True))
 
     # Keep one owner of the normal request signal. The exact adopted controller
     # survives subsequent Run clicks; edits replace only the fields changed.
@@ -198,6 +247,13 @@ def install_llc_solution_map(host) -> SolutionMapView:
             sample_rate_hz=1.0 / result.controller.sample_time_s,
             switching_frequency_hz=result.small_signal.operating_point.switching_frequency_hz,
             provenance=(provenance + " | fixed: Gvf + FM slope + analog sense + ADC/averaging + ZOH/application delay"),
+            operating_point=(
+                f"Vbus={result.small_signal.operating_point.vbus_v:.9g} V; "
+                f"load={result.small_signal.operating_point.load_fraction * 100:.9g}%; "
+                f"Fsw={result.small_signal.operating_point.switching_frequency_hz:.9g} Hz; "
+                f"PCMD={result.fm_operating_point.command_pu:.9g}"
+            ),
+            compatibility_key=_llc_source_compatibility(result),
         )
         if result.controller_config is not None:
             adopt_controller(result.controller_config, result.controller_source)
@@ -220,7 +276,7 @@ def install_llc_solution_map(host) -> SolutionMapView:
     host._design_ready = MethodType(design_ready_with_guided_loop, host)
 
     def apply_selected(loop_key: str, point) -> None:
-        if (loop_key not in view.sources or loop_key != "voltage" or not point.feasible
+        if (loop_key not in view.sources or loop_key != "voltage" or not view.can_apply(point)
                 or point.kp is None or point.ti_s is None or loop_view.result is None):
             return
         source_result = loop_view.result
