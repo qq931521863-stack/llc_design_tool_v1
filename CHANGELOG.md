@@ -2,6 +2,35 @@
 
 This file keeps the **maintained product history**. Detailed debugging notes, one-off migration instructions, CI result snapshots and binary release artifacts are intentionally kept out of the source documentation tree; Git history, Pull Requests, Actions and Releases provide that archive.
 
+## 9.8.1 — 2026-10-18
+
+### Fixed — Smart Control limits and evidence
+
+- uses the active controller's actual output limits and reachable FM range for
+  static PCMD headroom; missing absolute limits remain UNKNOWN;
+- preserves explicit CONDITIONAL / UNKNOWN evidence and evaluates the same
+  nominal PI across retained, compatible LLC/TTPL operating points;
+- carries constraints, per-point results, conditional reasons, exact controller
+  identity and model signatures through Apply and existing C99/research exports;
+- invalidates stale candidates and evidence after model, input, controller or
+  selected-operating-point changes.
+
+### Added — Reopen complete LLC/TTPL control sessions
+
+- saves full-precision controller/model inputs, hidden sampling and timing
+  fields, retained operating points, constraints and historical evidence;
+- reopens LLC project JSON and TTPL control sessions as historical data; requires
+  model recomputation and fresh candidate generation before explicit Apply;
+- validates session versions, fields and resource limits, rejects malformed
+  files before changing the current session, and saves files atomically.
+
+### Engineering boundary
+
+- software/model evidence is not hardware validation; missing frequency,
+  pole-stability and uncollected operating-point evidence remains explicit;
+- no new hardware measurements, real ISR timing qualification or float32
+  validation are included. See [Smart Control evidence and sessions](docs/smart_control_common_corners.md).
+
 ## 9.8.0 — 2026-10-15
 
 ### Added — DAB TPS and three-phase PFC engineering
