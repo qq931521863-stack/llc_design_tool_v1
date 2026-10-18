@@ -13,6 +13,8 @@ LLC · DAB TPS · Totem-Pole PFC · Vienna / Two-Level PFC · SRF / DDSRF / DSOG
 
 Power Design Toolkit is an engineering-oriented power-electronics design and digital-control platform. It connects **power-stage design, component/loss screening, multi-fidelity models, measured FRA data, exact discrete controller H(z), stability analysis, C99 code generation, firmware-correlated switching co-simulation and Agent/API access** in one codebase.
 
+**Current release: [v9.8.1](https://github.com/yangshuai2022-star/power-design-toolkit/releases/tag/v9.8.1)** — actual Smart Control output headroom, traceable conditional/multi-operating-point evidence, and saved LLC/TTPL control sessions. Verified Windows x64 and macOS arm64 packages are available; see [Install and run](#8-install-and-run).
+
 ## Current capabilities
 
 One toolkit connects power-stage design, magnetics, loss estimation, voltage/current waveforms, control-loop design, measured FRA, digital coefficients and C99 export.
@@ -153,13 +155,28 @@ not claim global optimality or ZVS proof.
 
 The FRA toolbar also opens a [measured PI tuning map](docs/FRA_TUNING_MAP.md): bind each scan to its actual controller and operating point, compare rounds on a sparse Kp×Ti map, and plan a local next scan. Predictions remain separate from measurements; no hardware parameters are applied.
 
-### Smart Control / Guided System Design (V9.4)
+### Smart Control / Guided System Design (v9.8.1)
 
-From the launcher, **Guided System Design** builds a canonical closed-loop definition for LLC FM voltage-loop or single-phase Totem-Pole PFC (current + bus voltage), then hands it into the existing design/control engines. An interactive **Fc–PM Solution Map** synthesizes candidate loops and installs only constraint-feasible points into the LLC/TTPL workspaces.
+From the launcher, **Guided System Design** builds a canonical closed-loop definition for LLC FM voltage-loop or single-phase Totem-Pole PFC (current + bus voltage), then hands it into the existing design/control engines. An interactive **Fc–PM Solution Map** synthesizes Tustin PI candidates for explicit application in the LLC/TTPL workspaces.
 
-V9.4 integrates the eight-step workflow: **Topology → Power Stage → Sensing → ADC → Modulator → Timing → Controller → Review**, with live summaries and guided-definition re-entry. The new LLC envelope/ZVS/FHA–TD/loss-provenance/thermal/optimizer foundations are described in [LLC Physics Model V2](docs/LLC_PHYSICS_MODEL_V2.md).
+The eight-step workflow is **Topology → Power Stage → Sensing → ADC → Modulator → Timing → Controller → Review**, with live summaries and guided-definition re-entry. LLC envelope/ZVS/FHA–TD/loss-provenance/thermal/optimizer foundations are described in [LLC Physics Model V2](docs/LLC_PHYSICS_MODEL_V2.md).
 
-V9.7.0 adds the measured FRA PI experiment map and reproducible MATLAB/Python controller research exports. Measured scans and local predictions remain separate; rational models and frequency-response data retain their declared boundaries. MATLAB runtime execution has not been validated. Software/model checks do not establish hardware validation. Use the latest complete release; earlier tags are retained for history. See [Release process](docs/RELEASE.md).
+v9.8.1 makes the assessment and its limits explicit:
+
+- **Actual LLC output headroom:** static normalized-PCMD headroom uses the active PI/PIF/2P2Z controller's `output_min/output_max`, intersected with the FM LUT's reachable PCMD range and the actual 0–1 clamp. For example, PCMD 0.75 with an upper limit of 0.6 gives **−0.15** upper headroom and a saturation warning. External H(z) without an absolute output-limit contract remains `UNKNOWN`; this is not a transient anti-windup test.
+- **Conditional adoption:** `FEASIBLE` means configured checks pass within the analyzed frequency band. Missing Fsw attenuation or required phase-crossover/GM evidence can produce `CONDITIONAL`. Review the reasons, enable **Allow conditional PI (unverified Fsw / GM)**, then explicitly **Apply conditional PI**. This does not upgrade missing evidence to a pass; `UNKNOWN` candidates and known constraint failures still block Apply.
+- **One PI across retained points:** analyze a real operating point, click **Retain current**, then repeat and select compatible snapshots. The nominal PI is evaluated unchanged at every selected point, with per-point results and worst observed metrics. Uncollected load/voltage/temperature/tolerance conditions remain unverified; missing pole-stability evidence remains `UNKNOWN`.
+- **Traceable exports:** Apply preserves conditional reasons, constraints, per-point results, exact controller identity and model/response signatures in LLC project JSON, MATLAB/Python research metadata, LLC/TTPL C99 design snapshots and TTPL H(z) manifests. Changed inputs, models, controllers or selected points invalidate stale candidates/evidence.
+
+#### Save and reopen LLC / TTPL control sessions
+
+LLC **Save project JSON** includes the control session; the PFC toolbar provides **Save / Open TTPL session**. Sessions preserve full-precision controller and model inputs, hidden sampling/sensing/timing fields, retained points, constraints and historical candidate/applied evidence. Legacy LLC spec/project files remain readable. This covers LLC/TTPL control design, not every workspace or FRA measurement session.
+
+Reopening restores inputs and history only. Saved curves, hashes and PASS/CONDITIONAL assessments are not fresh validation: Apply is disabled and conditional permission is reset. **Run the model again → regenerate candidates → explicitly Apply.** A selected point that cannot be recomputed blocks candidate generation until it is successfully rebuilt or explicitly deselected/removed. Files are validated before changing the current session and saved atomically.
+
+See [Smart Control evidence, common operating points and sessions (Chinese)](docs/smart_control_common_corners.md). These changes add software/model evidence, not hardware measurements, real ISR timing qualification or new float32 validation.
+
+The measured FRA PI experiment map and MATLAB/Python research exports remain available. Measured scans and local predictions stay separate; rational models and frequency-response data retain their declared boundaries. Python research scripts are regression-tested; MATLAB runtime execution has not been validated.
 
 Roadmap placeholders for other topologies are shown explicitly — they are not silently claimed as supported. Solution Map synthesis currently targets Tustin PI. Some advanced physics paths remain API/opt-in and are not yet integrated into every default GUI/PDF/Web consumer; see the explicit [model limitations](docs/LLC_MODEL_VALIDATION_REPORT.md).
 
@@ -478,16 +495,14 @@ Start with:
 
 ### Binary packages (recommended for end users)
 
-Download the latest Windows / macOS build from GitHub Releases:
+Download the complete [v9.8.1 release](https://github.com/yangshuai2022-star/power-design-toolkit/releases/tag/v9.8.1), or check [GitHub Releases](https://github.com/yangshuai2022-star/power-design-toolkit/releases/latest) for a newer complete release. Choose the platform ZIP under **Assets**, not GitHub's source-code archives. Python is not required for these packages.
 
-**[https://github.com/yangshuai2022-star/power-design-toolkit/releases/latest](https://github.com/yangshuai2022-star/power-design-toolkit/releases/latest)**
-
-| Asset | Platform |
+| Asset | Platform / launch path after extraction |
 | --- | --- |
-| `PowerDesignTool-Windows-x64.zip` | Windows 11 x64 — extract and run `PowerDesignTool.exe` |
-| `PowerDesignTool-macOS-arm64.zip` | macOS Apple Silicon — extract and run `PowerDesignTool.app` |
+| [PowerDesignTool-Windows-x64.zip](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.8.1/PowerDesignTool-Windows-x64.zip) | Windows 11 x64 — open `PowerDesignTool/PowerDesignTool.exe`; keep the extracted folder intact |
+| [PowerDesignTool-macOS-arm64.zip](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.8.1/PowerDesignTool-macOS-arm64.zip) | macOS Apple Silicon — open `PowerDesignTool.app` |
 
-Unsigned macOS builds may need Finder **Open** once, or clearing quarantine on the downloaded app. CI gates for these zips are described in [Release process](docs/RELEASE.md); they prove software reproducibility, not hardware sign-off.
+The release also includes [SHA256SUMS.txt](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.8.1/SHA256SUMS.txt) and frozen-app self-test reports for [Windows](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.8.1/bundle-proof-Windows.json) and [macOS](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.8.1/bundle-proof-macOS.json). Unsigned macOS builds may require approval through Finder **Open** after verifying the source. CI gates are described in [Release process](docs/RELEASE.md); they establish software startup/resource evidence, not hardware sign-off. Optional shared-ngspice verification still requires a separate `libngspice` installation.
 
 ### Requirements (from source)
 
@@ -498,7 +513,11 @@ Unsigned macOS builds may need Finder **Open** once, or clearing quarantine on t
 
 ### Core / CLI
 
+Run source-install commands from the repository root:
+
 ```bash
+git clone https://github.com/yangshuai2022-star/power-design-toolkit.git
+cd power-design-toolkit
 python -m pip install -e .
 ```
 
@@ -509,7 +528,7 @@ python -m pip install -e ".[gui]"
 power-design-gui
 ```
 
-The repository also includes Windows `.bat` and macOS `.command` launchers for the same desktop application.
+The repository-root launchers [`LLC工具.bat`](LLC工具.bat) (Windows) and [`LLC工具.command`](LLC工具.command) (macOS) start the same desktop application and can install missing GUI dependencies. These are Python/source launchers, not the packaged executables above.
 
 Equivalent source-tree entry:
 
@@ -673,6 +692,7 @@ Start here instead of reading historical version notes:
 - [DAB / two-level dq conventions](docs/DAB_TPS_AND_THREE_PHASE_DQ.md)
 - [Multi-harmonic quasi-PR and magnetic modeling](docs/MULTI_PR_AND_MAGNETICS.md)
 - [Digital control architecture](docs/DIGITAL_CONTROL_ARCHITECTURE.md)
+- [Smart Control evidence, common operating points and saved sessions (Chinese)](docs/smart_control_common_corners.md)
 - [LLC model hierarchy and boundaries](docs/LLC_MODELING.md)
 - [PFC Engineering Workspace](docs/PFC_ENGINEERING_WORKSPACE.md)
 - [PFC Exact H(z) handoff](docs/PFC_EXACT_HZ_HANDOFF.md)
