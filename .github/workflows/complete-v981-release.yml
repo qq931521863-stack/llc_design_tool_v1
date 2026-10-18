@@ -1,0 +1,194 @@
+name: complete-v981-release
+
+# Keep v9.8.1 and its application source immutable. Only the Windows pytest
+# process uses Python UTF-8 mode for the tagged test's default-encoding reader.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/complete-v981-release.yml
+      - llc_design/tests/test_v981_release_contract.py
+  push:
+    branches: [main]
+    paths: [.github/workflows/complete-v981-release.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  QT_QPA_PLATFORM: offscreen
+  MPLBACKEND: Agg
+
+jobs:
+  verifier-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install pytest
+      - run: python -m pytest --noconftest -q llc_design/tests/test_v981_release_contract.py
+
+  windows:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: verifier-tests
+    runs-on: windows-latest
+    steps:
+      - name: Checkout immutable v9.8.1 application source
+        uses: actions/checkout@v4
+        with:
+          ref: bc969ab377d4b029cce351f3a38146d3e2a7659c
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Require original source and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = yangshuai2022-star/power-design-toolkit
+          test "$(git rev-parse HEAD)" = bc969ab377d4b029cce351f3a38146d3e2a7659c
+          test "$(git rev-parse HEAD^{tree})" = be83a24e1055b215e28da9bc5945f17a9508b792
+          test "$(git rev-parse refs/tags/v9.8.1)" = 68d2a894bcb66ec4dcd7a3131c13d52e1a96697a
+          test "$(git rev-parse 'refs/tags/v9.8.1^{}')" = bc969ab377d4b029cce351f3a38146d3e2a7659c
+          git diff --exit-code
+          python -c 'import tomllib, llc_design; from pathlib import Path; assert tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"] == llc_design.__version__ == "9.8.1"'
+      - name: Install original release dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller
+          python -m pip install -e ".[gui,dev,web,agent]"
+      - name: Run every original test in Python UTF-8 mode
+        run: |
+          python -X utf8 -c "import sys; assert sys.flags.utf8_mode == 1"
+          python -X utf8 -m pytest
+      - name: Require unchanged application tree before packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          git diff --cached --exit-code
+          test "$(git rev-parse HEAD^{tree})" = be83a24e1055b215e28da9bc5945f17a9508b792
+      - name: Build unchanged application with PyInstaller
+        shell: bash
+        run: |
+          python -m PyInstaller --noconfirm --clean --windowed --name PowerDesignTool \
+            --collect-data llc_design --collect-data pfc_design --collect-data power_codegen \
+            --add-data "engineering_data:engineering_data" \
+            --collect-submodules llc_design --collect-submodules pfc_design --collect-submodules power_codegen \
+            --collect-submodules power_control_tools \
+            --collect-submodules dab_design \
+            packaging/launcher.py
+      - name: Verify frozen application without the test UTF-8 override
+        shell: bash
+        run: |
+          python -c 'import os; assert os.environ.get("PYTHONUTF8") not in ("1",), "test mode must not leak into frozen verification"'
+          python packaging/verify_bundle.py dist/PowerDesignTool/PowerDesignTool.exe \
+            --version 9.8.1 --output bundle-proof-Windows.json
+      - name: Zip Windows build
+        run: powershell Compress-Archive -Path dist/PowerDesignTool -DestinationPath PowerDesignTool-Windows-x64.zip -Force
+      - name: Upload verified Windows package and evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-v981-windows-x64
+          path: |
+            PowerDesignTool-Windows-x64.zip
+            bundle-proof-Windows.json
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [verifier-tests, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: publish-refs/tags/v9.8.1
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout immutable v9.8.1 publication contracts
+        uses: actions/checkout@v4
+        with:
+          ref: bc969ab377d4b029cce351f3a38146d3e2a7659c
+          fetch-depth: 0
+      - name: Require original successful Ubuntu and macOS gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = yangshuai2022-star/power-design-toolkit
+          test "$(git rev-parse HEAD)" = bc969ab377d4b029cce351f3a38146d3e2a7659c
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/39083489678" > source-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/39083489678/attempts/1/jobs?per_page=100" > source-jobs.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/12120287047" > source-artifact.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          run = json.loads(Path("source-run.json").read_text(encoding="utf-8"))
+          assert run["id"] == 39083489678 and run["run_attempt"] == 1
+          assert run["head_sha"] == "bc969ab377d4b029cce351f3a38146d3e2a7659c"
+          assert run["head_branch"] == "v9.8.1" and run["status"] == "completed"
+          jobs = {j["id"]: j for j in json.loads(Path("source-jobs.json").read_text(encoding="utf-8"))["jobs"]}
+          for job_id in (117545122672, 117547617917):
+              job = jobs[job_id]
+              assert job["status"] == "completed" and job["conclusion"] == "success"
+          required_steps = {"Run tests", "Build with PyInstaller", "Verify frozen application and fresh evidence", "Zip macOS app", "Upload verified package and evidence"}
+          passed_steps = {s["name"] for s in jobs[117547617917]["steps"] if s["conclusion"] == "success"}
+          assert required_steps <= passed_steps
+          artifact = json.loads(Path("source-artifact.json").read_text(encoding="utf-8"))
+          assert artifact["id"] == 12120287047 and artifact["name"] == "power-design-tool-macos-arm64"
+          assert artifact["expired"] is False
+          assert artifact["workflow_run"]["id"] == run["id"] and artifact["workflow_run"]["head_sha"] == run["head_sha"]
+          assert artifact["digest"] == "sha256:4c1a7806cee97b446d4d54cadfba958a6fdf855ff419e254637c71263976694b"
+          print("Original v9.8.1 Ubuntu tests and complete macOS frozen build verified.")
+          PY
+      - name: Download original verified macOS package
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 39083489678
+          artifact-ids: 12120287047
+          merge-multiple: true
+          path: release
+      - name: Download verified recovery Windows package
+        uses: actions/download-artifact@v4
+        with:
+          name: recovery-v981-windows-x64
+          path: release
+      - name: Run unchanged tagged archive and checksum gates
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, textwrap
+          from pathlib import Path
+          workflow = Path(".github/workflows/build-release.yml").read_text(encoding="utf-8")
+          def original_step(heading):
+              marker = f"- name: {heading}\n"
+              assert workflow.count(marker) == 1, "unexpected tagged publication contract"
+              block = workflow.split(marker, 1)[1].split("run: |\n", 1)[1].split("\n      - name:", 1)[0]
+              return textwrap.dedent(block)
+          gate = original_step("Verify both archives and write checksums").split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+          assert {p.name for p in Path("release").iterdir()} == {"PowerDesignTool-Windows-x64.zip", "PowerDesignTool-macOS-arm64.zip", "bundle-proof-Windows.json", "bundle-proof-macOS.json"}
+          # This is the explicit release target of the original verifier, not the
+          # ref that triggered this recovery workflow (which remains main).
+          os.environ["GITHUB_REF_NAME"] = "v9.8.1"
+          exec(compile(gate, "unchanged-v981-archive-verifier", "exec"), {})
+          notes = Path("release-notes.md")
+          receipt = "\n\n### Publication verification\n\nApplication source and tag remain unchanged at `bc969ab377d4b029cce351f3a38146d3e2a7659c`. The Windows full test suite runs in Python UTF-8 mode because a tagged test reads UTF-8 JSON with the locale-default decoder; no additional tests are excluded and no assertions are relaxed. PyInstaller and the frozen-application self-test run without that test-only override. The verified original macOS package is retained.\n\n"
+          receipt += f"[Original tagged run](https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/39083489678) · [Recovery and publication](https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']})\n"
+          notes.write_text(notes.read_text(encoding="utf-8") + receipt, encoding="utf-8")
+          destination = Path(os.environ["RUNNER_TEMP"]) / "v981-publish.sh"
+          destination.write_text(original_step("Stage and publish complete release"), encoding="utf-8")
+          PY
+      - name: Publish through unchanged tagged remote-asset gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/tags/v9.8.1 | cut -f1)" = 68d2a894bcb66ec4dcd7a3131c13d52e1a96697a
+          test "$(git ls-remote origin 'refs/tags/v9.8.1^{}' | cut -f1)" = bc969ab377d4b029cce351f3a38146d3e2a7659c
+          GITHUB_REF_NAME=v9.8.1 bash "$RUNNER_TEMP/v981-publish.sh"
+          test "$(git ls-remote origin 'refs/tags/v9.8.1^{}' | cut -f1)" = bc969ab377d4b029cce351f3a38146d3e2a7659c

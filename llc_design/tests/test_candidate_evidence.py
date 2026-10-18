@@ -144,13 +144,13 @@ def test_llc_apply_and_all_export_metadata_keep_conditional_evidence(tmp_path):
     assert evidence["accepted_current"]
     assert evidence["assessment"]["status"] == "CONDITIONAL"
     paths = export_digital_loop_analysis(analysis, tmp_path / "loop")
-    assert json.loads(paths["settings_json"].read_text())["candidate_evidence"] == evidence
+    assert json.loads(paths["settings_json"].read_text(encoding="utf-8"))["candidate_evidence"] == evidence
     research = build_llc_research_export(analysis)
     assert json.loads(research.metadata_json)["candidate_evidence"] == evidence
     assert "candidate_evidence" in render_python(research)
     assert "candidate_evidence" in render_matlab(research)
     code = generate_llc_control_code(analysis, tmp_path / "code")
-    assert json.loads(code.files["snapshot"].read_text())["candidate_evidence"] == evidence
+    assert json.loads(code.files["snapshot"].read_text(encoding="utf-8"))["candidate_evidence"] == evidence
 
 
 def test_hidden_llc_and_ttpl_model_changes_invalidate_signatures():
@@ -224,9 +224,9 @@ def test_ttpl_gui_common_apply_exports_and_restore_never_upgrades(app, monkeypat
         assert build_pfc_control_handoff(analysis).as_dict()["candidate_evidence"]["current"] == evidence
         assert json.loads(build_pfc_research_export(analysis).metadata_json)["candidate_evidence"]["current"] == evidence
         path = export_pfc_exact_hz_manifest(analysis, tmp_path / "exact.json")
-        assert json.loads(path.read_text())["candidate_evidence"]["current"] == evidence
+        assert json.loads(path.read_text(encoding="utf-8"))["candidate_evidence"]["current"] == evidence
         code = generate_ttpl_control_code(analysis, tmp_path / "code", require_stable=False)
-        assert json.loads(code.files["snapshot"].read_text())["analysis"]["candidate_evidence"]["current"] == evidence
+        assert json.loads(code.files["snapshot"].read_text(encoding="utf-8"))["analysis"]["candidate_evidence"]["current"] == evidence
         control._restore_candidate_evidence(analysis.candidate_evidence)
         assert not control._candidate_evidence()["current"]["accepted_current"]
         window.run_ttpl_analysis(control._config())
