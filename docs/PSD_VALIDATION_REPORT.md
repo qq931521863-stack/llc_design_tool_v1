@@ -55,24 +55,44 @@ passed **59 tests in 9.06 s** before the final reference-only commit; the comple
 merged reference suite then passed **45 tests in 68.97 s**. These are separate
 focused runs, not an aggregate or native-package pass.
 
-### Next bounded consumer audit: uncommitted inputs and external H(z)
+### Bounded consumer repair: pending inputs and external H(z)
 
-A five-path real GUI audit passed the submitted-input Buck, optional-physics T05,
-X01, X02 and X07 input/calculate/select/save/reopen/report chains, but found an
-uncommitted-editor defect. Typing Vin=24 over 12 without Enter/Tab and clicking
-"Recalculate" leaves the visible 24 while calculating at 12. Native save/export
-file dialogs commit the edit after revision capture and silently abandon output;
-an empty intermediate editor can be silently restored to the old value before
-saving or suggesting. A retained 15-action matrix covers valid, zero and empty
-input. This needs an explicit input-commit/validation boundary before actions.
+The original five-path actual GUI audit passed submitted-input Buck, optional-physics
+T05, X01, X02 and X07 input/calculate/select/save/reopen/report chains. It also
+retained a genuine 15-action red matrix: typing Vin=24 over 12 without Enter/Tab
+could calculate at 12; native dialogs could commit after revision capture and
+silently abandon output; blank text could revert to old input. The repaired PSD
+pre-action boundary commits locale-valid text, rejects zero/blank intermediate
+input, invalidates old generations and labels retained plots as previous-input
+results. Independent fixed-source replay passes all 15 actions, all five complete
+paths, and three real T05 running-worker cases with edits made after 250 ms of
+actual execution. Late results cannot publish, save or replace a newly edited
+project. Worker pools finish with zero active jobs. No model/worker mock substitutes
+for these acceptance paths. The owner regression passes 166 related tests.
 
-A separate actual launcher→Control Tools→LLC audit found that an editable external
-H(z) control-period field can show 30 µs while the active controller, ADC and C99
-still use 25 µs. Exact b/a coefficients must not be silently rediscretized to
-hide the mismatch. Shared live-source invalidation versus explicitly retained
-controller snapshots is being checked separately. These new consumer defects
-are tracked in a separate repair batch; they are not included in the completed
-drawing acceptance or hidden by prior pass counts.
+Advanced restored values retain their hidden full precision until explicitly edited.
+A same-display keyboard edit formerly left that field's old precision cache intact
+because Qt emitted no valueChanged signal. The small textEdited correction releases
+only that key and emits one change. Three real Qt parameterized groups exercise
+all 21 physical fields, options, design identity and UTF-8 JSON snapshots; 62
+related tests pass. These are identity/GUI checks, not claims of measurable physical
+solver differences below display precision.
+
+The actual launcher→Control Tools→LLC audit retained two further red cases: an
+invalid live digital source left old H(z) exported as current, and the external
+period editor could display 30 µs while controller, ADC and C99 still used 25 µs.
+The repair propagates pending/error source invalidation, blocks stale computations
+and exports, and makes external sample time exact/read-only. It does not
+rediscretize b/a or silently fall back to an internal controller. Saved controller
+snapshots have explicit independent source/capture/coefficient identity; malformed
+metadata is rejected atomically and legacy sessions remain supported. A snapshot
+ignores unrelated live edits until explicitly reconnected. Switching to the internal
+controller restores its previous period. Independent replay passes six actual GUI,
+late-worker, same/fresh-host save/reopen, legacy snapshot, reconnect and C99 probes.
+The fresh host test restores 31.125 µs after leaving a 25 µs snapshot, rather than
+keeping its default 20 µs. The owner regression passes 533 related tests; UTF-8
+file operations are explicit in the new tests. This is focused candidate acceptance;
+complete merged-source, installed-wheel and frozen/native qualification are pending.
 
 ### Completed worker-repair baseline; later drawing changes remain separate
 

@@ -7,7 +7,7 @@ acceptance missed actual drawing defects: a shorting LLC body-diode stroke,
 selection backgrounds covering PSD terminals, incorrect inherited V/I reference
 text, distorted SVG/click transforms, dynamic labels crossing symbols, control
 routes crossing unrelated blocks, and all-wire Type II/III R/C drawings. These
-are real consumer defects and are being repaired and independently replayed.
+were real consumer defects; the fixed candidates now pass independent replay.
 A topology marked implemented did not establish that every rendered symbol was
 correct. The new acceptance includes actual images, terminal/polarity review,
 selection, project restoration and reports.
@@ -19,8 +19,9 @@ GUI ownership categories at exit. Later drawing changes are not covered by that
 result. All fixed drawing/control/Type II/III/reference candidates now pass independent
 actual-consumer review. The merged drawing source preserves reviewed file bytes
 and passes separate 59-test control/window and 45-test complete-reference runs.
-New uncommitted-input and external-H(z) period/consumer-identity defects are being
-repaired in the next bounded batch. Final aggregate regression, current
+The subsequent pending-input and external-H(z) period/live-source/snapshot defects
+also have fixed candidates with independent real-action consumer acceptance.
+Restored physical-parameter precision is kept until that field is explicitly edited. Final aggregate regression, current
 installed/frozen checks and native platform qualification remain separate gates. Formal publication remains paused.
 
 ## Current qualification boundary (2026-10-19)
