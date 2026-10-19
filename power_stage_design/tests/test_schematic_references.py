@@ -190,3 +190,25 @@ def test_dynamic_psfb_final_result_and_consumers_keep_terminal_references(tmp_pa
         wave = result.waveforms[key]
         assert wave.current_a.reference in html and wave.voltage_v.reference in html
     window.close()
+
+
+def test_static_qr_output_capacitor_reference_reaches_real_gui_and_html(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt = pytest.importorskip("PySide6.QtWidgets")
+    from power_stage_design.gui import PowerStageMainWindow
+    from power_stage_design.report import write_report
+    result = calculate_stage(_inputs("T11"))
+    reference = "OUT to ISO (into Cout positive plate)"
+    assert result.waveforms["Cout"].current_a.reference == reference
+    np.testing.assert_allclose(_samples(result, "Cout", "current_a"),
+                               _samples(result, "D1", "current_a")-result.inputs.iout_a, atol=2e-12)
+    app = qt.QApplication.instance() or qt.QApplication([])
+    window = PowerStageMainWindow()
+    window._apply_stage_result(result)
+    window.component_combo.setCurrentIndex(window.component_combo.findData("Cout"))
+    app.processEvents()
+    assert reference in window.reference_label.text()
+    report = tmp_path/"qr.html"
+    write_report(result, report)
+    assert reference in report.read_text(encoding="utf-8")
+    window.close()

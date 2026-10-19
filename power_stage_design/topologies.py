@@ -940,7 +940,7 @@ def _quasi_resonant_flyback(inputs: DesignInputs, cancelled=None) -> StageResult
     vq=wave(((0,),(vin,),(vin+vr,),(vin,)),(zero,(-vin,peak*impedance,charge_angle),zero,(vr,0,phi)),"V","drain to source")
     vp=vq.affine(scale=-1,offset=vin,reference="primary dot minus undotted terminal")
     vd=vp.affine(scale=1/n,offset=vo,reference="diode cathode to anode")
-    cap=diode.affine(offset=-inputs.iout_a)
+    cap=diode.affine(offset=-inputs.iout_a,reference="OUT to ISO (into Cout positive plate)")
     devices={
         "Q1":DeviceWaveforms("QR main switch",switch,vq),
         "D1":DeviceWaveforms("Secondary rectifier",diode,vd),
