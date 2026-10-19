@@ -117,6 +117,24 @@ def test_settle_rejects_never_complete_work_at_original_deadline(pending_kind):
         window._loop_timer.stop()
 
 
+def test_settle_propagates_deleted_timer_error_to_caller():
+    from shiboken6 import isValid
+
+    app = QApplication.instance() or QApplication([])
+    window = SimpleNamespace(_jobs={}, _timer=QTimer(), _loop_timer=QTimer())
+    window._timer.start(1000)
+    QTimer.singleShot(0, window._timer.deleteLater)
+    try:
+        with pytest.raises(RuntimeError, match="already deleted"):
+            settle(window, seconds=.05)
+        assert not isValid(window._timer)
+        app.processEvents()
+    finally:
+        if isValid(window._timer):
+            window._timer.stop()
+        window._loop_timer.stop()
+
+
 def test_recalculate_commits_pending_keyboard_input(desktop):
     box = desktop.input_widgets["vin_v"]
     edit(box, "24")
@@ -174,7 +192,6 @@ def test_real_file_dialog_chooser_activates_first_window(tmp_path):
     script = """
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QFileDialog
 from power_stage_design.tests.test_pending_input_actions import choose_file
