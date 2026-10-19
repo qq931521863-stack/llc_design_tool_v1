@@ -666,6 +666,108 @@ def _exercise_magnetic_catalog(host, directory, app):
                          "engineering_cautions": replay["engineering_cautions"]}}
 
 
+def _exercise_integrated_comparison(host, app, spec_identity):
+    """Real default-resolution HB and cooperative stop paths; no solver mocks."""
+    from time import monotonic
+
+    import numpy as np
+    from PySide6.QtCore import QTimer
+
+    from llc_design.analysis import execution
+    from llc_design.analysis.types import FidelityLevel
+    from llc_design.core.config import waveform_spec_identity
+
+    origin = Path(execution.__file__).resolve()
+    if getattr(sys, "frozen", False):
+        _require(origin.is_relative_to(Path(sys._MEIPASS).resolve()),
+                 "comparison execution controls were imported outside the frozen bundle")
+    view = host.model_comparison_view
+    host.tabs.setCurrentWidget(view)
+    _require(view.max_harmonic.value() == 7 and view.hb_samples.value() == 1024
+             and view.execution_budget_s.value() == 300., "comparison defaults were weakened")
+    view.include_td.setChecked(False)
+    view.apply_td_losses.setChecked(False)
+    app.processEvents()
+    options = view.options()
+    _require(options["vbus_v"] == 400. and options["load_fraction"] == 1., "comparison work point changed")
+    started = monotonic()
+    view.run_button.click()
+    _require(bool(host._active_workers) and view.cancel_button.isEnabled(), "comparison did not start a real worker")
+    control = host._comparison_control
+    _wait_for_worker(lambda: not host._active_workers and host.thread_pool.activeThreadCount() == 0, seconds=60)
+    elapsed = monotonic()-started
+    result = host.multi_fidelity_analysis
+    _require(result is not None and view.analysis is result and control.outcome is None
+             and host._comparison_control is None and host._results_current,
+             "default comparison did not publish its complete current result")
+    _require(set(result.results) == {FidelityLevel.FHA, FidelityLevel.HARMONIC_BALANCE}
+             and result.reference_level == FidelityLevel.HARMONIC_BALANCE
+             and waveform_spec_identity(result.request.spec) == spec_identity
+             and result.request.samples_per_cycle == 1024 and result.request.waveform_cycles == 2,
+             "comparison used a different spec, reduced resolution or unexpected TD")
+    hb = result.result(FidelityLevel.HARMONIC_BALANCE)
+    _require(hb.convergence.converged and hb.convergence.residual_norm <= 2e-6
+             and hb.harmonic_orders == (1, 3, 5, 7), "default HB did not converge at its requested resolution")
+    metrics = hb.metrics.as_dict()
+    np.testing.assert_allclose([metrics["switching_frequency_hz"], metrics["output_voltage_v"],
+        metrics["resonant_current_rms_a"]], [113123.35618195974, 53., 8.570744923304485], rtol=1e-6, atol=1e-8)
+    digest = hashlib.sha256(np.asarray(hb.waveform.time_s, dtype="<f8").tobytes())
+    _require(len(hb.waveform.time_s) == 2048, "HB output was downsampled")
+    for key, signal in sorted(hb.waveform.signals.items()):
+        _require(np.isfinite(signal.values).all(), "HB produced a nonfinite waveform")
+        digest.update(key.encode()); digest.update(np.asarray(signal.values, dtype="<f8").tobytes())
+    rms = float(np.sqrt(np.mean(hb.waveform.signals["i_resonant"].values**2)))
+    np.testing.assert_allclose(rms, metrics["resonant_current_rms_a"], rtol=1e-12, atol=1e-12)
+    _require(view.table.rowCount() == 2 and view.table.item(1, 0).text() == "harmonic_balance"
+             and view.table.item(1, 4).text() == f"{metrics['switching_frequency_hz']/1e3:.6f}"
+             and view.table.item(1, 5).text() == f"{metrics['output_voltage_v']:.6f}",
+             "comparison table differs from actual HB numbers")
+    success = {"converged": True, "reference": result.reference_level.value,
+        "models": sorted(level.value for level in result.results), "spec_identity": spec_identity,
+        "harmonic_orders": list(hb.harmonic_orders), "samples": len(hb.waveform.time_s),
+        "residual_norm": float(hb.convergence.residual_norm),
+        "exact_sign_residual_norm": float(hb.waveform.metadata["exact_sign_residual_norm"]),
+        "switching_frequency_hz": metrics["switching_frequency_hz"], "output_voltage_v": metrics["output_voltage_v"],
+        "resonant_current_rms_a": rms, "waveform_sha256": digest.hexdigest(),
+        "gui_table_matches": True, "active_workers": len(host._active_workers), "active_threads": host.thread_pool.activeThreadCount(), "elapsed_s": elapsed}
+    stopped = {}
+    for name, budget, expected, wording in (("cancel", 300., "cancelled", "已取消"),
+                                             ("timeout", .1, "timed_out", "计算超时")):
+        view.execution_budget_s.setValue(budget)
+        started = monotonic()
+        view.run_button.click()
+        control = host._comparison_control
+        _require(control is not None and bool(host._active_workers) and view.cancel_button.isEnabled(),
+                 "comparison stop test did not start a real worker")
+        timer = QTimer(host)
+        timer.setSingleShot(True)
+        if name == "cancel":
+            timer.timeout.connect(view.cancel_button.click)
+            timer.start(100)
+        try:
+            _wait_for_worker(lambda: not host._active_workers and host.thread_pool.activeThreadCount() == 0, seconds=20)
+        finally:
+            timer.stop(); timer.deleteLater()
+        elapsed = monotonic()-started
+        message = view.details.toPlainText()
+        _require(control.outcome == expected and wording in message and wording in host.statusBar().currentMessage()
+                 and host._comparison_control is None and host.multi_fidelity_analysis is None
+                 and view.analysis is None and view.table.rowCount() == 0 and not host._results_current
+                 and host._accepted_model_options is None and view.run_button.isEnabled()
+                 and not view.cancel_button.isEnabled() and not view.loss_report_button.isEnabled(),
+                 "comparison stop published stale/partial results or retained worker authority")
+        host._export_td_loss_report()
+        _require(not host._active_workers, "stopped comparison still authorized a report job")
+        _require(view.max_harmonic.value() == 7 and view.hb_samples.value() == 1024,
+                 "comparison stop silently reduced numerical resolution")
+        stopped[name] = {"outcome": control.outcome, "budget_s": control.budget_s,
+            "elapsed_s": elapsed, "active_workers": len(host._active_workers),
+            "active_threads": host.thread_pool.activeThreadCount(), "control_released": True,
+            "no_partial_result": True, "rows": view.table.rowCount(), "run_enabled": view.run_button.isEnabled(),
+            "report_disabled": not view.loss_report_button.isEnabled(), "status_visible": True}
+    return {"execution_module": str(origin), "options": options, "success": success, **stopped}
+
+
 def _exercise_integrated_magnetics(host, directory, app):
     """Exercise real matrix/geometry, FHA GUI, save/restore and report consumers.
 
@@ -794,7 +896,7 @@ def _exercise_integrated_magnetics(host, directory, app):
         _require(row["external_resonant_inductor_present"] is False
                  and row["resonant_inductor_core_w"] == row["resonant_inductor_copper_w"] == 0,
                  "integrated report contains separate Lr losses")
-    return {"scope": "Synthetic characterization; FHA GUI/report QA, not hardware or full-envelope qualification",
+    evidence = {"scope": "Synthetic characterization; FHA GUI/report QA, not hardware or full-envelope qualification",
         "modules": modules, "golden": golden_values,
         "geometry_counterexample": {"reachable": counter.reachable,
             "required_interwinding_gap_m": counter.required_interwinding_gap_m,
@@ -814,6 +916,8 @@ def _exercise_integrated_magnetics(host, directory, app):
         "consumers": {"summary_spec_identity": identity, "loss_spec_identity": waveform_spec_identity(host.loss_summary_view._analysis.spec),
                       "report_spec_identity": hashlib.sha256(json.dumps(exported["spec"], sort_keys=True, allow_nan=False).encode()).hexdigest()},
         "report_consistency": True}
+    evidence["comparison_execution"] = _exercise_integrated_comparison(host, app, identity)
+    return evidence
 
 
 def _run_packaged_self_test() -> int:

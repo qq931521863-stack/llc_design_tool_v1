@@ -390,6 +390,45 @@ def _validate_magnetic_report(report, expected_magnetic_sha256=None):
         raise RuntimeError(f"packaged self-test report has invalid magnetic evidence: {exc}") from exc
 
 
+def _validate_integrated_comparison(case, identity):
+    """Require genuine default-resolution completion and both bounded stop paths."""
+    if not isinstance(case["execution_module"], str) or not case["execution_module"]:
+        raise ValueError("Comparison execution module origin is missing")
+    options = case["options"]
+    expected = {"vbus_v": 400., "load_fraction": 1., "max_harmonic": 7, "hb_samples": 1024,
+                "include_time_domain": False, "apply_td_losses": False, "execution_budget_s": 300.}
+    if (not isinstance(options, dict) or set(options) != set(expected)
+            or any(type(options[k]) is not type(v) or options[k] != v for k, v in expected.items())):
+        raise ValueError("Comparison default resolution, work point or no-TD scope changed")
+    success = case["success"]
+    if (success["converged"] is not True or success["reference"] != "harmonic_balance"
+            or success["models"] != ["fha", "harmonic_balance"] or success["spec_identity"] != identity
+            or success["harmonic_orders"] != [1, 3, 5, 7]
+            or not all(type(x) is int for x in success["harmonic_orders"])
+            or type(success["samples"]) is not int or success["samples"] != 2048
+            or success["gui_table_matches"] is not True or not _hex_digest(success["waveform_sha256"])
+            or any(type(success[key]) is not int or success[key] != 0 for key in ("active_workers", "active_threads"))
+            or not _finite_number(success["elapsed_s"]) or not 0 < success["elapsed_s"] <= 60):
+        raise ValueError("Comparison did not publish a complete default-resolution GUI result")
+    for key in ("residual_norm", "exact_sign_residual_norm"):
+        if not _finite_number(success[key]) or not 0 <= success[key] <= 2e-6:
+            raise ValueError("Comparison HB convergence tolerance was not met")
+    # Fixed default-model numerical regression; not a hardware golden.
+    for key, expected_value in (("switching_frequency_hz", 113123.35618195974),
+                               ("output_voltage_v", 53.), ("resonant_current_rms_a", 8.570744923304485)):
+        if (not _finite_number(success[key])
+                or not math.isclose(success[key], expected_value, rel_tol=1e-6, abs_tol=1e-8)):
+            raise ValueError("Comparison actual HB numbers differ from the fixed model regression")
+    for name, outcome, budget in (("cancel", "cancelled", 300.), ("timeout", "timed_out", .1)):
+        stopped = case[name]
+        if (stopped["outcome"] != outcome or not _finite_number(stopped["budget_s"]) or stopped["budget_s"] != budget
+                or not _finite_number(stopped["elapsed_s"]) or not 0 < stopped["elapsed_s"] <= 20
+                or any(type(stopped[key]) is not int or stopped[key] != 0 for key in ("active_workers", "active_threads", "rows"))
+                or any(stopped[key] is not True for key in ("control_released", "no_partial_result",
+                    "run_enabled", "report_disabled", "status_visible"))):
+            raise ValueError("Comparison cancellation/timeout retained partial results or worker authority")
+
+
 def _validate_integrated_report(report):
     """Schema 4 adds mandatory integrated evidence; schema 3 is obsolete.
 
@@ -492,6 +531,7 @@ def _validate_integrated_report(report):
                 or not all(isinstance(x, str) for x in case["warnings"])
                 or not any("not hardware qualification" in x for x in case["warnings"])):
             raise ValueError("FHA solve coverage or caveats were misrepresented")
+        _validate_integrated_comparison(case["comparison_execution"], identity)
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise RuntimeError(f"packaged self-test report has invalid integrated magnetic evidence: {exc}") from exc
 

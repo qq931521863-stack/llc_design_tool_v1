@@ -135,6 +135,23 @@ def _magnetic_proof():
             "Lpfc_min_uH": 197.955, "engineering_cautions": ["Schema-only fixture: 不作为真实求解器正确性基准"]}}
 
 
+def _comparison_proof(identity):
+    """Schema-only stand-in, not real solver/cancellation evidence."""
+    stopped = {"elapsed_s": .2, "active_workers": 0, "active_threads": 0, "control_released": True,
+        "no_partial_result": True, "rows": 0, "run_enabled": True, "report_disabled": True, "status_visible": True}
+    return {"execution_module": "/schema-only/analysis/execution.py",
+        "options": {"vbus_v": 400., "load_fraction": 1., "max_harmonic": 7, "hb_samples": 1024,
+            "include_time_domain": False, "apply_td_losses": False, "execution_budget_s": 300.},
+        "success": {"converged": True, "reference": "harmonic_balance", "models": ["fha", "harmonic_balance"],
+            "spec_identity": identity, "harmonic_orders": [1, 3, 5, 7], "samples": 2048,
+            "residual_norm": 1e-12, "exact_sign_residual_norm": 1e-12,
+            "switching_frequency_hz": 113123.35618195974, "output_voltage_v": 53.,
+            "resonant_current_rms_a": 8.570744923304485, "waveform_sha256": "4"*64,
+            "gui_table_matches": True, "active_workers": 0, "active_threads": 0, "elapsed_s": 3.},
+        "cancel": {**stopped, "outcome": "cancelled", "budget_s": 300.},
+        "timeout": {**stopped, "outcome": "timed_out", "budget_s": .1}}
+
+
 def _integrated_proof():
     """Synthetic schema-only data; no solver/GUI/artifact acceptance is implied."""
     import hashlib
@@ -159,6 +176,7 @@ def _integrated_proof():
             "inductance_h": 4*math.pi*1e-7*mlt*thickness/.032*(start**2+start*end+end**2)/3})
     return {"fixture": "schema-only; never physical or executable qualification",
         "scope": "Synthetic characterization; FHA GUI/report QA, not hardware or full-envelope qualification",
+        "comparison_execution": _comparison_proof(identity),
         "modules": {"llc_design.core.integrated_magnetics": "/schema-only/core/integrated_magnetics.py",
                     "llc_design.magnetics.leakage_geometry": "/schema-only/magnetics/leakage_geometry.py"},
         "golden": {"lr_h": 36e-6, "lm_h": 64e-6, "effective_turns_ratio": 1.6, "physical_magnetizing_h": 80e-6,

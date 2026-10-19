@@ -108,3 +108,44 @@ def test_integrated_proof_cannot_replace_previous_gates(previous_gate):
     del proof[previous_gate]
     with pytest.raises(RuntimeError):
         _validate(proof)
+
+
+@pytest.mark.parametrize("path,value", [
+    (("comparison_execution",), None), (("execution_module",), ""),
+    (("options", "max_harmonic"), 3), (("options", "hb_samples"), 256),
+    (("options", "include_time_domain"), True), (("options", "execution_budget_s"), .1),
+    (("success", "converged"), False), (("success", "reference"), "fha"),
+    (("success", "spec_identity"), "0"*64), (("success", "models"), ["fha"]),
+    (("success", "harmonic_orders"), [1, 3, 5]), (("success", "samples"), 512),
+    (("success", "gui_table_matches"), False), (("success", "waveform_sha256"), "none"),
+    (("success", "active_threads"), 1), (("cancel", "active_threads"), True),
+    (("timeout", "active_threads"), 1), (("success", "active_workers"), True), (("success", "elapsed_s"), float("inf")),
+    (("success", "residual_norm"), 3e-6), (("success", "exact_sign_residual_norm"), float("nan")),
+    (("success", "switching_frequency_hz"), 127759.), (("success", "output_voltage_v"), 54.),
+    (("success", "resonant_current_rms_a"), True),
+    (("cancel", "outcome"), "completed"), (("cancel", "budget_s"), .1),
+    (("cancel", "no_partial_result"), False), (("cancel", "active_workers"), 1),
+    (("cancel", "control_released"), False), (("cancel", "run_enabled"), False),
+    (("cancel", "report_disabled"), False), (("cancel", "status_visible"), False),
+    (("timeout", "outcome"), "cancelled"), (("timeout", "budget_s"), 300.),
+    (("timeout", "rows"), 1), (("timeout", "no_partial_result"), False),
+    (("timeout", "elapsed_s"), float("nan")), (("timeout", "active_workers"), False),
+])
+def test_comparison_execution_contract_rejects_incomplete_or_weakened_evidence(path, value):
+    proof = _proof()
+    target = proof["integrated_magnetics"]
+    if path[0] != "comparison_execution":
+        target = target["comparison_execution"]
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    with pytest.raises(RuntimeError, match="integrated magnetic"):
+        _validate(proof)
+
+
+@pytest.mark.parametrize("section", ["options", "success", "cancel", "timeout", "execution_module"])
+def test_comparison_execution_requires_every_outcome(section):
+    proof = _proof()
+    del proof["integrated_magnetics"]["comparison_execution"][section]
+    with pytest.raises(RuntimeError, match="integrated magnetic"):
+        _validate(proof)
