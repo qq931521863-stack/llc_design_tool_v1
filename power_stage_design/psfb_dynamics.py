@@ -474,13 +474,13 @@ def _make_result(circuit, initial, terminal, duty, mean, parts, shooting_error):
     for k in range(1,5):
         for prefix in ("Dbody", "Coss"):
             key=f"{prefix}{k}"
-            devices[key]=replace(devices[key],voltage_v=devices[f"Q{k}"].voltage_v)
+            devices[key]=replace(devices[key],voltage_v=replace(devices[f"Q{k}"].voltage_v, reference=devices[key].voltage_v.reference))
     for key in ("primary", "Cprimary"):
-        devices[key]=replace(devices[key],voltage_v=devices["Lm"].voltage_v)
+        devices[key]=replace(devices[key],voltage_v=replace(devices["Lm"].voltage_v, reference=devices[key].voltage_v.reference))
     for key, other in (("node_A","Q2"),("node_B","Q4")):
-        devices[key]=replace(devices[key],voltage_v=devices[other].voltage_v)
+        devices[key]=replace(devices[key],voltage_v=replace(devices[other].voltage_v, reference=devices[key].voltage_v.reference))
     for k in (1,2):
-        devices[f"secondary{k}"]=replace(devices[f"secondary{k}"],current_a=devices[f"D{k}"].current_a)
+        devices[f"secondary{k}"]=replace(devices[f"secondary{k}"],current_a=replace(devices[f"D{k}"].current_a, reference=devices[f"secondary{k}"].current_a.reference))
     source = waves[("source", "i")]
     output = devices["L1"].current_a
     actual_mean = math.fsum(segment.integral() for segment in output.segments)

@@ -44,9 +44,21 @@ def test_low_lm_light_load_keeps_its_explicit_unsupported_commutation_rejection(
 
 
 @pytest.mark.parametrize("topology,light", [(f"T{i:02}", False) for i in range(9, 19)] +
-                         [(f"T{i:02}", True) for i in range(15, 19)])
+                         [(f"T{i:02}", True) for i in range(15, 19)] +
+                         [(f"T{i:02}", "dcm") for i in range(15, 19)])
 def test_named_winding_ports_agree_with_switch_and_rectifier_node_voltages(topology, light):
-    result = calculate_stage(_inputs(topology, light))
+    if light == "dcm":
+        inputs = (replace(_inputs(topology), iout_a=.1) if topology == "T18" else
+                  replace(_inputs(topology), iout_a=.001 if topology == "T15" else .005,
+                          magnetizing_inductance_h=.1, diode_drop_v=.7))
+    else:
+        inputs = _inputs(topology, light)
+    result = calculate_stage(inputs)
+    if light == "dcm" or (light and topology == "T18"):
+        assert result.mode == "DCM"
+    elif topology in ("T15", "T16", "T17", "T18"):
+        # The original .03 A / 10 mH light-load fixture is still CCM.
+        assert result.mode == "CCM"
     voltage = lambda key: _samples(result, key, "voltage_v")
     current = lambda key: _samples(result, key, "current_a")
     vin, vo = result.inputs.vin_v, result.inputs.vout_v
@@ -89,7 +101,8 @@ def test_named_winding_ports_agree_with_switch_and_rectifier_node_voltages(topol
         np.testing.assert_allclose(current("Cout"), current("L1")-result.inputs.iout_a, atol=2e-12)
 
 
-def test_real_gui_restore_and_html_preserve_winding_directions(tmp_path):
+@pytest.mark.parametrize("mode", ["CCM", "DCM"])
+def test_real_gui_restore_and_html_preserve_winding_directions(tmp_path, mode):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     qt = pytest.importorskip("PySide6.QtWidgets")
     from PySide6.QtCore import QPoint, Qt
@@ -99,7 +112,10 @@ def test_real_gui_restore_and_html_preserve_winding_directions(tmp_path):
     from power_stage_design.report import write_waveform_csv
     app = qt.QApplication.instance() or qt.QApplication([])
     window = PowerStageMainWindow()
-    window.set_inputs(_inputs("T16"))
+    inputs = (_inputs("T16") if mode == "CCM" else
+              replace(_inputs("T16"), iout_a=.005, magnetizing_inductance_h=.1, diode_drop_v=.7))
+    window.set_inputs(inputs)
+    assert window.result.mode == mode
     window.show()
     app.processEvents()
     original = window.result
@@ -126,7 +142,7 @@ def test_real_gui_restore_and_html_preserve_winding_directions(tmp_path):
         directory = os.environ.get("PSD_SCHEMATIC_EVIDENCE_DIR")
         if directory:
             from pathlib import Path
-            assert window.grab().save(str(Path(directory)/f"T16-actual-window-{width}x{height}.png"))
+            assert window.grab().save(str(Path(directory)/f"T16-{mode}-actual-window-{width}x{height}.png"))
     report = tmp_path/"report.html"
     window.report_to(report)
     text = report.read_text(encoding="utf-8")
@@ -134,4 +150,43 @@ def test_real_gui_restore_and_html_preserve_winding_directions(tmp_path):
         wave = window.result.waveforms[key]
         assert wave.current_a.reference in text and wave.voltage_v.reference in text
     assert "VIN minus P2 (center tap minus dotted lower outer terminal)" in text
+    window.close()
+
+
+def test_dynamic_psfb_final_result_and_consumers_keep_terminal_references(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt = pytest.importorskip("PySide6.QtWidgets")
+    from power_stage_design.psfb_dynamics import PSFBOptions
+    from power_stage_design.gui import PowerStageMainWindow
+    from power_stage_design.report import write_report
+    inputs = replace(_inputs("T18"), dead_time_s=200e-9, psfb_options=PSFBOptions(
+        300e-12, .15, .8, .05, 100e-12, 1e-9, .02, "Explicit circuit test constants"))
+    result = calculate_stage(inputs)
+    assert result.mode == "CCM"
+    assert result.waveforms["primary"].voltage_v.reference == "P minus B"
+    for number in (1, 2):
+        winding = result.waveforms[f"secondary{number}"]
+        assert winding.current_a.reference.startswith(f"ISO to S{number}")
+        assert winding.voltage_v.reference == f"S{number} minus ISO"
+        assert winding.current_a.segments is result.waveforms[f"D{number}"].current_a.segments
+    assert result.waveforms["primary"].voltage_v.segments is result.waveforms["Lm"].voltage_v.segments
+    for node in ("A", "B"):
+        assert result.waveforms[f"node_{node}"].voltage_v.reference == f"node {node} to DC return"
+    app = qt.QApplication.instance() or qt.QApplication([])
+    window = PowerStageMainWindow()
+    window._apply_stage_result(result)
+    window.show()
+    app.processEvents()
+    for key in ("primary", "secondary1", "secondary2", "node_A", "node_B"):
+        window.component_combo.setCurrentIndex(window.component_combo.findData(key))
+        app.processEvents()
+        wave = result.waveforms[key]
+        assert wave.current_a.reference in window.reference_label.text()
+        assert wave.voltage_v.reference in window.reference_label.text()
+    report = tmp_path/"dynamic.html"
+    write_report(result, report)
+    html = report.read_text(encoding="utf-8")
+    for key in ("primary", "secondary1", "secondary2", "node_A", "node_B"):
+        wave = result.waveforms[key]
+        assert wave.current_a.reference in html and wave.voltage_v.reference in html
     window.close()
