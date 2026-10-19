@@ -1,5 +1,55 @@
 # Power Stage Designer validation report
 
+## Native preflight portability repairs (2026-10-19)
+
+[CI run 39306491194](https://github.com/yangshuai2022-star/power-design-toolkit/actions/runs/39306491194)
+on `deb0b85` completed Linux successfully: **4514 passed, 1 skipped and 2 expected
+failures**, 6859.62 s, followed by the actual launcher screenshot. The corrected
+first-file-dialog test passed in the complete order. Native preflights then failed:
+macOS **1 failed / 188 passed / 1 skipped**; Windows **1 failed / 198 passed / 1
+skipped**. Neither native full suite nor freezing ran; publication stayed skipped.
+Those failed results are preserved rather than replaced by Linux evidence.
+
+The macOS failure was a nonportable self-test condition, not evidence by itself
+that the magnetic values were wrong. [Qt 6.11.2's QMessageBox implementation](https://github.com/qt/qtbase/blob/v6.11.2/src/widgets/dialogs/qmessagebox.cpp)
+ignores `setWindowTitle` on macOS; the old gate required the exact title. Two
+independent actual PFC Calculate/Apply probes reproduce the old failure with the
+title cleared while L=209.48 µH and DCR=48.817 mΩ remain correct. The repaired gate
+checks each real applied value separately, the exact success body and Information
+icon, and reports all observed operands on failure. Initial L/DCR deliberately
+differ from the expected result, so a no-op Apply cannot pass. Six focused owner
+cases and **49 related checks including the original complete source-launcher
+self-test** pass. Independent eight-case acceptance rejects wrong L, DCR, text,
+icon and an acknowledgement without an actual write, while normal/empty/generic
+titles pass real save/reopen/report. The added acknowledgement field is diagnostic
+telemetry; the offline validator still verifies its existing numeric/source gates
+and does not separately certify that new telemetry field.
+
+Windows' 1280×720 subprocess returned `0xC0000409` without captured output. Qt
+splits platform options at colons, so an absolute Windows drive path in
+`offscreen:configfile=C:...` is truncated before loading. Independent pure-Qt
+reproductions with an existing colon-bearing path abort at QApplication creation;
+the same JSON works with `configfile=screen.json` and its containing directory as
+cwd. Qt's Windows fatal path uses fast-fail, consistent with the observed code.
+The test now uses that portable relative configuration, explicit UTF-8 diagnostics,
+unbuffered stage messages, faulthandler and Qt stderr logging. All original real
+three-screen navigation, scroll, worker, plot, export, source and cleanup assertions
+remain. Six pure-Qt path/screen regressions plus the three complete desktop flows
+pass locally; an independent fresh run of the exact final nine cases passes in
+183.70 s. The independent 17-case matrix also rejects wrong cwd, malformed JSON
+and an unintended default screen. An AST comparison confirms all 50 original
+workflow assertions remain, with only the explicit DPR=1 condition added. Original native logs lacked the inner diagnostic
+state, so the corrected native runs remain the decisive platform checks.
+
+These changes affect self-test/fixtures, not converter algorithms or production
+Apply behavior. The previously documented 6138f0f full/long application evidence
+remains attributed to that exact source; the modified production-launcher self-test
+requires refreshed installed/frozen execution. Linux and both native jobs now start
+in parallel, with the same preflight, complete tests and frozen verification. Both
+publication jobs retain `needs: [test, build]` and literal-false pause conditions;
+**66 workflow/strict-validator contract checks pass**. There are still only the
+existing two native runners, no new paid service, no removed gate and no release.
+
 ## Completed Linux application qualification and retained CI red (2026-10-19)
 
 Clean local source `6138f0fd36f07539f78ed208ca4cdee5ce2f136d` has the identical

@@ -1,5 +1,24 @@
 # Power Stage Designer development status
 
+## Current native repair checkpoint (2026-10-19)
+
+The `deb0b85` CI Linux job passes 4514 tests (one skipped, two expected failures),
+but native preflights exposed two separate test-portability defects. macOS ignores
+QMessageBox titles; its magnetic Apply gate now validates the real values and
+success message instead. Windows drive colons were parsed as QPA option separators;
+the real-screen fixture now uses a basename with the configuration directory as
+cwd. Both have independent actual Qt red-to-green evidence and retained negative
+cases. The full source-launcher/related magnetic selection passes 49 tests; all
+three complete desktop sizes and six pure-Qt path/screen checks pass locally.
+
+No converter or production Apply implementation changed. The full/long application
+results remain tied to 6138f0f; refreshed wheel/Linux frozen checks are required for
+the changed launcher self-test. Native Windows/macOS completion is still pending.
+Linux/native CI now runs concurrently to expose platform failures sooner, retaining
+all gates and final publication dependencies. The pause conditions remain literal
+false; no tag or release is being created. See the validation report for retained
+failed-run counts, independent scope and exact source attribution.
+
 ## Latest completed local qualification (2026-10-19)
 
 Source `6138f0fd36f07539f78ed208ca4cdee5ce2f136d`, identical tree to main

@@ -1,5 +1,18 @@
 # Power Stage Designer feature matrix
 
+## Native qualification status (2026-10-19)
+
+The latest completed Linux CI on `deb0b85` passes 4514 tests, one skipped and two
+expected failures. Its native preflight failures are retained separately: an
+unsupported macOS message-title expectation and a Windows drive-colon QPA fixture
+path. The corrected self-test uses actual Apply values/message semantics; the
+corrected desktop fixture retains real three-screen geometry and complete user
+flows. Independent red-to-green Qt evidence supports both repairs, but native
+full/frozen results remain pending. These fixture/gate repairs do not change the
+physical-model coverage below. The refreshed launcher artifact checks are separate
+from the already completed 6138f0f application qualification. Parallel CI retains
+all full-test/frozen gates and paused final publication dependencies.
+
 ## Latest software qualification boundary (2026-10-19)
 
 The bounded capabilities below now have completed local qualification on clean
