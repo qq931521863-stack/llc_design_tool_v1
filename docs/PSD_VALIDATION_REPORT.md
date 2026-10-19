@@ -207,3 +207,41 @@ proof checks with frozen=true and exit0. This is Linux/Python3.12 only. No new
 Windows/macOS run or remote publication occurred; publication is now paused while
 remaining implementation work continues. A new full source freeze/regression is
 required after those changes.
+
+## Resumed baseline-consumer audit and corrections (2026-10-19)
+
+An independent production-caller audit found three gaps hidden by the earlier
+broad acceptance labels: missing two-stage LLC desktop/CLI consumption, incomplete
+C99 failure presentation/artifact safety in LLC and Control Tools, and calculator
+input-session model identity. These are tracked as actual implementation work,
+not attributed to the unavailable TI executable.
+
+The report-temperature counterexample used one Buck point and a selected MOSFET:
+at 125°C the corner conduction loss was 0.2506405527 W while the nominal report
+silently used 100°C and 0.2303183457 W. Nine new tests failed before the fix.
+The repaired nominal/all-component/snapshot path uses the corner temperature or
+an explicit matching temperature; conflicting temperatures reject before writing.
+37 affected tests pass. An independent reviewer reran the nine tests and live
+−40/75/125/175°C probes; all passed. Missing total losses remain UNKNOWN.
+
+The exact integrator-branch action has 10 new tests plus 50 existing loop tests
+passing. Independent two-unknown feedback-node KCL is solved across frequency for
+C01/C04/C05, including finite amplifier and the C05 direct path. A source-tip
+counterexample shows the equal-R/equal-C setting's gain changing from 1× to 2×
+relative to a low-frequency-matched integrator. Real Qt buttons, invalidation,
+save/reopen/recompute and HTML source warnings are exercised.
+
+Toolbox normal results now use Chinese labels/units/unknown terms with optional
+raw details. Schema-2 input files use atomic writes and explicit model/toolkit
+identity. Duplicate keys, nonfinite values, incompatible revisions, versionless
+legacy files, oversized content and provenance mismatch reject without mutating
+current state. The combined existing/new toolbox/modal/lifecycle run passed
+264 tests in 74.09 s. Real Linux offscreen screenshots were inspected; measured
+warm-widget p95 over 30 runs was X01 4.68 ms, X02 0.82 ms, X04 1.15 ms,
+X10 0.94 ms and X12 34.64 ms. These focused runs do not replace a new full-suite gate.
+
+New T05 finite-Coss/Ron and QR valley/charge extensions have production dispatch
+and explicit option identity; their desktop/schematic integration and separate
+physical review are still in progress. No full integration acceptance is inferred
+from the author's 32 T05 / 37 QR kernel tests alone. T18 commutation remains in
+implementation. Publication, tag creation and remote writes remain paused.

@@ -9,7 +9,10 @@ minimum deliverables, rather than treating bounded row labels as completion.
 Work is continuing on explicit T05 floating-node dynamics, QR valley/data options
 and PSFB finite-Coss commutation; these extensions are not yet accepted or enabled.
 Concrete audit findings include calculator-session model identity, everyday Chinese
-result presentation and the precise documented Type-I network setup.
+result presentation and the precise documented Type-I network setup. A03 is now
+PARTIAL: TwoStageLLCOptimizer has model/tests but no production desktop/CLI/API
+caller. Its asynchronous candidate/application/report workflow is being added.
+A report/corner junction-temperature identity mismatch has an independent red test.
 
 ## 9.9.0 integration
 
@@ -76,3 +79,23 @@ both fresh frozen-process proof JSON files and SHA256SUMS before publication.
 Large raw simulation records and iterative debug archives are not bundled into
 the public application assets; maintained tests and these engineering boundaries
 remain in the source tree.
+
+## Active completion checkpoint (2026-10-19)
+
+- Publication is paused by the user's latest instruction. No remote commit,
+  workflow dispatch, tag or release was created in this resumed pass.
+- Explicitly correct the earlier broad A03/A05 acceptance: real two-stage LLC
+  candidate consumers were absent, and LLC/Control Tools could announce successful
+  C99 generation despite actual float32 verification failure. Those are being
+  implemented and independently reviewed; source-engine tests are insufficient.
+- Completed focused repairs: same-temperature nominal/corner reports, exact
+  integrator-branch action/help, and toolbox model identity/Chinese presentation.
+  See the validation report for red/green evidence and independent checks.
+- T05 and QR optional dynamic kernels are implemented with explicit immutable
+  parameter/source/revision snapshots. Real GUI, diagrams, persistence/report,
+  invalidation and independent physical acceptance are currently being integrated.
+- T18 switched commutation prototype is being converted into the same consumer
+  contract, including separate channel/body/Coss currents and event-based ZVS.
+- After these paths stabilize: freeze sources, rerun affected modules, then full
+  regression/RSS and installed/frozen application checks. Linux evidence cannot
+  establish unrun Windows/macOS or hardware/TI executable equivalence.

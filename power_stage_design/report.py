@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from dataclasses import asdict
 from datetime import datetime, timezone
 from html import escape
@@ -33,14 +34,25 @@ def _curve_svg(t, y, title: str, unit: str, *, logx=False) -> str:
 
 
 def write_report(result, path: str | Path, *, loop_result=None, loop_settings=None,
-                 selected_device=None, device_assessment=None, corner_sweep=None, parameter_suggestion=None) -> Path:
+                 selected_device=None, device_assessment=None, corner_sweep=None, parameter_suggestion=None,
+                 junction_temperature_c: float | None = None) -> Path:
     """No cached curves or statistics are accepted independently from result."""
     from .corners import CornerLoopIdentity
     from .devices import assess_component
     from .project import _validate_device
+    if junction_temperature_c is None:
+        junction_temperature_c = corner_sweep.junction_temperature_c if corner_sweep is not None else 100.0
+    if (type(junction_temperature_c) not in (int, float)
+            or not math.isfinite(junction_temperature_c) or not -40 <= junction_temperature_c <= 175):
+        raise ValueError("Screening junction temperature must be within −40…175 °C")
+    if corner_sweep is not None and (type(corner_sweep.junction_temperature_c) not in (int, float)
+            or corner_sweep.junction_temperature_c != junction_temperature_c):
+        raise ValueError("Corner scan belongs to a different junction temperature")
     device=_validate_device(selected_device) if selected_device is not None else None
+    component_assessments = {key: assess_component(result, key, selected_main_device=device,
+        temperature_c=junction_temperature_c) for key in result.waveforms}
     if device is not None and "Q1" in result.stress:
-        fresh_assessment=assess_component(result,"Q1",selected_main_device=device)
+        fresh_assessment=component_assessments["Q1"]
         if device_assessment is not None and device_assessment!=fresh_assessment:
             raise ValueError("Device assessment belongs to different design or parameters")
         device_assessment=fresh_assessment
@@ -90,7 +102,7 @@ def write_report(result, path: str | Path, *, loop_result=None, loop_settings=No
         sections += ['<h2>所选器件（用户需核对数据手册）</h2>',_table(selected_device),_table(device_assessment or {})]
     for key, wave in result.waveforms.items():
         sections += [f'<h2>{escape(wave.label)} · {escape(key)}</h2>',_table(result.stress[key]),
-                     _table(assess_component(result,key,selected_main_device=device))]
+                     _table(component_assessments[key])]
         for signal, label in ((wave.current_a,'电流 / A'),(wave.voltage_v,'电压 / V')):
             t,y=signal.sample(count=1200,periods=2)
             sections += [_curve_svg(np.asarray(t)*1e6,y,label,'µs'), f'<p>参考方向：{escape(signal.reference)}</p>']
@@ -113,7 +125,9 @@ def write_report(result, path: str | Path, *, loop_result=None, loop_settings=No
                      '<pre>'+escape(json.dumps(asdict(corner_sweep),ensure_ascii=False,indent=2,allow_nan=False))+'</pre>']
     snapshot = {'inputs':asdict(result.inputs),'design_id':result.design_id,'model_revision':MODEL_REVISION,
                 'metrics':result.metrics,'stress':result.stress,'loop_settings':loop_settings,
-                'parameter_suggestion':parameter_suggestion}
+                'parameter_suggestion':parameter_suggestion, 'selected_device':selected_device,
+                'junction_temperature_c':junction_temperature_c, 'device_assessment':device_assessment,
+                'component_assessments':component_assessments}
     sections += ['<h2>可复现数据</h2><pre>'+escape(json.dumps(_jsonable(snapshot),ensure_ascii=False,indent=2,allow_nan=False))+'</pre>',
                  '<p>Reference: TI SLVUBB4B (2023-02). Models and declared domains are independently implemented; TI executable correlation and hardware evidence are separate.</p>']
     output=Path(path); output.parent.mkdir(parents=True,exist_ok=True)

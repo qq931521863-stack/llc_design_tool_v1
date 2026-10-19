@@ -6,6 +6,7 @@ edit, and export only the current calculator result. No formula lives in Qt.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -29,11 +30,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from llc_design import __version__
+from llc_design.control.design_session import strict_json_loads
 from llc_design.gui.workers import FunctionWorker
 from llc_design.models.devices import DeviceDatabase
 
 from .models import ModelDomainError
+from .project import write_json
 from .toolbox import (
+    MODEL_VERSION,
     UNIT_CATEGORIES,
     CalculatorResult,
     CapacitorBranch,
@@ -57,6 +62,10 @@ from .toolbox import (
     rcd_snubber,
     stage_import_values,
 )
+from .toolbox_presentation import choice_label, details_text, result_text, status_label
+
+INPUT_SCHEMA = "psd-toolbox-inputs-2"
+MAX_INPUT_BYTES = 256_000
 
 
 @dataclass(frozen=True)
@@ -138,7 +147,7 @@ def _units_run(v):
 
 # Tool definitions are UI adapters only: all computation is in toolbox.py.
 TOOLS: dict[str, tuple[str, str, list[Field], Callable]] = {
-    "X01": ("FET 损耗与器件比较", "主开关 / SR 模型；空白器件数据保持 UNKNOWN。内置器件仅参考数据，导入不补造栅电荷。", _fet_fields(), _fet_run),
+    "X01": ("FET 损耗与器件比较", "主开关 / SR 模型；空白器件数据保持未知。内置器件仅参考数据，导入不补造栅电荷。", _fet_fields(), _fet_run),
     "X02": ("负载阶跃电容", "TI VMC / CMC 两种闭环估算。L 仅用于 VMC；PM 建议 ≥60°，电解 ≥65°。", [
         choice("control", "控制方式", "CMC", ["CMC", "VMC"]), number("delta_current_a", "负载变化 ΔI / A", 2.5),
         number("delta_voltage_v", "允许电压变化 ΔV / V", .15), number("crossover_hz", "交越频率 / kHz", 10e3, 1e-3),
@@ -225,7 +234,7 @@ class _InputPage(QWidget):
             if field.kind == "choice":
                 widget = QComboBox()
                 for option in field.options:
-                    widget.addItem("理想值 / 无标准化" if option is None else str(option), option)
+                    widget.addItem(choice_label(option), option)
                 widget.setCurrentIndex(widget.findData(field.default))
                 widget.currentIndexChanged.connect(self._changed)
             elif field.kind == "bool":
@@ -234,7 +243,7 @@ class _InputPage(QWidget):
                 widget = QLineEdit()
                 widget.setText(str(field.default) if field.kind == "text" else "" if field.default is None else format(float(field.default)*field.scale, ".15g"))
                 if field.optional:
-                    widget.setPlaceholderText("留空 = UNKNOWN / 不使用")
+                    widget.setPlaceholderText("留空 = 未知 / 不使用")
                 widget.textChanged.connect(self._changed)
             widget.setObjectName("toolbox_"+tool_id+"_"+field.key)
             self.widgets[field.key] = widget
@@ -285,7 +294,7 @@ class _InputPage(QWidget):
                 combo.blockSignals(True)
                 combo.clear()
                 for unit in units:
-                    combo.addItem(unit, unit)
+                    combo.addItem(choice_label(unit), unit)
                 combo.setCurrentIndex(max(0, combo.findData(previous)))
                 combo.blockSignals(False)
 
@@ -357,10 +366,24 @@ class _InputPage(QWidget):
                         raise ValueError(field.key + " requires boolean")
                     widget.setChecked(value)
                 elif field.kind == "text":
-                    widget.setText(str(value))
+                    if not isinstance(value, str):
+                        raise ValueError(field.label + "：必须为文字")
+                    if len(value.encode("utf-16-le")) // 2 > widget.maxLength():
+                        raise ValueError(field.label + "：文字超出长度上限")
+                    widget.setText(value)
                 else:
-                    if value is None and not field.optional:
-                        raise ValueError(field.key + " cannot be empty")
+                    if value is None:
+                        if not field.optional:
+                            raise ValueError(field.label + "：不能为空")
+                    elif type(value) not in (int, float):
+                        raise ValueError(field.label + "：请输入有限数字")
+                    else:
+                        try:
+                            finite = math.isfinite(value * field.scale)
+                        except OverflowError:
+                            finite = False
+                        if not finite:
+                            raise ValueError(field.label + "：数字超出可表示范围")
                     self._exact_values[field.key] = value
                     widget.setText("" if value is None else format(float(value)*field.scale, ".15g"))
         finally:
@@ -396,7 +419,7 @@ class ToolBoxWidget(QWidget):
         top = QHBoxLayout(); root.addLayout(top)
         self.tool_combo = QComboBox(); self.tool_combo.setObjectName("psd_toolbox_selector")
         for key, (title, *_rest) in TOOLS.items():
-            self.tool_combo.addItem(key + " · " + title, key)
+            self.tool_combo.addItem(title, key)
         top.addWidget(self.tool_combo, 1)
         self.import_button = QPushButton("导入当前功率级相关参数"); top.addWidget(self.import_button)
         self.calculate_button = QPushButton("计算 / 更新"); top.addWidget(self.calculate_button)
@@ -406,7 +429,7 @@ class ToolBoxWidget(QWidget):
         self.save_inputs_button = QPushButton("保存计算器输入")
         self.open_inputs_button = QPushButton("打开计算器输入")
         files.addWidget(self.save_inputs_button); files.addWidget(self.open_inputs_button); files.addStretch(1)
-        self.status = QLabel("独立计算器；X11 环路在单独的模拟环路页。所有字段单位显式标注。")
+        self.status = QLabel("独立计算器；环路计算请前往模拟环路页。所有字段均标注单位。")
         self.status.setWordWrap(True); root.addWidget(self.status)
         self.description = QLabel(); self.description.setWordWrap(True); root.addWidget(self.description)
         splitter = QSplitter(); root.addWidget(splitter, 1)
@@ -419,6 +442,10 @@ class ToolBoxWidget(QWidget):
             self.stack.addWidget(scroll)
         splitter.addWidget(self.stack)
         result_panel = QWidget(); result_layout = QVBoxLayout(result_panel)
+        self.details_toggle = QCheckBox("显示详细依据 / 原始数据")
+        self.details_toggle.setObjectName("psd_toolbox_details")
+        self.details_toggle.toggled.connect(self._render_result)
+        result_layout.addWidget(self.details_toggle)
         self.output = QTextBrowser(); self.output.setObjectName("psd_toolbox_output"); result_layout.addWidget(self.output, 2)
         self.response_plot = pg.PlotWidget(title="频响 / 档位映射")
         self.response_plot.showGrid(x=True, y=True, alpha=.2); self.response_plot.addLegend(); result_layout.addWidget(self.response_plot, 1)
@@ -509,7 +536,8 @@ class ToolBoxWidget(QWidget):
         self._imported_stage_id = self._stage_result.design_id
         self._imported_tool_id = self.current_tool_id
         self._imported_values = mapped
-        self._clear_result("已导入 " + ", ".join(mapped) + "；其余输入保留，需自行核对。")
+        labels = {field.key: field.label for field in self.pages[self.current_tool_id].fields}
+        self._clear_result("已导入 " + "、".join(labels[key] for key in mapped) + "；其余输入保留，需自行核对。")
         return mapped
 
     def _import_clicked(self):
@@ -578,22 +606,16 @@ class ToolBoxWidget(QWidget):
         self.latest_result = result
         self.export_button.setEnabled(True)
         self.save_inputs_button.setEnabled(True)
-        self.status.setText(f"{result.tool_id} · {result.status} · {result.result_id}；模型结果，不代表硬件验证。")
-        # Curves and long code maps are available in full exports; keep result
-        # inspection responsive for 16-bit maps and thousands of Bode points.
-        display = {"tool_id": result.tool_id, "result_id": result.result_id, "outputs": dict(result.outputs),
-                   "units": result.units, "inputs": result.inputs, "assumptions": result.assumptions,
-                   "warnings": result.warnings, "source": result.source, "equations": result.equations,
-                   "status": result.status, "model_version": result.model_version,
-                   "evidence": "Analytical calculation; no TI executable or hardware validation implied"}
-        for key in ("curves", "mapping"):
-            if key in display["outputs"]:
-                value = display["outputs"][key]
-                display["outputs"][key] = {"preview": value[:8], "rows": len(value), "full_data": "TXT/CSV/JSON export"} if isinstance(value, list) else {"columns": list(value), "points": len(value["frequency_hz"]), "full_data": "TXT/CSV/JSON export"}
-        self.output.setPlainText(json.dumps(display, ensure_ascii=False, indent=2, allow_nan=False))
+        self.status.setText(status_label(result.status) + "；计算模型结果，不代表硬件验证。")
+        self._render_result()
         self._plot(result)
         self.result_changed.emit(result)
         return result
+
+    def _render_result(self, *_):
+        if self.latest_result is not None:
+            render = details_text if self.details_toggle.isChecked() else result_text
+            self.output.setPlainText(render(self.latest_result))
 
     def _plot(self, result):
         self.response_plot.setLogMode(x=False, y=False)
@@ -646,23 +668,46 @@ class ToolBoxWidget(QWidget):
             except (ValueError, OSError) as exc:
                 self.status.setText("导出失败："+str(exc))
 
+    @staticmethod
+    def _result_provenance(result):
+        return {"tool_id": result.tool_id, "model_version": result.model_version,
+                "result_id": result.result_id, "status": result.status, "source": result.source}
+
     def save_inputs_to(self, path):
         if self.latest_result is None:
-            raise ValueError("Calculate valid current inputs before saving")
-        document = {"schema": "psd-toolbox-inputs-1", "state": self.state()}
-        path = Path(path)
-        text = json.dumps(document, ensure_ascii=False, allow_nan=False, indent=2) + "\n"
-        path.write_text(text, encoding="utf-8")
-        return path
+            raise ValueError("请先计算当前有效输入，再保存")
+        document = {"schema": INPUT_SCHEMA, "toolkit_version": __version__,
+                    "model_version": MODEL_VERSION, "state": self.state(),
+                    "input_provenance": self._result_provenance(self.latest_result)}
+        if len(json.dumps(document, ensure_ascii=False, allow_nan=False, indent=2).encode("utf-8")) + 1 > MAX_INPUT_BYTES:
+            raise ValueError("计算器输入超过 256 kB，请缩短参数来源等文字说明")
+        # Reuse the project writer's temporary-file/atomic-replace contract.
+        return write_json(document, path)
 
     def open_inputs_from(self, path):
         path = Path(path)
-        if path.stat().st_size > 256_000:
-            raise ValueError("Calculator input file exceeds 256 kB; outputs are not an input session")
-        document = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(document, dict) or set(document) != {"schema", "state"} or document["schema"] != "psd-toolbox-inputs-1":
-            raise ValueError("Unsupported calculator input file; use 保存计算器输入")
-        self.restore_state(document["state"])
+        if path.stat().st_size > MAX_INPUT_BYTES:
+            raise ValueError("计算器输入文件超过 256 kB；结果导出文件不能作为输入会话")
+        document = strict_json_loads(path.read_bytes())
+        if not isinstance(document, dict):
+            raise ValueError("无效的计算器输入文件")  # noqa: TRY004 - session schema errors use ValueError
+        # Versionless schema-1 has no reliable model identity. Do not silently
+        # bless its cached identity or reinterpret its inputs under a new model.
+        if document.get("schema") == "psd-toolbox-inputs-1":
+            raise ValueError("旧版输入文件缺少模型版本，请核对原始参数后手动输入并重新保存")
+        if set(document) != {"schema", "toolkit_version", "model_version", "state", "input_provenance"}:
+            raise ValueError("计算器输入文件字段不完整或包含未知字段")
+        if document["schema"] != INPUT_SCHEMA:
+            raise ValueError("不支持此计算器输入文件版本")
+        # Deliberately conservative until a specific migration is verified.
+        if document["model_version"] != MODEL_VERSION or document["toolkit_version"] != __version__:
+            raise ValueError("计算器模型或工具包版本不兼容，请核对参数后手动迁移")
+        provenance = document["input_provenance"]
+        if (not isinstance(provenance, dict)
+                or set(provenance) != {"tool_id", "model_version", "result_id", "status", "source"}
+                or any(not isinstance(value, str) or not value for value in provenance.values())):
+            raise ValueError("计算器输入来源记录不完整或无效")
+        self.restore_state(document["state"], expected_provenance=provenance)
 
     def _save_inputs_dialog(self):
         token = self._modal_revision()
@@ -691,11 +736,11 @@ class ToolBoxWidget(QWidget):
                 "stage_import": None if self._imported_tool_id != self.current_tool_id else
                     {"design_id": self._imported_stage_id, "mapped_inputs": self._imported_values.copy()}}
 
-    def restore_state(self, state):
+    def restore_state(self, state, *, expected_provenance=None):
         if not isinstance(state, dict) or set(state) != {"tool_id", "values", "stage_import"}:
             raise ValueError("Invalid toolbox state fields")
         tool_id, values = state["tool_id"], state["values"]
-        if tool_id not in TOOLS or not isinstance(values, dict) or set(values) != {f.key for f in TOOLS[tool_id][2]}:
+        if not isinstance(tool_id, str) or tool_id not in TOOLS or not isinstance(values, dict) or set(values) != {f.key for f in TOOLS[tool_id][2]}:
             raise ValueError("Invalid toolbox tool or input fields")
         # Validate choices/types as well as physics in a temporary widget before
         # mutating the active page. Historical outputs are never accepted.
@@ -703,24 +748,34 @@ class ToolBoxWidget(QWidget):
         try:
             temporary.set_values(values)
             checked = temporary.values()
-            TOOLS[tool_id][3](checked.copy())
+            result = TOOLS[tool_id][3](checked.copy())
         finally:
             temporary.deleteLater()
         imported = state["stage_import"]
         if imported is not None:
             if not isinstance(imported, dict) or set(imported) != {"design_id", "mapped_inputs"}:
                 raise ValueError("Invalid imported-stage snapshot")
+            if (not isinstance(imported["design_id"], str) or not isinstance(imported["mapped_inputs"], dict)
+                    or any(type(value) not in (int, float)
+                           for value in imported["mapped_inputs"].values())):
+                raise ValueError("Invalid imported-stage provenance")
             if self._stage_result is None or imported["design_id"] != self._stage_result.design_id:
                 raise ValueError("Toolbox import does not match the current stage")
             mapped = stage_import_values(tool_id, self._stage_result, control=checked.get("control", "VMC"), role=checked.get("role", "main"))
             if mapped != imported["mapped_inputs"] or any(checked[key] != value for key, value in mapped.items()):
                 raise ValueError("Toolbox mapped values do not match the current stage")
+            result = replace(result, inputs={**result.inputs, "stage_import": imported})
+        if expected_provenance is not None and expected_provenance != self._result_provenance(result):
+            raise ValueError("输入来源与当前模型重算结果不一致；未采用历史结果")
         self.select_tool(tool_id)
         self.pages[tool_id].set_values(checked)
         self._imported_tool_id = tool_id if imported else None
         self._imported_stage_id = imported["design_id"] if imported else None
         self._imported_values = imported["mapped_inputs"].copy() if imported else {}
-        self.calculate()
+        # Publish only the just-validated calculation, never historical output.
+        # Avoid a second calculation or a partially adopted asynchronous restore.
+        self._clear_result("输入已恢复，已用当前模型重新计算。")
+        self._apply_result(result)
 
     def stop_background_work(self, timeout_ms=2000):
         """Invalidate/drain this tab's jobs without hiding a reusable tab page."""
