@@ -1,56 +1,68 @@
 # Power Stage Designer validation report
 
-## Refreshed artifacts and next native failures (2026-10-19)
+## Refreshed artifacts and native whole-widget scrolling (2026-10-19)
 
-Clean `155ae2be3e9db960b719aad95e5dd39d80d53704` (same 793-file tree as remote
-`3f2d1a48e879f0aa04f9859004722fefd96890a2`) completed refreshed installed-wheel and
-actual production Linux frozen qualification. Both schema-4 proofs cover all six
-workspaces; actual magnetic Apply is 209.480 µH and 48.817 mΩ with the expected
-Information/body telemetry. The wheel passes **278 focused tests and 76 MCP tests**,
-zero failures/errors/skips. Both public validation APIs pass six software checks;
-hardware remains false/UNKNOWN. All 626 wheel files match their source archive,
-62 import origins are in the installation, 378 frozen module origins match that
-wheel and 17 resources pass collection checks. All 793 source hashes stayed fixed.
+Clean `2e724b99ee13b3d66ef595768e05ca2c176106af` (same 795-file tree as main
+`6323518d412306cbc7a6d0dc7aa60497ed76da18`) completes actual isolated installed-wheel
+and production Linux frozen qualification. Both schema-4 proofs pass all six
+workspaces. The installed wheel passes **292 focused tests and 76 MCP tests**,
+zero failures/errors/skips. Both public APIs pass six software baseline checks;
+hardware remains false/UNKNOWN. All 627 wheel files match the frozen source,
+62 import origins are inside that installation, 378 frozen production modules
+match that wheel, and 17 resources pass byte checks. All 795 tracked source hashes
+and prepared-runner hashes stay fixed. The extra wheel file over the prior 626 is
+the new font regression test, not an untracked product dependency.
 
-- Wheel SHA-256: `1f0eca878a77be6176fdb70eb8970887ff94b91ccb853ea69c0597d162629162`
-- Linux executable SHA-256: `a20dc055a00c79a3eed31ddc076960619e82abf035cc3f23d7e7cc6c1f590210`
-- Linux runtime proof SHA-256: `5e32706a8fc85acfa16455afeed28ea3a68e81b925d3a5cb1ddf6c81ce8649bf`
+- Wheel SHA-256: `2c51a7ab520f151a5da15fa056191f36e08bf713e6dc5a05e8708c1c035a08f7`
+- Linux executable SHA-256: `70fbef4781049489861d0d641f42aa7bd7012de691ea26df9dbe4124ec605b11`
+- Linux runtime proof SHA-256: `ea5f90823227c1d283169dc67c3290d04e0237ae0b09ff71c945550ab9e9d50b`
 
-The artifact run takes 1152.922 s; final repair/source provenance passes separately.
-Observed available memory never fell below 4,856,464 KiB; this is not a measurement
-of process peak RSS. The complete application/long-test results below retain their
-`6138f0f` attribution. These artifact results do not qualify later font changes.
+Artifact execution takes 1228.41 s; source/provenance verification passes
+separately. Installed focused tests take 385.02 s and MCP takes 17.99 s. Real
+TwoStage WARN/FAIL paths, successful/canceled/timed-out comparison and final zero
+worker/thread counts remain verified. Process RSS was not sampled in this run;
+discrete 22:04–22:12 UTC MemAvailable samples reach 4,803,232 kB, which is neither
+full-run minimum nor process peak. Each wheel/frozen self-test retains 16 lines
+of Matplotlib DejaVu Sans glyph warnings; Qt glyph acceptance is not generalized
+to every chart font. Previous full/long/RSS results keep their original source.
 
-[Run 39326573293](https://github.com/yangshuai2022-star/power-design-toolkit/actions/runs/39326573293)
-then exposed two further native preflight failures. Windows completed **210 passed,
-1 failed and 1 skipped** in 664.82 s: the QPA now creates the correct 1280×720,
-96 DPI, DPR 1 screen, but the normal-window frame containment assertion fails.
-Its missing offscreen font-directory warning is retained. Controlled Qt 6.11.2
-empty-font experiments independently reproduce a 1307 px minimum/1311 px frame;
-registering real installed TTF/TTC fonts restores normal dimensions and readable
-Chinese/Latin glyphs without changing point size or widget constraints. See the
-[detailed font repair and upstream sources](WINDOWS_OFFSCREEN_FONTS.md). The
-original Windows log lacks frame/font operands, so actual corrected Windows CI
-remains decisive rather than inferred from that controlled reproduction.
+[Run 39331097949](https://github.com/yangshuai2022-star/power-design-toolkit/actions/runs/39331097949)
+provides actual native 9 pt three-screen LLC results, including source/plot/tab
+identity preservation. Windows resolves Microsoft YaHei UI 9 pt, height 15,
+zero missing sample glyphs and 147 system-font registrations in 0.093–0.109 s.
+Its 1280×720 normal frame is 1252×660 and minimum 1091×607, so the previous font/
+first-frame failure is no longer present. macOS resolves PingFang SC 9 pt, height
+17, zero missing sample glyphs, frame 1252×703 and minimum 1122×699. The 30-file
+JSON/screenshot evidence sets per platform cover these successful 9 pt flows;
+they do not contain the subsequent failed 10 pt case.
 
-macOS completed **491 passed, 1 failed and 1 skipped** in 923.72 s, crossing the
-previous magnetic Apply gate. The live-controller ERROR-to-valid test still saw
-`current_digital=None` after an 80 ms wait. Independent actual-GUI reproduction
-queues 120 ms of real canvas drawing: 1000 Hz is correctly committed, the 45 ms
-debounce is overdue/active, but recalculation has not yet been dispatched. Continuing
-the event loop publishes the correct fresh controller. The minimal test-only fix
-observes real bounded completion, preserving input/pending/error/late-worker guards
-and adding exact b/a/Ts/SHA and object-identity checks. The exact candidate passes
-**13 independent cases in 82.18 s**, including four Nyquist/boundary/late-result
-checks against an independent SciPy coefficient oracle. The owner separately
-passes nine module and 33 adjacent cases; overlapping counts are not summed.
+Native preflights still fail a later test, before complete native regression or
+freezing: Windows **220 passed / 1 failed / 1 skipped**, 943.69 s; macOS **219 passed /
+1 failed / 2 skipped**, 632.00 s. Both fail the 10 pt narrow-dock whole-widget
+containment assertion. Their spinbox bounds are respectively (91,589,140,32) and
+(93,583,134,34). Native logs do not identify the failed field or input-method
+rectangle; that original hidden state is not claimed to have been recovered.
 
-Both native full suites and frozen packages remained unrun after those preflight
-failures. No failed run is relabeled passed. The repaired font bootstrap affects
-only Windows/offscreen startup; numerical algorithms and production controller
-logic are unchanged, but its new source/artifact qualification is separate.
-Linux and native jobs remain parallel, with complete tests, frozen verification
-and both literal-false publication gates retained.
+Qt's real `ensureWidgetVisible` implementation can return once an input cursor
+rectangle is visible even when its containing spinbox border is cropped.
+Independent actual-Qt tests reproduce this at both edges and with/without focus;
+additional event-loop rounds do not resolve it. Real LLC 10/12 pt separate and
+integrated modes reproduce the same helper/whole-widget contract mismatch. The
+minimal test repair scrolls to the actual widget rectangle, keeps every original
+fit/10/12 pt/control/mode assertion, and strengthens visibility/visible-region
+checks. A hidden field with apparently contained stale geometry is rejected;
+oversized and clipped-control counterexamples are retained. Failure JSON and
+screenshots now identify the exact field, focus, input rectangle, viewport/ranges
+and mode before any assertion aborts. No product source or layout changes.
+
+The earlier `3f2d1a4` failures remain historical evidence: Windows 210 passed /
+1 failed / 1 skipped at the first frame; macOS 491 passed / 1 failed / 1 skipped at
+live-controller recovery. Its fixed 80 ms wait was independently reproduced with
+real queued drawing and replaced with bounded state observation, preserving
+pending/error/old-worker guards and exact b/a/Ts/SHA. The exact candidate passes
+13 independent cases including a SciPy boundary oracle. Native acceptance of
+that later recovery path is still required; the current 10 pt preflight stopped
+before reaching it. All complete-test/frozen and publication-pause gates remain.
 
 ## Native preflight portability repairs (2026-10-19)
 

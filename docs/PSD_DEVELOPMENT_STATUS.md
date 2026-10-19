@@ -2,37 +2,38 @@
 
 ## Latest native-gate follow-up (2026-10-19)
 
-The refreshed `155ae2b` installed wheel and actual Linux frozen executable both
-pass schema-4 production self-tests with all six workspaces. The installed wheel
-passes 278 focused checks and all 76 MCP tests; both public validation APIs retain
-six passing software checks and hardware UNKNOWN. All 793 tracked source hashes
-stayed unchanged. This artifact result is separate from the full/long application
-qualification on `6138f0f` described below.
+Source `2e724b99ee13b3d66ef595768e05ca2c176106af` (same tree as main `6323518`)
+completed its refreshed installed-wheel and actual Linux frozen qualification.
+Both production schema-4 proofs pass all six workspaces, with **292 installed
+regressions and 76 MCP cases** passing, zero errors/failures/skips. All 795 tracked
+hashes stayed fixed; 627 wheel files, 378 frozen production modules and 17 resources
+are verified. Public validation APIs retain hardware false/UNKNOWN. These results
+retain their own source identity rather than re-labeling the older full/long run.
 
-The next native run, `39326573293` on `3f2d1a4`, still failed its preflights:
-Windows 210 passed / 1 failed / 1 skipped; macOS 491 passed / 1 failed / 1 skipped.
-The previous startup and magnetic-title failures were crossed. The newly exposed
-Windows failure is real 720p frame containment with a missing offscreen font
-inventory; controlled empty-font experiments reproduce the same oversized minimum.
-A Windows/offscreen-only bootstrap now registers installed system TTF/TTC/OTF
-fonts once, preserving existing language selection, point size and all layout
-constraints. The CI font directory also serves Qt-only consumers. Every remaining
-screen-config fixture uses a basename/cwd pair. See
-[font mechanism, counterexample and scope](WINDOWS_OFFSCREEN_FONTS.md).
+Native run `39331097949` now passes the complete ordinary 9 pt three-screen LLC
+workflows on both platforms. Actual Windows evidence resolves Microsoft YaHei UI,
+all sampled glyphs and 147 registered system fonts; 1280×720 normal frame is
+1252×660. macOS resolves PingFang SC and its corresponding frame is 1252×703.
+The previous Windows font/first-frame failure no longer occurs in these runs.
+The preflights still stop at the later 10 pt narrow-dock test: Windows 220 passed /
+1 failed / 1 skipped; macOS 219 passed / 1 failed / 2 skipped. Native complete suites
+and freezing have not run, and 9 pt screenshots do not qualify the 10 pt failure.
 
-The macOS test failure is reproduced by queued real GUI drawing: the committed
-1000 Hz input is correct, but a fixed 80 ms wait can return before the overdue
-45 ms debounce timer is dispatched. The test now observes bounded real completion,
-with separate pending/error/recovery and exact coefficient/sample-time/identity
-checks. It neither invokes recalculation nor substitutes a local controller.
-The exact candidate passes nine original/strengthened module cases and four
-independent boundary/late-result cases. No controller production code changed.
+Independent real Qt/LLC experiments establish a test-driver mismatch:
+`ensureWidgetVisible` may ensure the text cursor rectangle while leaving a
+spinbox border cropped. More event processing does not fix that semantic mismatch.
+The test now scrolls to the real whole-widget rectangle and requires actual
+visibility/visible region, not only residual geometry. It preserves both 10/12 pt
+runs and all 50 controls in separate/integrated modes, with cropped, hidden and
+oversized counterexamples and per-control failure JSON/screenshots. Native logs
+lack the failed field identity, so the exact old native operands cannot be
+reconstructed retrospectively. This follow-up changes tests and documentation
+only; production modules and packaging entry remain identical to qualified `2e724b9`.
 
-These corrections are independently reviewed Linux/offscreen candidates, not
-completed Windows/macOS qualification. Current source/frozen and native results
-must retain their own identities; older full passes do not qualify changed font
-startup code. Full tests, frozen execution and literal-false publication gates
-remain mandatory. No tag or release is authorized by this checkpoint.
+The live-controller state-wait correction and every full/frozen qualification
+gate remain mandatory. Corrected native acceptance remains open; source-level
+passes do not establish hardware or TI executable equivalence. Both publication
+jobs still use literal-false guards; no tag or release is authorized.
 
 ## Current native repair checkpoint (2026-10-19)
 

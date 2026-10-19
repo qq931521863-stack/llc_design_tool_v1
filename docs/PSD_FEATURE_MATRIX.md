@@ -2,25 +2,26 @@
 
 ## Latest platform evidence boundary (2026-10-19)
 
-`155ae2b` refreshed installed-wheel/Linux-frozen schema-4 execution passes all six
-workspaces, 278 installed desktop checks and 76 MCP cases, with unchanged source
-hashes. The next `3f2d1a4` native preflights still failed: Windows 210 pass / 1 fail /
-1 skip and macOS 491 pass / 1 fail / 1 skip. They did not reach complete native
-regression or freezing. Their subsequent fixes address genuine headless font
-availability and test synchronization, not converter-model coverage.
+`2e724b9` (same tree as main `6323518`) completes refreshed installed-wheel and
+actual Linux frozen schema-4 qualification: six workspaces, 292 installed tests,
+76 MCP cases, 627 wheel files and unchanged 795 source hashes. This is distinct
+from the older `6138f0f` full/long application run and its RSS evidence.
 
-Windows/offscreen now discovers real installed TTF/TTC/OTF fonts before shared
-theme startup; native Windows, macOS and Linux discovery is unchanged. No font
-shrinking, hidden page, relaxed screen constraint or fake glyph is introduced.
-The real controller ERROR-to-valid test waits for the existing debounce result and
-checks pending/error/recovery and exact b/a/Ts/SHA, including delayed old workers.
-Independent controlled-font and GUI-backlog counterexamples pass with the repairs.
-The original native logs did not record all internal operands, so these causal
-reproductions do not retrospectively establish every native failure detail.
+Both real native platforms now pass the ordinary 9 pt three-screen LLC flows.
+Windows registers 147 real system fonts and resolves Microsoft YaHei UI with no
+missing sample glyphs; macOS resolves PingFang SC. Those results do not imply all
+Matplotlib/chart fonts or larger-font layouts are validated. Native preflights
+then fail the later 10 pt narrow-dock whole-control assertion (Windows 220 pass /
+1 fail / 1 skip; macOS 219 pass / 1 fail / 2 skip), before full tests or freezing.
 
-Actual corrected native/full/frozen gates remain pending. These repairs do not
-upgrade any T/X/L/C/A physical domain, supply hardware evidence, establish exact
-TI executable equivalence or remove the publication pause.
+Independent real-Qt counterexamples show that the old scrolling helper targets
+an input cursor instead of the complete widget. The test-only correction uses
+the actual whole-widget rectangle and independently checks visibility, preserving
+all controls/modes, 10/12 pt sizes and hidden/oversized rejection. No production
+layout, point size, converter model or controller calculation changes. Existing
+Linux artifact proofs remain attributed to their exact source; new native
+qualification is still required and publication stays paused. No T/X/L/C/A physical
+domain, TI comparison or hardware evidence is upgraded by these platform repairs.
 
 ## Native qualification status (2026-10-19)
 

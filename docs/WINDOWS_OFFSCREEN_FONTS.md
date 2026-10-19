@@ -80,3 +80,17 @@ font inventory does not relax any of those electrical or UI acceptance gates.
 The final three-screen LLC workflows and four-screen launcher interactions
 passed together: 13 tests in 257.28 s. These are focused Linux/offscreen results;
 real Windows qualification of this change is still pending.
+
+## Actual native 9 pt follow-up
+
+Run `39331097949` on `6323518` completes all three ordinary 9 pt desktop flows
+on both native platforms. Windows resolves Microsoft YaHei UI with no missing
+sample glyphs, registers 147 installed fonts in 0.093–0.109 s, and has a normal
+1280×720-screen frame of 1252×660 with minimum 1091×607. macOS resolves PingFang SC
+and fits a 1252×703 frame with minimum 1122×699. This closes the previously observed
+Windows first-frame failure for these exact tests; it is not general native,
+large-font, chart-font or frozen-package qualification. Both native preflights
+subsequently stop at a 10 pt narrow-dock whole-widget scrolling assertion, before
+full tests/freezing. Its test helper targets an input cursor rather than the
+complete spinbox; independent real-Qt counterexamples and the test-only repair
+are recorded in the main validation report. Publication remains paused.
