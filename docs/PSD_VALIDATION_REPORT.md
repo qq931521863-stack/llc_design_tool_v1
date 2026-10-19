@@ -283,3 +283,55 @@ Focused evidence: 15 new guarded-export tests, 16 PFC ownership tests, 462 exist
 compatibility tests, 63 combined consumer tests, and 25 research-export tests
 passed in separate runs. Independent positive probes reran after both research
 repairs. These counts overlap and are not a fresh full-suite total.
+
+## Explicit switched-physics extensions and independent acceptance (2026-10-19)
+
+The optional T05/T11/T18 models now have actual desktop inputs, circuit-connected
+branch selection, waveform/statistic consumers, strict input/source/revision
+identity, project restore/recompute, HTML export and cancellation ownership.
+The default ideal models remain unchanged. All 14 advanced desktop tests passed
+in 216.64 s, including every new branch's real schematic click and exact plotted
+I/V arrays, full-precision option restore, malformed data, pending edits, close
+and late-result rejection. The shared schematic/Type-I/input-form suite passed
+141 tests. New example JSON files are actual saved/recomputed inputs, not cached
+accepted results. A seven-state PSFB voltage probe is drawn as a high-impedance
+probe and is explicitly excluded from additional power-device interpretation.
+
+T05 independent validation stamps the original switched circuit into ngspice,
+without reusing the production solver equations. Five cases include negative
+inductor current, floating nodes and body clamps. Maximum node/current discrepancy
+was 20.2 µV / 41.6 nA; all 11 branch-current RMS values agree within 0.563 µA
+(1.68e-6 scaled relative). Raw external source/branch/storage energy residual is
+≤8.85e-8 relative. Constant Coss/Ron and piecewise-resistive diodes are explicit;
+there is no nonlinear vendor-model or reverse-recovery claim.
+
+QR review found two real defects after the author's initial tests: a nonmonotonic
+finite-Ron power curve caused false load rejection, and an invalid universal
+Vin/Ron peak cap rejected reachable underdamped trajectories. Both are fixed,
+not reclassified as impossible. The controller explicitly selects lower/higher
+peak-current roots on the first rising-current trajectory, bounded by the real
+current crest or declared asymptotic numerical limit. Frequency ceilings never
+silently switch roots. Independent review accepts 28 finite-Ron load points,
+three underdamped counterexamples, seven full waveform/charge/energy cases and
+four nonlinear-C/delay maximum-power sweeps (≤7.28e-9 relative discrepancy).
+Exact-matrix roots, tangent maxima, excess-load rejection and the finite-crest
+endpoint are checked. A steep user charge table can still produce a quadrature
+warning; accepted evidence retains that numerical caveat rather than claiming
+uniform accuracy for arbitrary data. The author suite passed 49 QR tests and
+102 related regression tests separately.
+
+T18 independent original-network ngspice checks distinguish 5 A partial ZVS from
+15 A all-four-switch ZVS at 400→48 V / 100 kHz with explicit components. At 5 A,
+Q1/Q2 turn on near 146.51 V while Q3/Q4 are body-clamped near −0.889 V; source/load/
+branch/storage energy residual is −4.57 µW at 245.9 W. At 15 A, finer external
+steps reduce state discrepancy about 20× to 1.58 mV / 4.66 µA; all 19 current RMS
+values agree within 2.10e-6 scaled relative and energy residual is −0.086 µW at
+738.9 W. These finite numerical errors remain disclosed. The author suite passed
+38 new tests and 136 related regressions. Constant-Coss positive CCM and fixed-gate
+orbital stability do not prove nonlinear-device, closed-loop or hardware stability.
+
+These declared models remove implementable functional gaps but do not establish
+TI executable equivalence. T05/T11/T18 therefore remain PARTIAL in the alignment
+register. Authorized TI software capture is still needed to identify its exact
+gating/valley/load policies. No login/export gate was bypassed. Full-source and
+native-package qualification must be rerun after the remaining consumer repairs.

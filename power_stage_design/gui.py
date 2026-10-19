@@ -7,7 +7,7 @@ from dataclasses import asdict
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QByteArray, QRectF, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QByteArray, QRectF, QThreadPool, QTimer, Qt, Signal
 from PySide6.QtGui import QPainter
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
@@ -40,7 +40,7 @@ from llc_design.models.devices import DeviceDatabase
 from .models import DesignInputs
 from .project import project_document, read_project, save_project, write_json
 from .report import write_report, write_waveform_csv
-from .schematic import layout, svg_schematic
+from .schematic import layout, schematic_size, svg_schematic
 from .suggestions import (
     MAGNETIZING_TOPOLOGIES,
     NUMERICAL_TOPOLOGIES,
@@ -112,7 +112,8 @@ class SchematicView(QWidget):
         self.renderer.render(painter, QRectF(0, 0, self.width(), self.height()))
 
     def mousePressEvent(self, event):
-        x, y = event.position().x()*740/self.width(), event.position().y()*285/self.height()
+        width,height=schematic_size(self.topology_id,device_keys=self.device_keys)
+        x, y = event.position().x()*width/self.width(), event.position().y()*height/self.height()
         for element in layout(self.topology_id, device_keys=self.device_keys)[0]:
             if element.contains(x,y):
                 self.component_selected.emit(element.key); return
@@ -196,6 +197,10 @@ class PowerStageMainWindow(QMainWindow):
         from .toolbox_gui import ToolBoxWidget
         self.toolbox=ToolBoxWidget();self.tabs.addTab(self.toolbox,"工具箱")
         self.suggestion_tab=self._build_suggestion_tab();self.tabs.addTab(self.suggestion_tab,"参数建议")
+        from .advanced_gui import AdvancedModelWidget
+        self.advanced_model=AdvancedModelWidget();self.advanced_model.changed.connect(self.invalidate)
+        advanced_scroll=QScrollArea();advanced_scroll.setWidgetResizable(True);advanced_scroll.setWidget(self.advanced_model)
+        self.tabs.addTab(advanced_scroll,"扩展物理参数")
         self.load_preset()
 
     def _topology_changed(self):
@@ -203,6 +208,7 @@ class PowerStageMainWindow(QMainWindow):
 
     def _update_input_visibility(self):
         topology=self.topology_combo.currentData()
+        if hasattr(self,"advanced_model"):self.advanced_model.set_topology(topology)
         is_llc=topology in {"T20","T21"}
         for box in self.input_widgets.values():self._input_form.setRowVisible(box,not is_llc)
         for widget in (self.mode_combo,self.device_combo,self.device_status,self.preset_button):self._input_form.setRowVisible(widget,not is_llc)
@@ -228,7 +234,7 @@ class PowerStageMainWindow(QMainWindow):
         for key in OPTIONAL_INPUTS:
             if values[key]==0:values[key]=None
         if values["primary_output_current_a"]==-1:values["primary_output_current_a"]=None
-        return DesignInputs(topology=self.topology_combo.currentData(),mode=self.mode_combo.currentData(),**values)
+        return DesignInputs(topology=self.topology_combo.currentData(),mode=self.mode_combo.currentData(),**values,**self.advanced_model.options())
 
     def set_inputs(self, inputs):
         self._loading=True
@@ -240,6 +246,7 @@ class PowerStageMainWindow(QMainWindow):
                 self.input_widgets[key].setValue((-1 if key=="primary_output_current_a" and getattr(inputs,key) is None else getattr(inputs,key) or 0)*scale)
             self.mode_combo.setCurrentIndex(self.mode_combo.findData(inputs.mode))
             self._exact_inputs={key:getattr(inputs,key) for key,_,_,_ in INPUT_FIELDS}
+            self.advanced_model.restore(inputs)
         finally:self._loading=False
         self._update_input_visibility();self.invalidate();self._timer.stop();self.calculate()
 
@@ -288,11 +295,14 @@ class PowerStageMainWindow(QMainWindow):
         self.loop_gain_plot.clear();self.loop_phase_plot.clear();self.evidence.clear()
         if hasattr(self,"toolbox"):self.toolbox.set_stage_result(None)
         for action in (self.save_action,self.report_action,self.csv_action):action.setEnabled(False)
-        inputs=self.current_inputs()
+        try:
+            inputs=self.current_inputs()
+        except (ValueError,TypeError,ArithmeticError) as exc:
+            self.status.setText("输入无效："+str(exc));return
         if inputs.topology in {"T20","T21"}:
             self.status.setText("此桥型使用既有 LLC 工作区的谐振模型、波形、器件、控制与报告。点击左侧进入；原LLC参数保留，半桥参考匝数30:8、全桥30:4。")
             return
-        if inputs.topology in {"T04","T11","T18"}:
+        if inputs.topology in {"T04","T11","T18"} or inputs.two_switch_options is not None:
             token=self._generation;event=threading.Event();self._cancel_events.append(event)
             def compute():
                 try:return token,calculate_stage(inputs,cancelled=event.is_set),None
@@ -319,9 +329,20 @@ class PowerStageMainWindow(QMainWindow):
     def _apply_stage_result(self,result):
         self.result=result
         if hasattr(self,"toolbox"):self.toolbox.set_stage_result(result)
-        self.status.setText(f"{all_topologies()[result.topology_id]} · {result.mode} · D={result.duty:.6g} · f={1/next(iter(result.waveforms.values())).current_a.period_s/1e3:.5g} kHz · 设计 {result.design_id}")
+        display_mode={"QR-DYNAMIC-DCM":"QR 断续模式（扩展模型）"}.get(result.mode,result.mode)
+        self.status.setText(f"{all_topologies()[result.topology_id]} · {display_mode} · D={result.duty:.6g} · f={1/next(iter(result.waveforms.values())).current_a.period_s/1e3:.5g} kHz")
+        self.status.setToolTip("设计身份："+result.design_id)
         self.component_combo.blockSignals(True);self.component_combo.clear()
-        for key,wave in result.waveforms.items():self.component_combo.addItem(f"{key} · {wave.label}",key)
+        for key,wave in result.waveforms.items():
+            label=("体二极管" if key.startswith("Dbody") else "复位二极管" if key.startswith("Dreset")
+                else "钳位二极管" if key.startswith("Dclamp") else "整流 / 续流二极管" if key.startswith("D")
+                else "开关通道" if key.startswith("Q") else "励磁状态" if key=="Lm"
+                else "漏感" if key=="Lleak" else "电感" if key.startswith("L")
+                else "电容" if key.startswith("C") else "原边绕组" if key.startswith("primary")
+                else "副边绕组" if key.startswith("secondary") else "复位绕组" if key.startswith("reset")
+                else "绕组电阻" if key=="Rwinding" else "理想高阻电压探针" if key.startswith("node_") else wave.label)
+            self.component_combo.addItem(f"{key} · {label}",key)
+            self.component_combo.setItemData(self.component_combo.count()-1,wave.label,Qt.ItemDataRole.ToolTipRole)
         self.component_combo.blockSignals(False)
         self.schematic.topology_id=result.topology_id;self.schematic.device_keys=frozenset(result.waveforms);self._show_component();self._refresh_device()
         self._refresh_evidence()
@@ -518,7 +539,7 @@ class PowerStageMainWindow(QMainWindow):
         self._refresh_evidence()
 
     def _build_loop_tab(self):
-        from .loop import Compensator, LoopPlant
+        from .loop import Compensator, LoopPlant, INTEGRATOR_BRANCH_NETWORKS, INTEGRATOR_BRANCH_NOTE
         tab=QWidget();root=QVBoxLayout(tab);split=QSplitter();root.addWidget(split,1)
         settings=QWidget();form=QFormLayout(settings)
         self.loop_control=QComboBox();self.loop_control.addItem("电压模式 VMC","vmc");self.loop_control.addItem("峰值电流模式 CMC","peak_cmc")
@@ -526,6 +547,15 @@ class PowerStageMainWindow(QMainWindow):
         self.network_combo=QComboBox()
         for name,key in [("Type II","type_ii"),("Type II 跨导","type_ii_gm"),("Type III","type_iii"),("隔离 Type II 齐纳钳位","isolated_zener"),("隔离 Type II 内环","isolated_inner")]:self.network_combo.addItem(name,key)
         self.network_combo.setCurrentIndex(2);form.addRow("补偿网络",self.network_combo)
+        self.integrator_branch_button=QPushButton("采用积分支路并验算")
+        self.integrator_branch_button.setObjectName("psd_integrator_branch")
+        self.integrator_branch_button.setEnabled(False)
+        self.integrator_branch_button.clicked.connect(self.apply_integrator_branch)
+        self.network_combo.currentIndexChanged.connect(lambda: self.integrator_branch_button.setEnabled(self.network_combo.currentData() in INTEGRATOR_BRANCH_NETWORKS))
+        form.addRow(self.integrator_branch_button)
+        self.integrator_branch_help=QLabel(INTEGRATOR_BRANCH_NOTE)
+        self.integrator_branch_help.setWordWrap(True);form.addRow(self.integrator_branch_help)
+
         self.loop_widgets={};self.comp_widgets={}
         # Every non-ideal baseline input is editable; names carry physical units.
         plant_fields=[("dcr_ohm","L DCR / Ω",1),("esr_ohm","C1 ESR / Ω",1),("capacitance2_f","C2 有效值 / µF",1e6),("esr2_ohm","C2 ESR / Ω",1),("ramp_v","VMC 锯齿幅度 / V",1),("sense_ohm","电流检测电阻 / Ω",1),("sense_gain","电流检测增益",1),("slope_v","附加斜坡每周期 / V",1),("slope_multiplier","斜坡倍数 SLM",1)]
@@ -556,6 +586,19 @@ class PowerStageMainWindow(QMainWindow):
             plot.setLogMode(x=True);plot.setLabel("bottom","频率",units="Hz");plot.setLabel("left",label);plot.addLegend();plot.showGrid(x=True,y=True,alpha=.2);charts_layout.addWidget(plot,1)
         split.addWidget(charts);split.setStretchFactor(1,1)
         return tab
+
+    def apply_integrator_branch(self):
+        from .loop import integrator_branch_settings
+        try:
+            _,current=self.loop_parameters()
+            selected=integrator_branch_settings(current)
+        except (ValueError, TypeError) as exc:
+            self.loop_status.setText("积分支路未应用："+str(exc));return
+        for key in ("r2_ohm","c2_f","cff_f"):
+            box=self.comp_widgets[key];box.blockSignals(True)
+            box.setValue(getattr(selected,key)*self._comp_scales[key]);box.blockSignals(False)
+            self._exact_comp[key]=getattr(selected,key)
+        self.analyze_loop()
 
     def _loop_numeric_changed(self,key,comp):
         if not self._loading:(self._exact_comp if comp else self._exact_loop).pop(key,None)
@@ -736,7 +779,11 @@ class PowerStageMainWindow(QMainWindow):
             return text
         for row,(key,bounds) in enumerate(result.extrema.items()):
             lo,hi=bounds['minimum'],bounds['maximum']
-            for col,value in enumerate([key,f"{lo['value']:.7g}",label(lo['point_index']),f"{hi['value']:.7g}",label(hi['point_index'])]):self.corner_table.setItem(row,col,QTableWidgetItem(value))
+            metric_labels={"duty":"占空比", "output_ripple_pp_v":"输出纹波峰峰值 / V", "current_rms_a":"电流有效值 / A", "current_max_a":"最大电流 / A", "current_min_a":"最小电流 / A", "voltage_max_v":"最大电压 / V", "voltage_min_v":"最小电压 / V", "known_conduction_loss_w":"已知导通损耗 / W", "phase_margin_deg":"相位裕量 / °", "gain_margin_db":"增益裕量 / dB", "crossover_hz":"交越频率 / Hz", "ms":"灵敏度峰值 Ms"}
+            owner,separator,metric=key.partition(".")
+            display=("环路 · " if owner=="loop" else owner+" · ")+metric_labels.get(metric,metric) if separator else metric_labels.get(key,key)
+            for col,value in enumerate([display,f"{lo['value']:.7g}",label(lo['point_index']),f"{hi['value']:.7g}",label(hi['point_index'])]):self.corner_table.setItem(row,col,QTableWidgetItem(value))
+            self.corner_table.item(row,0).setToolTip("指标标识："+key)
             for column,bound in ((2,lo),(4,hi)):
                 item=self.corner_table.item(row,column)
                 item.setToolTip(item.text()+"\n工况身份："+bound["point_id"])

@@ -258,6 +258,21 @@ def calculate_stage(inputs: DesignInputs, cancelled=None) -> StageResult:
     if topology_id not in _SUPPORTED:
         reason = "Use the existing LLC workspace; a separate resonant model is not duplicated here." if topology_id in ("T20", "T21") else "Topology-specific numerical model is not yet connected."
         raise UnsupportedTopologyError(f"{TOPOLOGY_NAMES[topology_id]}: {reason}")
+    if inputs.two_switch_options is not None:
+        if topology_id != "T05":
+            raise ModelDomainError("Two-switch dynamic options apply only to T05")
+        from .two_switch_dynamics import calculate_two_switch_dynamic
+        return calculate_two_switch_dynamic(inputs, inputs.two_switch_options, cancelled=cancelled)
+    if inputs.qr_options is not None:
+        if topology_id != "T11":
+            raise ModelDomainError("QR controller/capacitance options apply only to T11")
+        from .qr_dynamics import calculate_qr_dynamic
+        return calculate_qr_dynamic(inputs, inputs.qr_options, cancelled=cancelled)
+    if inputs.psfb_options is not None:
+        if topology_id != "T18":
+            raise ModelDomainError("PSFB commutation options apply only to T18")
+        from .psfb_dynamics import calculate_psfb_dynamic
+        return calculate_psfb_dynamic(inputs, inputs.psfb_options, cancelled=cancelled)
     if inputs.dead_time_s:
         raise ModelDomainError("Nonzero dead time is not modeled by these ideal-switch waveforms")
     if topology_id == "T04":

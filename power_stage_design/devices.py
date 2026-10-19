@@ -16,6 +16,10 @@ def assess_component(result, key: str, *, selected_main_device=None, temperature
         "current_peak_a":imax,"known_conduction_loss_w":None,
         "total_loss_w":None,"thermal_status":"UNKNOWN",
         "assessment":"未指定此支路的器件/ESR/磁件与热参数；损耗与额定裕量未知。"}
+    if key in {"node_A","node_B"} and result.inputs.psfb_options is not None:
+        evidence.update(assessment="理想高阻电压探针，电流恒为零；不是额外功率器件，不作器件损耗/额定评估。",
+            loss_scope="ideal_voltage_probe", thermal_status="NOT_APPLICABLE")
+        return evidence
     if key=="Q1" and selected_main_device is not None:
         device=selected_main_device
         violations=[]

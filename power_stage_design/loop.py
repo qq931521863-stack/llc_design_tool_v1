@@ -69,6 +69,26 @@ class Compensator:
     rpullup_ohm: float = 10_000.0
 
 
+INTEGRATOR_BRANCH_NETWORKS = frozenset({"type_ii", "isolated_zener", "isolated_inner"})
+INTEGRATOR_BRANCH_NOTE = (
+    "积分支路设置：RCOMP=0、CHF=0、Cff=0，保留反馈分压、CCOMP 和有限误差放大器。"
+    "TI SLVUBB4B 第34页的 RCOMP=RFBT、CHF=CCOMP 提示并非该网络的严格积分极限；本计算按实际节点方程。"
+    "隔离网络仍含光耦增益及极点；隔离内环还保留直接 +1 通路，整个网络不等同纯积分器。"
+)
+
+
+def integrator_branch_settings(compensator: Compensator) -> Compensator:
+    """Select the exact voltage-EA integrator branch, not a sixth network.
+
+    This changes only the three physical branch components. All finite-EA,
+    feedback-divider and isolated-path parameters remain exactly unchanged.
+    """
+    if compensator.network not in INTEGRATOR_BRANCH_NETWORKS:
+        raise ValueError("积分支路设置仅适用于 Type II 电压误差放大器和两种隔离 Type II 网络")
+    _positive("c1_f", compensator.c1_f)
+    return replace(compensator, r2_ohm=0.0, c2_f=0.0, cff_f=0.0)
+
+
 @dataclass(frozen=True)
 class LoopResult:
     frequency_hz: np.ndarray
@@ -304,6 +324,7 @@ def compensator_frequency_response(c: Compensator, frequency_hz) -> tuple[np.nda
             ideal *= 1 + s * c.r1_ohm * c.cff_f
     else:
         ideal = zf * yin  # Exact Type-I or CHF=0 limit, absent in old helper.
+    branch_warnings = (INTEGRATOR_BRANCH_NOTE,) if c.network in INTEGRATOR_BRANCH_NETWORKS and c.r2_ohm == 0 and c.c2_f == 0 and c.cff_f == 0 else ()
     noise_gain = 1 + zf * (yin + 1 / c.r_lower_ohm)
     closed = ideal / (1 + noise_gain / a)
     if c.network.startswith("isolated"):
@@ -315,8 +336,8 @@ def compensator_frequency_response(c: Compensator, frequency_hz) -> tuple[np.nda
         direct = 1.0 if c.network == "isolated_inner" else 0.0
         return opto * c.rpullup_ohm / c.rled_ohm * (direct + closed), a, (
             "Isolated network uses a voltage-error-amplifier equivalent of TL431; LED/TL431 bias, saturation and nonideal zener impedance require separate checks.",
-            "CTR and pullup/LED resistance gain are applied once; finite-amplifier correction is derived from circuit nodes.")
-    return closed, a, ()
+            "CTR and pullup/LED resistance gain are applied once; finite-amplifier correction is derived from circuit nodes.") + branch_warnings
+    return closed, a, branch_warnings
 
 
 def analyze_loop(plant: LoopPlant, compensator: Compensator, frequency_hz=None) -> LoopResult:

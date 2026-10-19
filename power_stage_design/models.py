@@ -4,6 +4,12 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .psfb_dynamics import PSFBOptions
+    from .qr_dynamics import QROptions
+    from .two_switch_dynamics import T05Options
 
 from .waveforms import Waveform
 
@@ -40,9 +46,38 @@ class DesignInputs:
     primary_capacitance_f: float | None = None
     primary_output_current_a: float | None = None
 
+    two_switch_options: T05Options | None = None
+    qr_options: QROptions | None = None
+    psfb_options: PSFBOptions | None = None
+
+    def __post_init__(self):
+        for name, module, typename in (("two_switch_options", ".two_switch_dynamics", "T05Options"),
+                                       ("qr_options", ".qr_dynamics", "QROptions"),
+                                       ("psfb_options", ".psfb_dynamics", "PSFBOptions")):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            from importlib import import_module
+            option_type = getattr(import_module(module, __package__), typename)
+            if type(value) is dict:
+                try:
+                    value = option_type(**value)
+                except TypeError as exc:
+                    raise ModelDomainError(f"Invalid {name} fields: {exc}") from exc
+                object.__setattr__(self, name, value)
+            if type(value) is not option_type:
+                raise ModelDomainError(f"{name} requires exactly {typename} or its JSON fields")
+        if sum(value is not None for value in (self.two_switch_options, self.qr_options, self.psfb_options)) > 1:
+            raise ModelDomainError("Only one topology-specific advanced model can be selected")
+
     @property
     def design_id(self) -> str:
-        payload = {"model_version": MODEL_VERSION, "inputs": asdict(self)}
+        values = asdict(self)
+        # Preserve all legacy identities when no optional physics is selected.
+        for key in ("two_switch_options", "qr_options", "psfb_options"):
+            if values[key] is None:
+                del values[key]
+        payload = {"model_version": MODEL_VERSION, "inputs": values}
         return hashlib.sha256(json.dumps(payload, sort_keys=True, allow_nan=False).encode()).hexdigest()[:20]
 
 

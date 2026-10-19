@@ -218,7 +218,7 @@ def suggest_parameters(inputs: DesignInputs, targets: SuggestionTargets, *, canc
     ]
     vin, vo, vf, fs, ripple = inputs.vin_v, inputs.vout_v, inputs.diode_drop_v, inputs.fsw_hz, targets.ripple_pp_a
     candidate = inputs
-    if topology in NUMERICAL_TOPOLOGIES:
+    if topology in NUMERICAL_TOPOLOGIES or inputs.two_switch_options is not None:
         if targets.size_turns_ratio and topology in {"T04", "T18"}:
             result = _numerical_ratio(inputs, targets, cancelled)
             assumptions.append("Joint bounded numerical L and Np/Ns sizing against actual ripple and actual maximum duty, including the supplied finite leakage/capacitors/Lm; no parasitic values are invented.")
@@ -229,7 +229,9 @@ def suggest_parameters(inputs: DesignInputs, targets: SuggestionTargets, *, canc
                     raise ModelDomainError("QR fixed power and ripple do not uniquely determine Np/Ns from duty alone; specify an explicit reflected-voltage target")
                 candidate = replace(inputs, turns_ratio_np_ns=reflected/(vo+vf))
                 assumptions.append("QR Np/Ns = target reflected voltage / (Vout+Vf); duty alone is insufficient to determine the ratio at fixed power/ripple. The actual solved on-time and frequency ceiling are checked.")
-                if reflected >= vin:
+                if inputs.qr_options is not None:
+                    assumptions.append("QR inverse sizing retains the explicit valley policy, delays, capacitance data and turn-on path; every trial re-solves that selected dynamic model.")
+                elif reflected >= vin:
                     assumptions.append("QR first-zero-clamp inverse sizing uses the actual signed-current, fixed-power model; only its first zero-voltage crossing is allowed, with no later-clamped-valley fallback.")
             else:
                 assumptions.append("Bounded numerical main-inductance sizing at fixed user Np/Ns and other inputs.")

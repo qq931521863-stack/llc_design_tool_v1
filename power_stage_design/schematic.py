@@ -37,6 +37,7 @@ class Element:
         if not self.nets:
             return ()
         h = self.half_length
+        if self.kind == "voltage_probe":return ((self.x-h,self.y),)
         return ((self.x, self.y-h), (self.x, self.y+h)) if self.vertical else ((self.x-h, self.y), (self.x+h, self.y))
 
     def contains(self, x: float, y: float) -> bool:
@@ -58,6 +59,8 @@ class _Circuit:
     grounds: list[tuple[str, float, float]] = field(default_factory=list)
     note: str = "Ideal switches; select a component for the model's voltage/current references."
     negative_output: bool = False
+    width: int = 740
+    height: int = 285
 
     def part(self, key, x, y, kind, nets=(), *, vertical=False, reverse=False,
              half_length=22, dot=None, label=None, label_dx=None, label_dy=None, selectable=True):
@@ -140,6 +143,29 @@ def _two_switch_buck_boost():
     c.wire("OUT",(547,55),(600,55))
     c.wire("GND",(158,235),(600,235));c.wire("GND",(260,167),(260,235));c.wire("GND",(450,167),(450,235))
     c.note="Two FETs switch together; D1 + D2 conduct in the off interval. No four-switch substitution."
+    return c
+
+
+def _two_switch_dynamic():
+    c=_Circuit();c.input(end=158);c.output(x=635)
+    c.part("Q1",180,55,"switch",("VIN","A"))
+    c.part("Coss1",180,115,"capacitor",("VIN","A"))
+    c.part("Dbody1",180,175,"diode",("VIN","A"),reverse=True)
+    c.wire("VIN",(135,55),(135,175),(158,175));c.wire("VIN",(135,115),(158,115))
+    c.wire("A",(202,55),(318,55));c.wire("A",(230,55),(230,175),(202,175));c.wire("A",(202,115),(230,115))
+    c.part("D1",270,155,"diode",("A","GND"),vertical=True,reverse=True)
+    c.wire("A",(270,55),(270,133));c.wire("GND",(270,177),(270,235))
+    c.part("L1",340,55,"inductor",("A","LX"))
+    c.part("Rwinding",405,55,"resistor",("LX","B"),label="Rw")
+    c.wire("LX",(362,55),(383,55));c.wire("B",(427,55),(528,55))
+    c.part("D2",550,55,"diode",("B","OUT"));c.wire("OUT",(572,55),(635,55))
+    for key,x,kind,reverse in (("Q2",445,"switch",False),("Coss2",505,"capacitor",False),("Dbody2",565,"diode",True)):
+        c.part(key,x,155,kind,("B","GND"),vertical=True,reverse=reverse,label_dx=0,label_dy=52)
+        c.wire("B",(x,85),(x,133));c.wire("GND",(x,177),(x,235))
+    c.wire("B",(445,55),(445,85),(565,85))
+    c.wire("GND",(158,235),(635,235))
+    c.elements=[replace(e,label_dx=0,label_dy=52) if e.key=="Cout" else e for e in c.elements]
+    c.note="Explicit constant Coss, finite channel/diode resistance and winding resistance; both gates switch together."
     return c
 
 
@@ -283,6 +309,45 @@ def _bridge(topology):
     return c
 
 
+def _psfb_dynamic():
+    """The actual seven-state circuit, with high-impedance node probes."""
+    c=_Circuit(width=1400,height=420)
+    c.wire("VIN",(35,55),(590,55));c.wire("GND",(35,235),(35,355),(590,355))
+    c.ground("GND",35,355)
+    c.part("Cin",95,205,"capacitor",("VIN","GND"),vertical=True,label_dx=-20)
+    c.wire("VIN",(95,55),(95,183));c.wire("GND",(95,227),(95,355))
+    for node,base,first in (("A",180,1),("B",430,3)):
+        for offset,kind,prefix,reverse in ((0,"switch","Q",False),(65,"capacitor","Coss",False),(130,"diode","Dbody",True)):
+            x=base+offset
+            for k,y,nets in ((first,120,("VIN",node)),(first+1,285,(node,"GND"))):
+                c.part(f"{prefix}{k}",x,y,kind,nets,vertical=True,reverse=reverse,label_dx=0,label_dy=-36 if y==120 else 49)
+            c.wire("VIN",(x,55),(x,98));c.wire(node,(x,142),(x,205),(x,263));c.wire("GND",(x,307),(x,355))
+        c.wire(node,(base,205),(base+155,205))
+        probe_x=base+177
+        c.part("node_"+node,probe_x,205,"voltage_probe",(node,),label="V"+node+" probe",label_dy=35)
+    c.part("Lleak",650,180,"inductor",("A","P"))
+    c.wire("A",(335,205),(335,180),(628,180));c.wire("P",(672,180),(800,180),(800,200))
+    c.winding("primary",800,230,("P","B"),label="Np",left=True)
+    c.wire("B",(585,205),(590,205),(590,320),(800,320),(800,260))
+    c.part("Cprimary",720,230,"capacitor",("P","B"),vertical=True,label_dx=-20)
+    c.wire("P",(720,180),(720,208));c.wire("B",(720,252),(720,320))
+    c.core(850,230,65)
+    c.winding("secondary1",905,205,("S1","ISO"),dot=0,half_length=25,label="Ns1")
+    c.winding("secondary2",905,255,("ISO","S2"),dot=0,half_length=25,label="Ns2")
+    for key,y,net in (("D1",180,"S1"),("D2",280,"S2")):
+        c.part(key,1000,y,"diode",(net,"RECT"),label_dy=-25 if y==180 else 25)
+        c.wire(net,(905,y),(978,y));c.wire("RECT",(1022,y),(1060,y))
+    c.wire("RECT",(1060,180),(1060,280));c.wire("RECT",(1060,180),(1123,180))
+    c.part("L1",1145,180,"inductor",("RECT","OUT"))
+    c.wire("OUT",(1167,180),(1340,180),(1340,243))
+    for key,x,kind,net,selectable in (("Crectifier",1090,"capacitor","RECT",True),("Cout",1230,"capacitor","OUT",True),("load",1340,"current_source","OUT",False)):
+        c.part(key,x,265,kind,(net,"ISO"),vertical=True,label="Io" if key=="load" else key,label_dx=0,label_dy=49,selectable=selectable)
+        c.wire(net,(x,180),(x,243));c.wire("ISO",(x,287),(x,355))
+    c.wire("ISO",(905,230),(945,230),(945,355),(1340,355));c.ground("ISO",945,355)
+    c.note="Explicit finite-Coss/Ron circuit; channel, body diode and capacitor currents are separate. VA/VB are zero-current voltage probes."
+    return c
+
+
 def _flybuck():
     c=_Circuit();c.input(end=180)
     c.part("Q1",180,90,"switch",("VIN","SW"),vertical=True)
@@ -336,7 +401,7 @@ def _circuit(topology_id: str, *, device_keys=None) -> _Circuit:
     if topology=="T04":
         return _flybuck()
     if topology=="T05":
-        return _two_switch_buck_boost()
+        return _two_switch_dynamic() if device_keys is not None and "Coss1" in device_keys else _two_switch_buck_boost()
     if topology in ("T06","T07","T08"):
         return _two_inductor(topology)
     if topology in ("T09","T10","T11","T12","T13","T14"):
@@ -344,10 +409,14 @@ def _circuit(topology_id: str, *, device_keys=None) -> _Circuit:
         if topology == "T11" and device_keys is not None and "Cnode" in device_keys:
             circuit.elements = [replace(e, key="Cnode", label="Cnode", selectable=True)
                                 if e.key == "Cnode_parameter" else e for e in circuit.elements]
-            circuit.note = "QR first zero clamp: Cnode voltage/current are finite; signed channel and displacement currents are distinct."
+            circuit.note = "QR node capacitance: channel and displacement currents are distinct; see selected model assumptions."
+        if topology == "T11" and device_keys is not None and "Dbody" in device_keys:
+            circuit.part("Dbody",155,205,"diode",("N","GND"),vertical=True,reverse=True,label_dx=-20)
+            circuit.wire("N",(215,175),(155,175),(155,183));circuit.wire("GND",(155,227),(155,235),(215,235))
+            circuit.note = "Declared QR valley/delay/charge model; Dbody clamp and Cnode charge are separate physical branches."
         return circuit
     if topology in ("T15","T16","T17","T18"):
-        return _bridge(topology)
+        return _psfb_dynamic() if topology=="T18" and device_keys is not None and "Coss1" in device_keys else _bridge(topology)
     if topology=="T19":
         return _series_buck()
     return _Circuit()
@@ -357,6 +426,11 @@ def layout(topology_id: str, *, device_keys=None) -> tuple[list[Element], list[t
     """Return modeled device hit targets and electrical wire segments."""
     circuit=_circuit(topology_id,device_keys=device_keys)
     return circuit.elements,[line for _,line in circuit.routes]
+
+
+def schematic_size(topology_id: str, *, device_keys=None) -> tuple[int,int]:
+    circuit=_circuit(topology_id,device_keys=device_keys)
+    return circuit.width,circuit.height
 
 
 def _on_segment(point, line):
@@ -385,6 +459,8 @@ def _junctions(circuit):
 
 def _symbol(e):
     h=e.half_length
+    if e.kind=="voltage_probe":
+        return f'<path d="M{-h} 0H-13" fill="none"/><circle r="13"/><text x="0" y="4" text-anchor="middle" font-size="11" stroke="none" fill="currentColor">V</text>'
     if e.kind=="core":
         return f'<path d="M-4 {-h}V{h} M4 {-h}V{h}" fill="none"/>'
     lead=f'M{-h} 0H-16 M16 0H{h}'
@@ -411,8 +487,8 @@ def svg_schematic(topology_id: str, *, selected: str | None = None, width: int =
     c=_circuit(topology_id,device_keys=device_keys)
     width=int(width)
     if width<=0:raise ValueError("SVG width must be positive")
-    out=[f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 740 285" width="{width}" height="{width*285/740:g}" role="img" aria-label="{escape(topology_id)} power circuit">',
-         '<rect width="740" height="285" fill="#f7fafc"/>']
+    out=[f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {c.width} {c.height}" width="{width}" height="{width*c.height/c.width:g}" role="img" aria-label="{escape(topology_id)} power circuit">',
+         f'<rect width="{c.width}" height="{c.height}" fill="#f7fafc"/>']
     if not c.elements:
         message="Open the existing LLC workspace for its model-linked resonant circuit." if topology_id.upper() in ("T20","T21") else "Unknown topology; no circuit has been substituted."
         return ''.join(out)+f'<text x="25" y="80" font-family="sans-serif" font-size="16">{escape(message)}</text></svg>'
@@ -454,6 +530,6 @@ def svg_schematic(topology_id: str, *, selected: str | None = None, width: int =
         anchor="end" if e.label_dx<0 else "start" if e.label_dx>0 else "middle"
         out += [f'<text x="{e.x+e.label_dx}" y="{e.y+e.label_dy}" text-anchor="{anchor}" fill="{color}" font-size="12" font-family="sans-serif">{escape(e.label)}</text>']
     out += [f'<text x="12" y="20" font-family="sans-serif" font-size="12" fill="#334155">{escape(topology_id.upper())} · Vin +</text>',
-            f'<text x="704" y="35" text-anchor="end" font-family="sans-serif" font-size="12" fill="#334155">Vout {"−" if c.negative_output else "+"}</text>',
-            f'<text x="370" y="277" text-anchor="middle" font-family="sans-serif" font-size="10.5" fill="#64748b">{escape(c.note)}</text>','</svg>']
+            f'<text x="{c.width-36}" y="35" text-anchor="end" font-family="sans-serif" font-size="12" fill="#334155">Vout {"−" if c.negative_output else "+"}</text>',
+            f'<text x="{c.width/2:g}" y="{c.height-8}" text-anchor="middle" font-family="sans-serif" font-size="10.5" fill="#64748b">{escape(c.note)}</text>','</svg>']
     return ''.join(out)

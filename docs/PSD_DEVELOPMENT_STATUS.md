@@ -8,7 +8,7 @@ A new requirement-by-requirement audit is checking actual consumers and common
 minimum deliverables, rather than treating bounded row labels as completion.
 Work is continuing on explicit T05 floating-node dynamics, QR valley/data options
 and PSFB finite-Coss commutation; each remains opt-in with explicit source parameters.
-T05 has independent circuit acceptance; QR fixes and final T18 integration are in progress.
+T05/QR/T18 now have independent circuit acceptance and actual desktop persistence/report tests.
 Concrete audit findings include calculator-session model identity, everyday Chinese
 result presentation and the precise documented Type-I network setup. A03 is now
 PARTIAL pending final independent review: its newly implemented desktop and explicit
@@ -54,11 +54,11 @@ At preparation of this candidate those native results are **pending**.
 | Item | Current boundary | What enables the next step |
 | --- | --- | --- |
 | T05 exact TI strategy | Two-switch simultaneous CCM/BCM implemented; no four-switch substitution | Authorized official executable and identical input captures to identify actual gating/low-load behavior |
-| T05 floating-node DCM stress | Ideal off-state equality does not determine node common-mode voltage | Explicit Coss/Ron/clamp topology and initial charge; solve the full switched periodic node state before reporting finite voltage RMS |
+| T05 floating-node DCM stress | Implemented opt-in finite-Coss/Ron/diode/winding periodic state, independently validated | Nonlinear vendor Coss/recovery/startup would need a separately declared model/data; not an unimplemented ideal-node substitution |
 | T11 exact TI valley rules | Finite-Cnode positive valleys and first zero clamp implemented | Authorized executable comparison for ceiling/valley selection; controller policy for later clamped valleys, skip/burst |
-| T11 nonideal turn-on | Nonlinear Coss and finite positive-voltage turn-on impulse RMS excluded | Device charge/energy curves and finite transition model; independent event/energy validation |
+| T11 nonideal turn-on | Explicit Q(V)/C(V), true later valleys/delays and finite-Ron discharge implemented and independently validated | Arbitrary burst/skip logic, gate charge/recovery and uncovered voltage ranges remain outside this declared policy |
 | T18 exact TI scope | Finite Llk/Lm/Lo CCM and declared diode-secondary BCM/DCM implemented | Authorized executable comparison; public handbook describes 50–100% load, CCM/ZVS assumptions |
-| T18 nonlinear commutation | Dead-time/Coss/recovery ZVS proof, zero-load/burst excluded | Controller timings and device curves, followed by switched commutation validation |
+| T18 nonlinear commutation | Explicit constant-Coss/Ron seven-state CCM circuit and gate-event ZVS independently validated | Nonlinear Qoss/recovery/zero-load/burst require separately declared device/control models; hardware correlation still requires measurements |
 | Other stage extensions | T04 zero isolated load; T10 leakage-clamp transient; T12 leakage/dead-time ZVS; T15–T17 asymmetric timing/flux/body-diode reset; T19 beyond CCM/duty≤0.5/small transfer-C ripple | A separately specified physical model and independent circuit/energy checks; these are not all blocked by TI login |
 | A03/A04 higher-fidelity loss | Accepted-period waveforms are consumed; geometry/material, constant-ESR and commutation assumptions remain explicit | Vendor data and measured material/device/thermal correlation; selected-component overlays require electrical rerun when they change the circuit |
 | A01 unscanned regions | Explicit Vin/load/L/C1 and supported L2/C2/ESR/ESR2/DCR Cartesian corners, ≤500 points | Deliberately selected extra dimensions/model inputs; a finite scan is not a global worst-case proof |
@@ -95,11 +95,14 @@ remain in the source tree.
 - Completed focused repairs: same-temperature nominal/corner reports, exact
   integrator-branch action/help, and toolbox model identity/Chinese presentation.
   See the validation report for red/green evidence and independent checks.
-- T05 and QR optional dynamic kernels are implemented with explicit immutable
-  parameter/source/revision snapshots. Real GUI, diagrams, persistence/report,
-  invalidation and independent physical acceptance are currently being integrated.
-- T18 switched commutation prototype is being converted into the same consumer
-  contract, including separate channel/body/Coss currents and event-based ZVS.
+- T05, QR and T18 optional dynamics have immutable parameter/source/revision
+  snapshots, real connected diagrams, complete branch selection, persistence/report
+  and independent physical acceptance. QR initially missed valid finite-Ron points;
+  the retained independent red/green evidence documents both repaired defects.
+- The current remaining confirmed consumer defect is LLC formula-PDF source
+  mixing: old FHA substitutions with TD-updated loss results. Exact waveform
+  input summaries and per-item source-aware formulas are being implemented.
+  CLI repeat-output mixing is repaired by requiring a new TwoStage directory.
 - After these paths stabilize: freeze sources, rerun affected modules, then full
   regression/RSS and installed/frozen application checks. Linux evidence cannot
   establish unrun Windows/macOS or hardware/TI executable equivalence.
