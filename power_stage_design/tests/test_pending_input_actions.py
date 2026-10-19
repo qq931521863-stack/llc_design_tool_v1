@@ -61,8 +61,8 @@ def settle(window, seconds=20):
     timer = QTimer()
     timer.setSingleShot(True)
     timer.timeout.connect(loop.quit)
-    # QTest.qWait repeatedly holds the binding's GIL during its sleep. Let the
-    # real Qt event loop schedule Python workers and their queued completion.
+    # Repeated qWait polling can starve Python workers in these bindings.
+    # Let the real Qt event loop schedule workers and queued completion.
     try:
         while (window._jobs or window._timer.isActive() or window._loop_timer.isActive()) and time.monotonic() < deadline:
             timer.start(10)

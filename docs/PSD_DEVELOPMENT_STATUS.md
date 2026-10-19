@@ -1,5 +1,26 @@
 # Power Stage Designer development status
 
+## Worker-wait qualification correction (2026-10-19)
+
+The refreshed `74decea` installed-wheel qualification preserves a failed run:
+152 tests passed, one failed during the valid T11 QR setup's 90-second wait.
+The empty-input action had not yet run. Its production wheel self-test had passed,
+but MCP/public-API/frozen stages were not reached after fail-fast. Source and
+installed bytes remained unchanged; this run is not a completed artifact pass.
+
+Independent real-Qt experiments identify substantial Python worker starvation
+under repeated `QTest.qWait(10)` calls. The same installed real QR case passes
+with a real Qt event loop while preserving the original deadline and all result,
+empty-input, job/timer and cleanup assertions. This corrects the test waiting
+strategy, not a numerical model or product execution path. The original whole-run
+failure remains recorded, rather than replaced by isolated passing runs.
+See [the worker-wait mechanism, counterexamples and source boundary](GUI_TEST_WORKER_WAITS.md).
+The fixed source passes all 32 pending-input cases (10.72 s); independent review
+passes six semantic cases and preserves every original function/physics assertion
+except the waiting strategy. Deadline and deleted-timer counterexamples remain.
+New exact-source installed/frozen and native qualification remain required;
+publication stays paused and no physical-model/TI/hardware status is upgraded.
+
 ## Windows report-reader follow-up (2026-10-19)
 
 Native `e9a1199` Windows evidence passes both 10 pt and 12 pt, 100 complete controls
