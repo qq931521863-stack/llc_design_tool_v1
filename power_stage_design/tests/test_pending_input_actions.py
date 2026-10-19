@@ -124,16 +124,16 @@ def test_pending_edit_exports_from_real_file_dialog(desktop, tmp_path, action, s
     assert path.exists(), desktop.status.text()
     identity = desktop.current_inputs().design_id
     if suffix == "json":
-        document = json.loads(path.read_text())
+        document = json.loads(path.read_text(encoding="utf-8"))
         assert document["inputs"]["vin_v"] == 24
         assert document["result_identity"] == identity
         desktop.open_from(path)
         assert desktop.result.inputs == read_project(path)[0]
         assert desktop.result.design_id == identity
     elif suffix == "html":
-        assert identity in path.read_text()
+        assert identity in path.read_text(encoding="utf-8")
     else:
-        with path.open(newline="") as stream:
+        with path.open(encoding="utf-8", newline="") as stream:
             rows = list(csv.DictReader(stream))
         assert len(rows) == 2000
         assert {row["design_id"] for row in rows} == {identity}
@@ -167,7 +167,7 @@ def test_pending_loop_edit_is_recomputed_before_project_snapshot(desktop, tmp_pa
     box = desktop.loop_widgets["esr_ohm"]
     edit(box, ".057")
     desktop.save_to(tmp_path / "loop.json")
-    document = json.loads((tmp_path / "loop.json").read_text())
+    document = json.loads((tmp_path / "loop.json").read_text(encoding="utf-8"))
     assert document["loop_settings"]["plant"]["esr_ohm"] == .057
     assert desktop._loop_settings["plant"]["esr_ohm"] == .057
 
@@ -179,7 +179,7 @@ def test_direct_save_and_report_commit_pending_input(desktop, tmp_path):
     edit(desktop.input_widgets["vin_v"], "30")
     desktop.report_to(tmp_path / "report.html")
     assert desktop.result.inputs.vin_v == 30
-    assert desktop.current_inputs().design_id in (tmp_path / "report.html").read_text()
+    assert desktop.current_inputs().design_id in (tmp_path / "report.html").read_text(encoding="utf-8")
 
 
 def test_uncommitted_edit_cancels_inflight_project_snapshot(desktop, tmp_path, monkeypatch):
