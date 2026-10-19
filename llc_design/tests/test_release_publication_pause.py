@@ -76,4 +76,8 @@ def test_native_regression_preflight_does_not_replace_complete_test_gate():
     assert "test_independent_validation.py" in block[early:complete]
     assert "test_two_stage_desktop.py" in block[early:complete]
     assert "test_llc_desktop_layout.py" in block[early:complete]
+    assert "test_worker_submission.py" in block[early:complete]
+    assert "test_worker_producer_lifetime.py" in block[early:complete]
+    assert "test_schematic_rendering.py" in block[early:complete]
+    assert "test_schematic_references.py" in block[early:complete]
     assert "continue-on-error" not in block

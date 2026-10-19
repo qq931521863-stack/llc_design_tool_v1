@@ -185,7 +185,11 @@ jobs:
             llc_design/tests/test_llc_desktop_layout.py \
             llc_design/tests/test_td_passive_consumers.py \
             llc_design/tests/test_two_stage_desktop.py \
-            llc_design/tests/test_v3_dynamics_control.py
+            llc_design/tests/test_v3_dynamics_control.py \
+            llc_design/tests/test_worker_submission.py \
+            llc_design/tests/test_worker_producer_lifetime.py \
+            llc_design/tests/test_schematic_rendering.py \
+            power_stage_design/tests/test_schematic_references.py
       - name: Run tests
         run: python -m pytest
       - name: Build with PyInstaller
