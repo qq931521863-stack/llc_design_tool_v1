@@ -785,11 +785,11 @@ class SystemModelingDesignDialog(QDialog):
             primary_topology=PrimaryTopology.FULL_BRIDGE,
         )
         tank = design_tank(spec)
-        rac = equivalent_ac_load_ohm(spec.turns_ratio, spec.vout_v, spec.pout_w)
+        rac = equivalent_ac_load_ohm(spec.electrical_turns_ratio, spec.vout_v, spec.pout_w)
         m_req = target_gain(spec, spec.vbus_nom_v)
         m_fr = gain(tank, tank.fr_hz, rac)
         self.stage_summary.setPlainText(
-            f"Turns ratio n         : {spec.turns_ratio:.6g}\n"
+            f"Turns ratio n         : {spec.electrical_turns_ratio:.6g}\n"
             f"Required gain @ Vnom  : {m_req:.6g}\n"
             f"Tank gain @ Fr        : {m_fr:.6g}\n"
             f"Lr / Cr / Lm          : {tank.lr_h*1e6:.4g} µH / {tank.cr_f*1e9:.4g} nF / {tank.lm_h*1e6:.4g} µH\n"

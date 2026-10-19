@@ -319,6 +319,12 @@ class WaveformView(QWidget):
         keys = self.COMPONENT_SIGNALS.get(self.selected_component)
         if keys is None:
             _, keys = self.GROUPS[self.group_combo.currentIndex()]
+        if "v_transformer_terminal" in self.bundle.signals:
+            if self.selected_component in {"transformer", "primary"}:
+                keys = tuple("v_transformer_terminal" if key == "v_transformer_primary" else
+                             "i_transformer_primary" if key == "i_primary_load" else key for key in keys)
+            elif not self.selected_component and self.group_combo.currentIndex() == 2:
+                keys = (*keys, "v_transformer_terminal", "v_transformer_core", "i_magnetizing_physical")
         return tuple(key for key in keys if key in self.bundle.signals and not (
             self.primary_topology == "HALF_BRIDGE" and key.endswith(("_q3", "_q4"))))
 

@@ -365,6 +365,8 @@ def enumerate_envelope_corners(
 
 
 def _scaled_tank(spec: LLCDesignSpec, corner: EnvelopeCorner) -> TankDesign:
+    if spec.integrated_magnetics and (corner.lr_scale != 1 or corner.lm_scale != 1 or corner.turns_ratio_scale != 1):
+        raise ValueError("independent Lr/Lm/turns tolerances are unsupported for characterized integrated magnetics; use a re-characterized correlated matrix")
     base = design_tank(spec)
     lr = base.lr_h * corner.lr_scale
     cr = base.cr_f * corner.cr_scale

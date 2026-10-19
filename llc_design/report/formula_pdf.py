@@ -39,7 +39,7 @@ def build_formula_steps(analysis: SystemAnalysis) -> dict[str, list[FormulaStep]
     primary_device = db.get_primary(spec.primary_device)
     sr_device = db.get_sr(spec.sr_device)
 
-    turns_ratio = spec.primary_turns / spec.secondary_turns
+    turns_ratio = spec.electrical_turns_ratio
     rload = spec.vout_v**2 / spec.pout_w
     omega_r = 2.0 * math.pi * tank.fr_hz
     omega_s = 2.0 * math.pi * op.switching_frequency_hz
@@ -70,7 +70,7 @@ def build_formula_steps(analysis: SystemAnalysis) -> dict[str, list[FormulaStep]
             f"Rac = {_value(tank.rac_nom_ohm, 'ohm')}",
         ),
     ]
-    if TankParameterMode(spec.parameter_mode) == TankParameterMode.USER_DEFINED:
+    if spec.integrated_magnetics or TankParameterMode(spec.parameter_mode) == TankParameterMode.USER_DEFINED:
         tank_steps.extend([
             FormulaStep(
                 "Characteristic impedance from entered tank",
@@ -296,19 +296,22 @@ def build_formula_steps(analysis: SystemAnalysis) -> dict[str, list[FormulaStep]
             FormulaStep(
                 "Resonant-inductor peak flux density",
                 "Bpk := Lr * Ir,pk / (N * Ae)",
-                f"Bpk := {tank.lr_h:.6g} * {op.resonant_current_peak_a:.6g} / ({analysis.resonant_inductor.turns} * {analysis.resonant_inductor.core.ae_m2:.6g})",
+                (f"Bpk := {tank.lr_h:.6g} * {op.resonant_current_peak_a:.6g} / ({analysis.resonant_inductor.turns} * {analysis.resonant_inductor.core.ae_m2:.6g})"
+                 if analysis.resonant_inductor is not None else "NOT_APPLICABLE: no external Lr core"),
                 f"Bpk = {_value(point.resonant_inductor.b_peak_t, 'T')}; limit = {_value(spec.resonant_inductor_max_b_t, 'T')}",
             ),
             FormulaStep(
                 "Resonant-inductor equivalent air gap",
                 "g := mu0*N^2*Ae/Lr - le/mur",
-                f"N := {analysis.resonant_inductor.turns}; Ae := {analysis.resonant_inductor.core.ae_m2:.6g}; Lr := {tank.lr_h:.6g}",
-                f"g = {_value(analysis.resonant_inductor.gap_total_mm, 'mm')}; fill = {_value(analysis.resonant_inductor.fill_factor*100, '%')}",
+                (f"N := {analysis.resonant_inductor.turns}; Ae := {analysis.resonant_inductor.core.ae_m2:.6g}; Lr := {tank.lr_h:.6g}"
+                 if analysis.resonant_inductor is not None else "NOT_APPLICABLE: no external Lr winding/gap"),
+                (f"g = {_value(analysis.resonant_inductor.gap_total_mm, 'mm')}; fill = {_value(analysis.resonant_inductor.fill_factor*100, '%')}"
+                 if analysis.resonant_inductor is not None else "NOT_APPLICABLE"),
             ),
             FormulaStep(
                 "Magnetic core loss by iGSE",
                 "Pv := (1/T)*integral(ki*abs(dB/dt)^alpha*(DeltaB)^(beta-alpha) dt); Pcore := Pv*Ve",
-                f"waveform samples := {spec.magnetic_waveform_samples}; transformer material := {analysis.transformer.core.material}; inductor material := {analysis.resonant_inductor.core.material}",
+                f"waveform samples := {spec.magnetic_waveform_samples}; transformer material := {analysis.transformer.core.material}; inductor material := {analysis.resonant_inductor.core.material if analysis.resonant_inductor is not None else 'ABSENT'}",
                 f"Pcore,xfmr = {_value(point.transformer.core_w, 'W')}; Pcore,Lr = {_value(point.resonant_inductor.core_w, 'W')}",
                 "Temperature-interpolated material coefficients are applied to reconstructed B(t).",
             ),
@@ -352,7 +355,9 @@ def build_formula_steps(analysis: SystemAnalysis) -> dict[str, list[FormulaStep]
         ],
     }
     if _has_td_inputs(point):
-        return _td_formula_steps(analysis, sections)
+        sections = _td_formula_steps(analysis, sections)
+    if spec.integrated_magnetics:
+        sections = _integrated_formula_steps(analysis, sections)
     return sections
 
 
@@ -391,8 +396,8 @@ def _td_formula_steps(analysis, sections):
 
     def edit(name, *, formula=None, substitution=None, method=None, result=None):
         original = next(step for group in sections.values() for step in group if step.name == name)
-        changes = {key: value for key, value in dict(formula=formula, substitution=substitution,
-                    method=method, result=result).items() if value is not None}
+        changes = {key: value for key, value in {"formula": formula, "substitution": substitution,
+                    "method": method, "result": result}.items() if value is not None}
         overrides[name] = replace(original, **changes)
 
     # Operating-point gain, phase and commutation do not become TD estimates
@@ -452,12 +457,16 @@ def _td_formula_steps(analysis, sections):
              method="TD magnetizing state retains DC offset; sampled Faraday/volt-second cross-check applied by consumer. Physical remanence and nonlinear saturation remain unmodeled.",
              result=f"Bpk,Amin = {_value(p.transformer.b_peak_min_area_t, 'T')}; Bdc,Ae = {_value(p.transformer.b_dc_t, 'T')}; limit = {_value(s.transformer_max_b_t, 'T')}")
         irpk = trace.resonant_peak_a if trace is not None else primary.device_peak_current_a * s.primary_parallel_devices
-        edit("Resonant-inductor peak flux density", formula="B[k] := Lr*i_resonant[k]/(N*Ae); Bpk,Ae := max(abs(B[k])); Bpk,Amin := Bpk,Ae*Ae/Amin",
-             substitution=f"Bpk := {analysis.resonant_inductor.inductance_h:.6g}*{irpk:.6g}/({analysis.resonant_inductor.turns}*{analysis.resonant_inductor.core.ae_m2:.6g})",
-             method="TD sampled resonant peak, not the retained FHA peak; original hardware geometry retained.",
-             result=f"Bpk,Ae = {_value(p.resonant_inductor.b_peak_t, 'T')}; Bpk,Amin = {_value(p.resonant_inductor.b_peak_min_area_t, 'T')}; limit,Amin = {_value(s.resonant_inductor_max_b_t, 'T')}")
+        if analysis.resonant_inductor is not None:
+            edit("Resonant-inductor peak flux density", formula="B[k] := Lr*i_resonant[k]/(N*Ae); Bpk,Ae := max(abs(B[k])); Bpk,Amin := Bpk,Ae*Ae/Amin",
+                 substitution=f"Bpk := {analysis.resonant_inductor.inductance_h:.6g}*{irpk:.6g}/({analysis.resonant_inductor.turns}*{analysis.resonant_inductor.core.ae_m2:.6g})",
+                 method="TD sampled resonant peak, not the retained FHA peak; original hardware geometry retained.",
+                 result=f"Bpk,Ae = {_value(p.resonant_inductor.b_peak_t, 'T')}; Bpk,Amin = {_value(p.resonant_inductor.b_peak_min_area_t, 'T')}; limit,Amin = {_value(s.resonant_inductor_max_b_t, 'T')}")
         core_sub = []
-        for label, inputs in (("xfmr", trace.transformer if trace else None), ("Lr", trace.inductor if trace else None)):
+        core_entries = [("xfmr", trace.transformer if trace else None)]
+        if analysis.resonant_inductor is not None:
+            core_entries.append(("Lr", trace.inductor if trace else None))
+        for label, inputs in core_entries:
             if inputs is None:
                 core_sub.append(f"{label}: TD dB/dt quadrature inputs NOT_AVAILABLE; recorded loss is retained, not reverse-fitted.")
                 continue
@@ -470,6 +479,8 @@ def _td_formula_steps(analysis, sections):
         for label, keys in (("primary", ("dc", "skin", "proximity", "bundle", "termination")),
                             ("secondary", ("dc", "skin", "proximity", "bundle", "termination")),
                             ("Lr", ("dc", "skin", "proximity", "gap_fringing", "bundle", "termination"))):
+            if label == "Lr" and analysis.resonant_inductor is None:
+                continue
             prefix = "resonant_inductor" if label == "Lr" else "transformer_" + label
             winding_sub.append(label + " W: " + "; ".join(f"{key}={copper[prefix+'_'+key+'_w']:.6g}" for key in keys))
         winding_sub.append(f"fs={pfs} Hz; xfmr T={p.transformer.estimated_hotspot_c:.6g} degC; Lr T={p.resonant_inductor.estimated_hotspot_c:.6g} degC")
@@ -492,6 +503,96 @@ def _td_formula_steps(analysis, sections):
         "Only the selected points were upgraded. Source is numerical provenance, not a model-validity grade or hardware approval.")
     updated = {group: [overrides.get(step.name, step) for step in steps] for group, steps in sections.items()}
     return {"Nominal loss sources": [source], **updated, "TD harmonic audit": extra} if extra else {"Nominal loss sources": [source], **updated}
+
+
+def _integrated_formula_steps(analysis, sections):
+    """Bind the worksheet to the physical core and the exact two-port APR map."""
+    from ..core.integrated_magnetics import from_spec
+    from ..magnetics.magnetic_waveforms import transformer_current_waveforms
+
+    spec, tank, point = analysis.spec, analysis.tank, analysis.nominal
+    magnetic = from_spec(spec)
+    physical_lm = magnetic.physical_magnetizing_h
+    r = magnetic.effective_turns_ratio / magnetic.physical_turns_ratio
+    core = analysis.transformer.core
+    trace = getattr(point, "td_formula_inputs", None)
+    td = point.magnetic_source.startswith("TIME_DOMAIN")
+    if td and trace is None:
+        flux_input = "Physical TD current summary NOT_AVAILABLE; retained B results are not reverse-fitted."
+    else:
+        if td:
+            peak, mean = trace.magnetizing_peak_a, trace.magnetizing_mean_a
+        else:
+            _, _, physical_current = transformer_current_waveforms(
+                spec, point.operating_point, spec.magnetic_waveform_samples)
+            peak = float(max(abs(physical_current.min()), abs(physical_current.max())))
+            mean = float(physical_current.mean())
+        flux_input = (f"Lmu={physical_lm:.9g} H; r={r:.9g}; Np={spec.primary_turns}; "
+                      f"Ae={core.ae_m2:.9g} m2; Amin={core.amin_m2:.9g} m2; "
+                      f"max(abs(imu,physical))={peak:.9g} A; mean(imu,physical)={mean:.9g} A")
+    replacements = {
+        "Transformer turns ratio": {"formula": "n_phys := Np / Ns",
+            "substitution": f"n_phys := {spec.primary_turns}/{spec.secondary_turns}",
+            "result": f"n_phys = {_value(spec.turns_ratio)}; n_eff = {_value(spec.electrical_turns_ratio)}",
+            "method": "Actual winding ratio and APR electrical ratio are distinct; load/gain use n_eff."},
+        "FHA load reflected to primary": {"formula": "Rac := (8/pi^2)*n_eff^2*Rload"},
+        "Characteristic impedance from entered tank": {"method": "Integrated two-port characterization supplies Lr/Lm; Cr is entered or chosen for requested fr. No target is substituted for measured/declared leakage."},
+        "Transformer peak flux density": {
+            "formula": "r := n_eff/n_phys; imu,physical[k] := (1-r)*ir[k]+r*im_APR[k]; B[k] := Lmu*imu,physical[k]/(Np*Ae)",
+            "substitution": flux_input,
+            "result": f"Bpk,Amin = {_value(point.transformer.b_peak_min_area_t, 'T')}; Bdc,Ae = {_value(point.transformer.b_dc_t, 'T')}",
+            "method": ("Accepted TD physical-current mapping retains DC offset." if td else "FHA magnetic-loss triangular-current reconstruction; distinct from the GUI FHA sine-state/square-clamp display. This is not the displayed waveform's loss or an exact time-domain Faraday claim.") +
+                   " APR Lm*im is not silently treated as the physical core flux."},
+        "Transformer equivalent air gap": {"formula": "g := mu0*Np^2*Ae/Lmu_physical - le/mur",
+            "substitution": f"Lmu_physical={physical_lm:.9g} H; Np={spec.primary_turns}; Ae={core.ae_m2:.9g}; le={core.le_m:.9g}; mur={core.mu_r:.9g}",
+            "method": "Physical main-flux reluctance estimate. APR Lm is not the core magnetizing inductance; hardware fringing/measurement still need validation."},
+        "Resonant-inductor peak flux density": {"formula": "NOT_APPLICABLE", "substitution": "Integrated leakage has no separate Lr core or turns.", "result": "No external core B limit", "method": "Physical transformer B and winding fields are checked in the shared magnetic model."},
+        "Resonant-inductor equivalent air gap": {"formula": "NOT_APPLICABLE", "substitution": "No external Lr core/gap is synthesized.", "result": "No external winding/gap/BOM", "method": "Target leakage and characterized two-port parameters are recorded separately."},
+        "Magnetic thermal fixed-point iteration": {
+            "substitution": f"Tamb={spec.ambient_temperature_c:g}; initial T=max({spec.winding_temperature_c:g},Tamb); Rth,shared={spec.transformer_rth_k_per_w:g}; tolerance={spec.magnetic_thermal_tolerance_c:g}; max iterations={spec.magnetic_thermal_max_iterations}",
+            "result": f"Thot,shared = {_value(point.transformer.estimated_hotspot_c, 'degC')}; external Lr thermal node ABSENT",
+            "method": "Only the shared transformer core and primary/secondary winding losses heat this magnetic component; no second Lr loss or thermal node."},
+    }
+    updated = {group: [replace(step, **replacements[step.name]) if step.name in replacements else step
+                       for step in steps] for group, steps in sections.items()}
+    # Remove misleading absent-part phrases from the remaining real shared
+    # core/copper trace while retaining the original numerical consumer inputs.
+    for group, steps in updated.items():
+        updated[group] = [replace(step,
+            substitution=step.substitution.replace(f"; Lr T={point.resonant_inductor.estimated_hotspot_c:.6g} degC", "; external Lr ABSENT"),
+            result=step.result.replace(f"AC cutoff = {spec.litz_max_harmonic}; Lr uses the same Ip waveform", f"AC cutoff = {spec.litz_max_harmonic}; shared windings only"))
+            for step in steps]
+    target = spec.integrated_target_lr_h
+    target_text = (f"Target Lr={target:.9g} H; relative error={abs(tank.lr_h-target)/target:.9g}; tolerance={spec.integrated_target_tolerance:g}"
+                   if target is not None else "No leakage target requested; characterized response only")
+    evidence = [
+        FormulaStep("Two-winding inductance characterization",
+            "[vp,vs]^T := [[Lp,M],[M,Ls]]*[dip/dt,dis/dt]^T; M^2 < Lp*Ls",
+            f"Lp={magnetic.lp_h:.9g} H; Ls={magnetic.ls_h:.9g} H; M={magnetic.mutual_h:.9g} H; k={magnetic.coupling:.9g}",
+            f"source={spec.integrated_inductance_source.value}; frequency={spec.integrated_measurement_frequency_hz:g} Hz; Np:Ns={spec.integrated_characterized_primary_turns}:{spec.integrated_characterized_secondary_turns}",
+            spec.integrated_measurement_note + "; two windings/full-bridge secondary only; no implicit center-tap mapping."),
+        FormulaStep("Exact all-primary-referred equivalent",
+            "Lr := Lp-M^2/Ls; Lm_APR := M^2/Ls; n_eff := M/Ls",
+            f"Lp={magnetic.lp_h:.9g}; M={magnetic.mutual_h:.9g}; Ls={magnetic.ls_h:.9g}",
+            f"Lr={tank.lr_h:.9g} H; Lm_APR={tank.lm_h:.9g} H; n_eff={spec.electrical_turns_ratio:.9g}",
+            "Lshort equals Lr only with this simultaneous Lm/n_eff transformation."),
+        FormulaStep("Physical T-equivalent",
+            "Lmu := n_phys*M; Lsigma_p := Lp-Lmu; Lsigma_s := Ls-M/n_phys",
+            f"n_phys={spec.turns_ratio:.9g}; M={magnetic.mutual_h:.9g} H",
+            f"Lmu={physical_lm:.9g} H; Lsigma_p={magnetic.primary_leakage_h:.9g} H; Lsigma_s={magnetic.secondary_leakage_h:.9g} H",
+            "Both leakage terms remain physical; balanced-MMF leakage energy is not generally Lshort."),
+        FormulaStep("Leakage target versus characterization", "error := abs(Lr_characterized-Lr_target)/Lr_target",
+            target_text, "Independent Lr core/copper/thermal/BOM count = 0",
+            "Matching a target is not evidence that a selected winding geometry realizes the characterized transformer; see feasibility/geometry checks."),
+    ]
+    screen = analysis.transformer.integrated_leakage
+    if screen is not None:
+        evidence.append(FormulaStep("Winding-field leakage realizability",
+            "Lbalanced := sum(mu0*MLT*thickness*(F0^2+F0*F1+F1^2)/(3*width)); Lbalanced_characterized := Lp+n_phys^2*Ls-2*n_phys*M",
+            f"regions={len(screen.regions)}; configured={screen.balanced_geometry_h:.9g} H; characterized={screen.characterized_balanced_h:.9g} H; relative error={screen.relative_error:.9g}; required P-S spacing={screen.required_interwinding_gap_m:.9g} m; minimum insulation={screen.minimum_insulation_m:.9g} m",
+            f"{screen.status}; required build={screen.required_radial_build_m:.9g} m; window={screen.available_window_height_m:.9g} m; APR Lr bounds=[{screen.geometry_apr_lr_lower_h:.9g}, {screen.geometry_apr_lr_upper_h:.9g}] H",
+            "Includes conductor and insulation regions. Bounds do not infer a unique primary/secondary leakage split. " + " ".join(screen.notes)))
+    return {"Integrated magnetic identity": evidence, **updated}
 
 
 class _FormulaPdf(FPDF):

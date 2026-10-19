@@ -21,7 +21,7 @@ from numpy.typing import NDArray
 
 from llc_design import __version__
 from llc_design.core.spec import (
-    LLCDesignSpec, PrimaryTopology, SecondaryTopology, TankParameterMode,
+    LLCDesignSpec, PrimaryTopology, SecondaryTopology, TankParameterMode, MagneticsMode, IntegratedInductanceSource,
 )
 from pfc_design.control.config import (
     ADCTimingConfig, DigitalFilterConfig, ExternalSenseConfig, LoadModel,
@@ -59,7 +59,7 @@ _MODELS = {cls.__name__: cls for cls in (
     SolutionMapConstraints,
 )}
 _ENUMS = {cls.__name__: cls for cls in (
-    PrimaryTopology, SecondaryTopology, TankParameterMode, ControllerKind,
+    PrimaryTopology, SecondaryTopology, TankParameterMode, MagneticsMode, IntegratedInductanceSource, ControllerKind,
     DelayEnvelope, FMLUTMode, PWMCountMode, ControlInputKind, LoadModel,
 )}
 _GEOMETRY_FIELDS = {
@@ -327,6 +327,14 @@ def decode_model(value: Any) -> Any:
             name, payload = item["__model__"], item["fields"]
             _require(type(name) is str and name in _MODELS, "unsupported model class")
             cls = _MODELS[name]
+            if cls is LLCDesignSpec and type(payload) is dict:
+                # Backward-compatible v1 snapshots predate integrated magnetics.
+                # Only the newly added optional/default fields may be absent.
+                defaults = LLCDesignSpec()
+                payload = dict(payload)
+                for field in fields(cls):
+                    if (field.name == "magnetics_mode" or field.name.startswith("integrated_")) and field.name not in payload:
+                        payload[field.name] = encode_model(getattr(defaults, field.name))
             _require(type(payload) is dict and set(payload) == {f.name for f in fields(cls)},
                      f"{name} fields do not match schema")
             kwargs = {key: decode(v) for key, v in payload.items()}

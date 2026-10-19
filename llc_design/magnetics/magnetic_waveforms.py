@@ -56,7 +56,9 @@ def transformer_current_waveforms(spec: LLCDesignSpec, op: LLCOperatingPoint,
         if mag_now > 0.0:
             magnetizing *= mag_target / mag_now
         primary = load_primary + magnetizing
-    secondary = -spec.turns_ratio * load_primary
+    secondary = -spec.electrical_turns_ratio * load_primary
+    if spec.integrated_magnetics:
+        magnetizing = primary + secondary/spec.turns_ratio
     return primary, secondary, magnetizing
 
 
@@ -67,3 +69,13 @@ def resonant_inductor_waveforms(op: LLCOperatingPoint, inductance_h: float,
     current = op.resonant_current_peak_a * np.sin(theta)
     flux_density = inductance_h * current / (turns * effective_area_m2)
     return periodic_timebase(op.switching_frequency_hz, samples), current, flux_density
+
+
+def physical_transformer_flux(spec, op, primary_turns, effective_area_m2, samples=2048):
+    """Physical core B, distinct from APR Lm state when leakage is integrated."""
+    if not spec.integrated_magnetics:
+        return transformer_flux_waveform(op, primary_turns, effective_area_m2, samples)
+    from ..core.integrated_magnetics import from_spec
+    _, _, physical_im = transformer_current_waveforms(spec, op, samples)
+    return (periodic_timebase(op.switching_frequency_hz, samples),
+            from_spec(spec).physical_magnetizing_h*physical_im/(primary_turns*effective_area_m2))

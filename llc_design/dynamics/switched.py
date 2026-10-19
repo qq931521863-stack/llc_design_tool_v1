@@ -419,6 +419,17 @@ def simulate_switched_steady_state(
         "vds_sr3": ("SR3 VDS", "V", vds_sr3, "sr_switching", "理想 SR 阻断电压", fs),
         "vds_sr4": ("SR4 VDS", "V", vds_sr4, "sr_switching", "理想 SR 阻断电压", fs),
     }
+    from ..core.integrated_magnetics import add_physical_waveform_signals
+    add_physical_waveform_signals(raw, lr_h=model.p.lr_h, lm_h=model.p.lm_h,
+        effective_ratio=model.p.turns_ratio, physical_ratio=model.p.physical_turns_ratio,
+        physical_lmu_h=model.p.physical_magnetizing_h, frequency_hz=fs)
+    if model.p.physical_turns_ratio > 0 and model.p.primary_turns > 0 and model.p.transformer_core_area_m2 > 0:
+        imu = raw["i_magnetizing_physical"][2]
+        bphys = model.p.physical_magnetizing_h*imu/(model.p.primary_turns*model.p.transformer_core_area_m2)
+        hphys = (model.p.primary_turns*imu/model.p.transformer_magnetic_path_m
+                 if model.p.transformer_magnetic_path_m > 0 else np.zeros_like(imu))
+        optional_magnetic["b_transformer"] = ("实体变压器磁通密度 B", "T", bphys, "magnetics", "Lμ*Iμ/(Np*Ae); physical shared core", fs)
+        optional_magnetic["h_transformer"] = ("总磁路等效磁场 H", "A/m", hphys, "magnetics", "Np*Iμ/le; includes gap reluctance, not local ferrite H", fs)
     raw.update(optional_magnetic)
     signals: dict[str, WaveformSignal] = {}
     for key, (label, unit, values, group, description, fundamental_hz) in raw.items():
@@ -440,7 +451,7 @@ def simulate_switched_steady_state(
 
     warnings = [
         "Switched model uses an ideal transformer and ideal full-bridge SR clamp.",
-        "MOSFET nonlinear Coss/Qoss, leakage inductance and winding capacitance are not yet included.",
+        "MOSFET nonlinear Coss/Qoss and winding capacitance are not included. Integrated mode includes the characterized linear leakage matrix through APR.",
     ]
     if not converged:
         warnings.append(

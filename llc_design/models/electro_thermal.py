@@ -143,6 +143,8 @@ def iterate_electro_thermal(
                           last_point.resonant_inductor.total_w if last_point else 0.0,
                           spec.resonant_inductor_rth_k_per_w, ModelGrade.APPROXIMATION),
     )
+    if spec.integrated_magnetics:
+        nodes = tuple(node for node in nodes if node.name != "resonant_inductor")
     sanity = physical_sanity_issues(
         loss_w=last_point.total_loss_w if last_point else None,
         efficiency=last_point.efficiency if last_point else None,

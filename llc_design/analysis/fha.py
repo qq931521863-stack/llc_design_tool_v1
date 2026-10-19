@@ -52,11 +52,11 @@ def _fixed_frequency_output(
     rload = request.load_resistance_ohm
     drop = spec.rectifier_equivalent_drop_v
     target = request.output_voltage_target_v
-    upper = max(4.0 * target, 2.5 * level / spec.turns_ratio, 10.0)
+    upper = max(4.0 * target, 2.5 * level / spec.electrical_turns_ratio, 10.0)
 
     def residual(vout: float) -> float:
-        rac = _load_rac(spec.turns_ratio, vout, drop, rload)
-        predicted = gain(tank, frequency_hz, rac) * level / spec.turns_ratio - drop
+        rac = _load_rac(spec.electrical_turns_ratio, vout, drop, rload)
+        predicted = gain(tank, frequency_hz, rac) * level / spec.electrical_turns_ratio - drop
         return predicted - vout
 
     grid = np.linspace(max(1e-3, 0.001 * target), upper, 181)
@@ -78,7 +78,7 @@ def _fixed_frequency_output(
             method="bounded",
         )
         vout = float(result.x)
-    return vout, _load_rac(spec.turns_ratio, vout, drop, rload)
+    return vout, _load_rac(spec.electrical_turns_ratio, vout, drop, rload)
 
 
 def _phasor_waveforms(
@@ -114,7 +114,7 @@ def _phasor_waveforms(
     vcr = np.real(vcr_phasor * carrier)
     primary_load = ir - im
     polarity = np.where(primary_load >= 0.0, 1.0, -1.0)
-    vp = spec.turns_ratio * (
+    vp = spec.electrical_turns_ratio * (
         output_voltage_v + spec.rectifier_equivalent_drop_v
     ) * polarity
     return time_s, bridge, ir, vcr, im, vp
@@ -153,7 +153,10 @@ def solve_fha(request: LLCAnalysisRequest) -> LLCModelResult:
         bus_voltage_v=request.bus_voltage_v,
         primary_topology=spec.primary_topology.value,
         primary_deadtime_s=spec.primary_deadtime_s,
-        turns_ratio=spec.turns_ratio,
+        turns_ratio=spec.electrical_turns_ratio,
+        physical_turns_ratio=spec.turns_ratio if spec.integrated_magnetics else 0.0,
+        physical_magnetizing_h=spec.physical_magnetizing_inductance_h(tank.lm_h) if spec.integrated_magnetics else 0.0,
+        apr_magnetizing_h=tank.lm_h,
         load_resistance_ohm=request.load_resistance_ohm,
         output_capacitance_f=spec.output_capacitance_f,
         output_cap_esr_ohm=spec.output_cap_esr_ohm,
@@ -168,15 +171,19 @@ def solve_fha(request: LLCAnalysisRequest) -> LLCModelResult:
         warnings=(
             "FHA retains only the fundamental resonant-state components.",
             "Deadtime is displayed in bridge/gate traces but is not included in the FHA phasor solution.",
+            *( ("Integrated FHA voltage traces are display projections: square clamp/KVL voltages are not derivative-consistent with sinusoidal FHA current states and are not Faraday validated.",
+                "SystemAnalyzer FHA magnetic-loss reports use a separate triangular-Im current reconstruction, distinct from this display waveform; V8 waveform loss uses these approximate displayed current states.") if spec.integrated_magnetics else ()),
         ),
         metadata={
             "rac_ohm": rac_ohm,
             "regulated": str(request.regulate_output and request.frequency_hz is None),
             "harmonic_order": 1,
+            **({"physical_voltage_model": "display_projection", "faraday_validated": "false",
+                "system_magnetic_loss_model": "separate_triangular_Im_reconstruction"} if spec.integrated_magnetics else {}),
         },
     )
     normalized_gain = (
-        spec.turns_ratio * (output_voltage_v + spec.rectifier_equivalent_drop_v)
+        spec.electrical_turns_ratio * (output_voltage_v + spec.rectifier_equivalent_drop_v)
         / (spec.bridge_gain * request.bus_voltage_v)
     )
     metrics = metrics_from_waveform(

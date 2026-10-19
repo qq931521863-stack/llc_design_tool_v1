@@ -89,6 +89,8 @@ class TwoStageOptimizationView(QWidget):
             q_values=(spec.q_full_load,), fr_values_hz=(spec.resonant_frequency_hz,),
             primary_turn_values=(spec.primary_turns,), secondary_turn_values=(spec.secondary_turns,),
             primary_devices=(spec.primary_device,), sr_parallel_values=(spec.sr_parallel_devices_per_position,))
+        if spec.integrated_magnetics:
+            config = OptimizationConfig.integrated(spec)
         with QSignalBlocker(self.config_text):
             self.config_text.setPlainText(json.dumps(asdict(config), indent=2, ensure_ascii=False))
 

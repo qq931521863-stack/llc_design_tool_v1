@@ -69,7 +69,7 @@ class TimeDomainFormulaInputs:
     magnetizing_peak_a: float
     magnetizing_mean_a: float
     transformer: CoreLossFormulaInputs
-    inductor: CoreLossFormulaInputs
+    inductor: CoreLossFormulaInputs | None
     primary_rms_phasors_a: tuple[tuple[float, float], ...]
     secondary_rms_phasors_a: tuple[tuple[float, float], ...]
 
@@ -79,7 +79,8 @@ def _td_formula_inputs(analysis, waveform, transformer, inductor):
     from ..magnetics.spectrum import rms_phasors
 
     samples = periodic_samples(waveform, {"i_resonant": "A", "i_magnetizing": "A",
-        "i_transformer_secondary": "A", "v_transformer_primary": "V"}, True)
+        "i_transformer_secondary": "A", "v_transformer_primary": "V",
+        **({"v_resonant_inductor": "V"} if analysis.spec.integrated_magnetics else {})}, True)
     ir, im, isec = (samples.signals[key] for key in
                    ("i_resonant", "i_magnetizing", "i_transformer_secondary"))
     count = len(samples.time_s)
@@ -101,15 +102,21 @@ def _td_formula_inputs(analysis, waveform, transformer, inductor):
                      for p in rms_phasors(values, analysis.spec.litz_max_harmonic))
 
     bt = transformer_flux(samples, analysis.transformer.primary_turns,
-                          analysis.transformer.core.ae_m2, analysis.tank.lm_h)
-    bi = analysis.resonant_inductor.inductance_h * ir / (
-        analysis.resonant_inductor.turns * analysis.resonant_inductor.core.ae_m2)
+                          analysis.transformer.core.ae_m2, analysis.tank.lm_h, analysis.spec)
+    inductor_inputs = None
+    if analysis.resonant_inductor is not None:
+        bi = analysis.resonant_inductor.inductance_h * ir / (
+            analysis.resonant_inductor.turns * analysis.resonant_inductor.core.ae_m2)
+        inductor_inputs = core_inputs(analysis.resonant_inductor.core, bi, inductor.estimated_hotspot_c)
+    if analysis.spec.integrated_magnetics:
+        from ..core.integrated_magnetics import from_spec
+        im = from_spec(analysis.spec).physical_magnetizing_current(ir, im)
     return TimeDomainFormulaInputs(count, dt, samples.frequency_hz,
         float(np.sqrt(np.mean(ir**2))), float(np.max(np.abs(ir))),
         float(np.sqrt(np.mean(isec**2))), float(np.max(np.abs(isec))),
         float(np.max(np.abs(im))), float(np.mean(im)),
         core_inputs(analysis.transformer.core, bt, transformer.estimated_hotspot_c),
-        core_inputs(analysis.resonant_inductor.core, bi, inductor.estimated_hotspot_c),
+        inductor_inputs,
         phasors(ir), phasors(-isec))
 
 
@@ -203,7 +210,7 @@ class SystemAnalysis:
     spec: LLCDesignSpec
     tank: TankDesign
     transformer: TransformerDesign
-    resonant_inductor: ResonantInductorDesign
+    resonant_inductor: ResonantInductorDesign | None
     bus_capacitor: BusCapacitorResult
     operating_points: tuple[OperatingPointLoss, ...]
     feasible: bool
@@ -328,8 +335,9 @@ class LLCSystemAnalyzer:
             assert sr is not None  # the selected path is synchronous rectification
             transformer = analysis.transformer.loss(
                 analysis.spec, point.operating_point, waveform=result.waveform, td_converged=True)
-            inductor = analysis.resonant_inductor.loss(
+            inductor = (analysis.resonant_inductor.loss(
                 analysis.spec, point.operating_point, waveform=result.waveform, td_converged=True)
+                if analysis.resonant_inductor is not None else ResonantInductorLoss(0, 0, 0, 0, 0))
             cr, co = capacitor_results_from_waveform(
                 analysis.spec, point.operating_point, result.waveform, td_converged=True)
             if abs(float(np.mean(result.waveform.signal("v_output").values))
@@ -394,10 +402,17 @@ class LLCSystemAnalyzer:
         if not solved:
             raise GainNotReachableError("no requested operating point can be solved")
 
+        if spec.integrated_magnetics:
+            if (preferred_transformer_core is not None and
+                    preferred_transformer_core.casefold() != spec.integrated_characterized_core.casefold()):
+                raise ValueError("changing the characterized integrated core requires re-characterization")
+            preferred_transformer_core = spec.integrated_characterized_core
         transformer = design_transformer(
             spec, tank, solved, self.core_db, preferred_transformer_core)
-        resonant_inductor = design_resonant_inductor(
-            spec, tank, solved, self.core_db, preferred_inductor_core)
+        if spec.integrated_magnetics and preferred_inductor_core is not None:
+            raise ValueError("integrated magnetics has no separate resonant-inductor core")
+        resonant_inductor = (None if spec.integrated_magnetics else design_resonant_inductor(
+            spec, tank, solved, self.core_db, preferred_inductor_core))
         primary_device = self.device_db.get_primary(spec.primary_device)
         sr_device = self.device_db.get_sr(spec.sr_device)
 
@@ -406,7 +421,8 @@ class LLCSystemAnalyzer:
             p_primary = primary_bridge_loss(spec, tank, op, primary_device)
             p_sr = synchronous_rectifier_loss(spec, op, sr_device)
             p_transformer = transformer.loss(spec, op)
-            p_inductor = resonant_inductor.loss(spec, op)
+            p_inductor = (resonant_inductor.loss(spec, op) if resonant_inductor is not None
+                          else ResonantInductorLoss(0, 0, 0, 0, 0))
             p_cr = resonant_capacitor_result(spec, tank, op)
             p_co = output_capacitor_result(spec, op)
             p_aux = 5.0 + 0.004 * op.pout_w
@@ -424,12 +440,19 @@ class LLCSystemAnalyzer:
         bus = bus_capacitor_result(spec)
         reasons: list[str] = list(solve_errors)
         warnings: list[str] = []
+        if spec.integrated_magnetics:
+            warnings.append("Integrated two-winding linear characterization: APR Lr/Lm/neff are derived together; no separate Lr core, copper, thermal node or BOM. Material/geometry losses remain estimates, not hardware qualification.")
+            warnings.append(f"Characterization: {spec.integrated_measurement_note}; {spec.integrated_measurement_frequency_hz:g} Hz. Frequency, bias, temperature dependence and stray capacitance require hardware verification.")
+            if spec.integrated_target_lr_h is not None:
+                error = abs(tank.lr_h/spec.integrated_target_lr_h - 1.0)
+                if error > spec.integrated_target_tolerance:
+                    reasons.append(f"integrated characterized Lr differs from target by {error*100:.2f}% (limit {spec.integrated_target_tolerance*100:.2f}%)")
         full_load = [p for p in point_results if p.operating_point.load_fraction >= 0.999]
         hard_zvs_points = [p for p in point_results if p.operating_point.load_fraction >= 0.25]
 
         if not transformer.feasible:
             reasons.extend(f"transformer: {reason}" for reason in transformer.reasons)
-        if not resonant_inductor.feasible:
+        if resonant_inductor is not None and not resonant_inductor.feasible:
             reasons.extend(f"resonant inductor: {reason}" for reason in resonant_inductor.reasons)
         for point in full_load:
             op = point.operating_point
@@ -485,7 +508,10 @@ class LLCSystemAnalyzer:
         warnings.append("Core geometry and ferrite coefficients are engineering reference records; verify the exact ordering code and fit manufacturer curves before release.")
         warnings.append("Magnetic core loss uses temperature-interpolated iGSE on reconstructed B(t); minor-loop and DC-bias corrections require measured material data.")
         warnings.append("Litz loss uses exact round-strand skin effect, harmonic layer-MMF proximity loss, transposition and termination penalties; 2D/3D FEA remains the final verification method.")
-        warnings.append("Resonant-inductor gap-fringing winding loss is enabled through a distance-based calibrated field term; transformer leakage contribution to Lr remains separate.")
+        if spec.integrated_magnetics:
+            warnings.append("Integrated transformer leakage is included through the full APR Lr/Lm/effective-ratio transformation and physical winding/core state mapping; winding geometry and hardware realization still require characterization. No independent resonant-inductor core or gap-fringing loss is added.")
+        else:
+            warnings.append("Resonant-inductor gap-fringing winding loss is enabled through a distance-based calibrated field term; transformer leakage contribution to Lr remains separate.")
 
         # Low-risk wire: identify the worst ZVS corner among solved work points
         # using the Level-2 charge-balance definition (does not change feasibility).

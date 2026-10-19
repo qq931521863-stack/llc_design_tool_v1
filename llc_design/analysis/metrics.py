@@ -34,7 +34,7 @@ def metrics_from_waveform(
     pout = vout * vout / request.load_resistance_ohm
     if normalized_gain is None:
         normalized_gain = (
-            spec.turns_ratio * (vout + spec.rectifier_equivalent_drop_v)
+            spec.electrical_turns_ratio * (vout + spec.rectifier_equivalent_drop_v)
             / (spec.bridge_gain * request.bus_voltage_v)
         )
     if input_power_w is None:

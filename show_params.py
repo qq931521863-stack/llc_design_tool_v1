@@ -27,7 +27,7 @@ def main() -> int:
     if not analysis_path.exists():
         print(f"错误: 找不到 {analysis_path}")
         return 1
-    d = json.loads(analysis_path.read_text())
+    d = json.loads(analysis_path.read_text(encoding="utf-8"))
     spec = d["spec"]
     tank = d["tank"]
     tr = d["transformer"]
@@ -67,15 +67,20 @@ def main() -> int:
           f"  填充率 {tr['fill_factor']*100:.1f}%  总气隙 {tr['gap_total_mm']:.2f} mm")
 
     print("\n【谐振电感】")
-    c = li["core"]
-    print(f"  磁芯: {c['part_number']} ({c['shape']}, {core_material(c)})")
-    print(f"  Ae={c['ae_mm2']:.0f} mm2  Aw={c['aw_mm2']:.0f} mm2  Ve={c['ve_mm3']:.0f} mm3  le={c['le_mm']:.0f} mm")
-    w = li["wire"]
-    print(f"  L = {li['inductance_h']*1e6:.3f} uH, {li['turns']:.0f} T / {li['layers']:.0f} 层")
-    print(f"  线: 0.1 mm Litz x{w['strand_count']} 股")
-    print(f"  填充率 {li['fill_factor']*100:.1f}%  总气隙 {li['gap_total_mm']:.2f} mm  "
-          f"Bpk={li['b_t']*1e3:.0f} mT" if li.get("b_t") else
-          f"  填充率 {li['fill_factor']*100:.1f}%  总气隙 {li['gap_total_mm']:.2f} mm")
+    if li is None:
+        print("  集成变压器漏感：无独立 Lr 磁芯、绕组或热节点")
+        integrated = d.get("integrated_magnetics") or {}
+        print(f"  APR n_eff={integrated.get('apr_effective_turns_ratio', 'N/A')}；实体匝比仍为 Np/Ns")
+    else:
+        c = li["core"]
+        print(f"  磁芯: {c['part_number']} ({c['shape']}, {core_material(c)})")
+        print(f"  Ae={c['ae_mm2']:.0f} mm2  Aw={c['aw_mm2']:.0f} mm2  Ve={c['ve_mm3']:.0f} mm3  le={c['le_mm']:.0f} mm")
+        w = li["wire"]
+        print(f"  L = {li['inductance_h']*1e6:.3f} uH, {li['turns']:.0f} T / {li['layers']:.0f} 层")
+        print(f"  线: 0.1 mm Litz x{w['strand_count']} 股")
+        print(f"  填充率 {li['fill_factor']*100:.1f}%  总气隙 {li['gap_total_mm']:.2f} mm  "
+              f"Bpk={li['b_t']*1e3:.0f} mT" if li.get("b_t") else
+              f"  填充率 {li['fill_factor']*100:.1f}%  总气隙 {li['gap_total_mm']:.2f} mm")
 
     print("\n【开关器件选型】")
     prim = spec["primary_device"]

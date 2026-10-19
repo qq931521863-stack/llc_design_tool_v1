@@ -92,6 +92,7 @@ class TopologyView(QGraphicsView):
         self.setMinimumHeight(300)
         self.blocks: dict[str, _Component] = {}
         self.connections: dict[str, tuple[str, str]] = {}
+        self.integrated_magnetics = False
         self.primary_topology = ""
         self.set_primary_topology("FULL_BRIDGE")
 
@@ -132,6 +133,14 @@ class TopologyView(QGraphicsView):
             self._wire((x-width, y+offset), (x+width, y+offset))
         self._label(label, x-20, y+25)
 
+    def set_integrated_magnetics(self, integrated):
+        if self.integrated_magnetics == bool(integrated):
+            return
+        self.integrated_magnetics = bool(integrated)
+        topology = self.primary_topology
+        self.primary_topology = ""
+        self.set_primary_topology(topology)
+
     def set_primary_topology(self, topology) -> None:
         value = getattr(topology, "value", topology)
         if value == self.primary_topology:
@@ -163,7 +172,10 @@ class TopologyView(QGraphicsView):
         self._wire((180, 210), (291, 210)); self._crossing(300, 210)
         self._wire((309, 210), (410, 210))
         self._label("A", 184, 184); self._label("+  Vab  −", 365, 172)
-        self._part("lr", "Lr", "coil", (410, 210), (490, 210), ("A", "XR"), "Ir →")
+        self._part("lr", "Lr 漏感" if self.integrated_magnetics else "Lr", "coil", (410, 210), (490, 210), ("A", "XR"), "Ir →")
+        if self.integrated_magnetics:
+            self._label("APR 电气等效视图：Lr、Lm、理想变比属于同一实体变压器；无独立 Lr 磁芯", 230, 35)
+            self.blocks["lr"].setToolTip("同一变压器的漏场等效 Lr；点击查看 APR 电压/电流。实体磁件只计一次。")
         # Effective primary series damping is included by all waveform solvers.
         self._part("rseries", "RΣ", "resistor", (490, 210), (550, 210),
                    ("XR", "X"), "Ir →", scale=0.75)

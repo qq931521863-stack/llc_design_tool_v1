@@ -19,11 +19,12 @@ from ..core.tank import TankDesign, design_tank
 from ..dynamics.periodic_samples import PeriodicSamples, periodic_samples, transformer_flux
 from ..dynamics.waveforms import WaveformBundle
 from .core import CoreDatabase, CoreSpec
+from .leakage_geometry import IntegratedLeakageScreen, screen_integrated_leakage
 from .litz import (LitzWire, StackLayer, WindingLossBreakdown,
                    dc_resistance_ohm, distribute_turns,
                    layered_litz_stack_loss, select_litz_wire, winding_layers)
 from .magnetic_waveforms import (transformer_current_waveforms,
-                                 transformer_flux_waveform)
+                                 physical_transformer_flux)
 
 
 MU0 = 4.0e-7 * math.pi
@@ -94,6 +95,7 @@ class TransformerDesign:
     feasible: bool
     reasons: tuple[str, ...]
     alternatives: tuple[TransformerCandidateSummary, ...] = ()
+    integrated_leakage: IntegratedLeakageScreen | None = None
 
     @property
     def turns_ratio(self) -> float:
@@ -136,10 +138,10 @@ class TransformerDesign:
                              temperature_c: float, samples: PeriodicSamples | None = None) -> tuple[float, WindingLossBreakdown, WindingLossBreakdown,
                                                              float, float, tuple[str, ...]]:
         if samples is None:
-            t, b = transformer_flux_waveform(
-                op, self.primary_turns, self.core.ae_m2, spec.magnetic_waveform_samples)
+            t, b = physical_transformer_flux(
+                spec, op, self.primary_turns, self.core.ae_m2, spec.magnetic_waveform_samples)
         else:
-            t, b = samples.time_s, transformer_flux(samples, self.primary_turns, self.core.ae_m2, design_tank(spec).lm_h)
+            t, b = samples.time_s, transformer_flux(samples, self.primary_turns, self.core.ae_m2, design_tank(spec).lm_h, spec)
         b_peak = float(max(abs(b.min()), abs(b.max())))
         b_peak_min = b_peak * self.core.ae_m2 / self.core.amin_m2
         p_core = self.core.core_loss_waveform_w(t, b, temperature_c)
@@ -163,7 +165,8 @@ class TransformerDesign:
         samples = None
         if waveform is not None:
             samples = periodic_samples(waveform, {"i_resonant": "A",
-                "i_transformer_secondary": "A", "i_magnetizing": "A", "v_transformer_primary": "V"}, td_converged)
+                "i_transformer_secondary": "A", "i_magnetizing": "A", "v_transformer_primary": "V",
+                **({"v_resonant_inductor": "V"} if spec.integrated_magnetics else {})}, td_converged)
             op = replace(op, switching_frequency_hz=samples.frequency_hz)
         elif td_converged is not None:
             raise ValueError("time-domain transformer loss requested without waveform")
@@ -205,8 +208,7 @@ class TransformerDesign:
             secondary_termination_w=secondary.termination_w,
             estimated_hotspot_c=temperature,
             material_warnings=warnings,
-            b_dc_t=(float(sum(samples.signals["i_magnetizing"]) / len(samples.time_s))
-                    * design_tank(spec).lm_h / (self.primary_turns * self.core.ae_m2)
+            b_dc_t=(float(transformer_flux(samples, self.primary_turns, self.core.ae_m2, design_tank(spec).lm_h, spec).mean())
                     if samples is not None else 0.0),
         )
 
@@ -239,6 +241,12 @@ def _build_for_core(spec: LLCDesignSpec, tank: TankDesign,
     radial_build = (2.0 * p_layers * primary_wire.equivalent_outer_diameter_mm
                     + s_layers * secondary_wire.equivalent_outer_diameter_mm
                     + 1.2)
+    if spec.integrated_magnetics:
+        actual_p_layers = len(distribute_turns(spec.primary_turns//2, p_tpl)) + len(distribute_turns(spec.primary_turns-spec.primary_turns//2, p_tpl))
+        radial_build = (actual_p_layers*primary_wire.equivalent_outer_diameter_mm
+            + s_layers*secondary_wire.equivalent_outer_diameter_mm
+            + 2*spec.integrated_interwinding_gap_m*1e3
+            + max(0, actual_p_layers+s_layers-3)*spec.integrated_interlayer_gap_m*1e3)
 
     length_p = spec.primary_turns * core.mlt_primary_mm * 1e-3
     length_s = spec.secondary_turns * core.mlt_secondary_mm * 1e-3
@@ -247,11 +255,10 @@ def _build_for_core(spec: LLCDesignSpec, tank: TankDesign,
     rdc_s = dc_resistance_ohm(secondary_wire, length_s,
                              spec.winding_temperature_c)
 
-    b_values = [op.transformer_square_equivalent_v /
-                (4.0 * spec.primary_turns * core.amin_m2
-                 * op.switching_frequency_hz) for op in ops]
+    b_values = [max(abs(physical_transformer_flux(spec, op, spec.primary_turns,
+                core.amin_m2, spec.magnetic_waveform_samples)[1])) for op in ops]
     worst_b = max(b_values)
-    gap_m = (MU0 * spec.primary_turns**2 * core.ae_m2 / tank.lm_h
+    gap_m = (MU0 * spec.primary_turns**2 * core.ae_m2 / spec.physical_magnetizing_inductance_h(tank.lm_h)
              - core.le_m / core.mu_r)
     gap_mm = max(gap_m, 0.0) * 1e3
 
@@ -269,7 +276,7 @@ def _build_for_core(spec: LLCDesignSpec, tank: TankDesign,
     if gap_mm > spec.transformer_max_gap_mm:
         reasons.append(f"total gap {gap_mm:.2f} mm exceeds {spec.transformer_max_gap_mm:.2f} mm")
 
-    return TransformerDesign(
+    design = TransformerDesign(
         core=core, primary_turns=spec.primary_turns,
         secondary_turns=spec.secondary_turns,
         primary_wire=primary_wire, secondary_wire=secondary_wire,
@@ -279,6 +286,24 @@ def _build_for_core(spec: LLCDesignSpec, tank: TankDesign,
         gap_total_mm=gap_mm, primary_rdc_ohm=rdc_p,
         secondary_rdc_ohm=rdc_s, worst_b_peak_t=worst_b,
         feasible=not reasons, reasons=tuple(reasons))
+    return attach_integrated_leakage_screen(spec, design)
+
+
+def attach_integrated_leakage_screen(spec, design):
+    if not spec.integrated_magnetics:
+        return design
+    screen = screen_integrated_leakage(spec, design)
+    reasons = list(design.reasons)
+    if not screen.reachable:
+        reasons.append("integrated balanced-leakage target is unreachable within insulation/window limits of the 1-D stack")
+    if screen.relative_error > spec.integrated_geometry_tolerance:
+        reasons.append("configured stack balanced leakage differs from characterization; adjust spacing or re-characterize")
+    if spec.integrated_interwinding_gap_m < spec.integrated_minimum_insulation_m:
+        reasons.append("configured P-S spacing is below the declared insulation minimum")
+    if screen.radial_build_m > screen.available_window_height_m:
+        reasons.append("integrated configured radial build exceeds window")
+    return replace(design, integrated_leakage=screen,
+        radial_build_mm=screen.radial_build_m*1e3, feasible=not reasons, reasons=tuple(reasons))
 
 
 def design_transformer(spec: LLCDesignSpec, tank: TankDesign,
@@ -286,6 +311,11 @@ def design_transformer(spec: LLCDesignSpec, tank: TankDesign,
                        database: CoreDatabase | None = None,
                        preferred_core: str | None = None) -> TransformerDesign:
     db = database or CoreDatabase()
+    if spec.integrated_magnetics:
+        spec.validate()
+        if preferred_core is not None and preferred_core.casefold() != spec.integrated_characterized_core.casefold():
+            raise ValueError("changing the characterized integrated core requires re-characterization")
+        preferred_core = spec.integrated_characterized_core
     cores = [db.get(preferred_core)] if preferred_core else db.for_purpose("transformer", spec.transformer_core_families)
     ops = tuple(operating_points)
     designs = [_build_for_core(spec, tank, ops, core) for core in cores]

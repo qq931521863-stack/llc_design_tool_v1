@@ -79,7 +79,16 @@ def design_tank(spec: LLCDesignSpec) -> TankDesign:
     fr/Ln/Q are derived from them. No optimizer or hidden re-synthesis is run.
     """
     spec.validate()
-    rac = equivalent_ac_load_ohm(spec.turns_ratio, spec.vout_v, spec.pout_w)
+    rac = equivalent_ac_load_ohm(spec.electrical_turns_ratio, spec.vout_v, spec.pout_w)
+    if spec.integrated_magnetics:
+        from .integrated_magnetics import from_spec
+        magnetic = from_spec(spec)
+        lr, lm = magnetic.lr_h, magnetic.lm_h
+        cr = (float(spec.user_cr_f) if TankParameterMode(spec.parameter_mode) == TankParameterMode.USER_DEFINED
+              else 1.0 / ((2.0*math.pi*spec.resonant_frequency_hz)**2 * lr))
+        zr = math.sqrt(lr/cr)
+        return TankDesign(lr, cr, lm, rac, zr, lm/lr, zr/rac,
+                          1.0/(2.0*math.pi*math.sqrt(lr*cr)))
     if TankParameterMode(spec.parameter_mode) == TankParameterMode.USER_DEFINED:
         assert spec.user_lr_h is not None and spec.user_cr_f is not None and spec.user_lm_h is not None
         lr = float(spec.user_lr_h)
@@ -131,7 +140,7 @@ def gain_vector(tank: TankDesign, frequencies_hz: np.ndarray,
 
 
 def target_gain(spec: LLCDesignSpec, vbus_v: float) -> float:
-    return (spec.turns_ratio * (spec.vout_v + spec.rectifier_equivalent_drop_v)
+    return (spec.electrical_turns_ratio * (spec.vout_v + spec.rectifier_equivalent_drop_v)
             / (spec.bridge_gain * vbus_v))
 
 

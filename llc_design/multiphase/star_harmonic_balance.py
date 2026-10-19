@@ -182,7 +182,7 @@ def solve_three_phase_hb_at_frequency(spec:LLCDesignSpec,tank:TankDesign,frequen
         dense=np.linspace(0.0,zeta,max(512,8*cfg.collocation_points),endpoint=False)
         jr_d,_=_eval(cr,dense,zeta,h);jm_d,_=_eval(ci,dense,zeta,h);_,cl_d,_=_segment_arrays(dense,segs)
         pnorm=_power_norm(dense,jr_d,jm_d,cl_d,zeta)
-        vrect=M*vin/spec.turns_ratio;vo=max(vrect-spec.rectifier_equivalent_drop_v,1e-9);pout=vo*vo/rload;ptransfer=pout*vrect/vo;vb=(2.0/3.0)*vin;pt=ptransfer*tank.zr_ohm/(vb*vb)
+        vrect=M*vin/spec.electrical_turns_ratio;vo=max(vrect-spec.rectifier_equivalent_drop_v,1e-9);pout=vo*vo/rload;ptransfer=pout*vrect/vo;vb=(2.0/3.0)*vin;pt=ptransfer*tank.zr_ohm/(vb*vb)
         out.append(cfg.constraint_weight*(pnorm-pt)/max(abs(pt),0.05))
         return np.asarray(out,dtype=float)
 
@@ -208,8 +208,8 @@ def solve_three_phase_hb_at_frequency(spec:LLCDesignSpec,tank:TankDesign,frequen
     # State schedule for second half is the antisymmetric image of first half.
     th_half=np.mod(theta,zeta); src_h,cl_h,_=_segment_arrays(th_half,segs);sgn=np.where(theta<zeta,1.0,-1.0);src=src_h*sgn;clamp=cl_h*sgn
     openmask=~np.isfinite(clamp);mlm=clamp.copy();mlm[openmask]=(src[openmask]-m[openmask])/(1.0+lam)
-    vb=(2.0/3.0)*vin;ib=vb/tank.zr_ohm;vrect=M*vin/spec.turns_ratio;vo=max(vrect-spec.rectifier_equivalent_drop_v,0.0);pout=vo*vo/rload
-    ir=jr*ib;im=jm*ib;isec=(jr-jm)*ib*spec.turns_ratio;vcr=m*vb;vlm=mlm*vb
+    vb=(2.0/3.0)*vin;ib=vb/tank.zr_ohm;vrect=M*vin/spec.electrical_turns_ratio;vo=max(vrect-spec.rectifier_equivalent_drop_v,0.0);pout=vo*vo/rload
+    ir=jr*ib;im=jm*ib;isec=(jr-jm)*ib*spec.electrical_turns_ratio;vcr=m*vb;vlm=mlm*vb
     shift=n//3;ab=np.abs(isec);iout_raw=ab+np.roll(ab,shift)+np.roll(ab,2*shift)
     # The state model gives the rectified-current waveform shape. Normalize its
     # mean to the physical DC load current; this is the same power constraint

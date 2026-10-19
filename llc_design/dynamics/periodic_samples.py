@@ -56,7 +56,7 @@ def periodic_samples(bundle: WaveformBundle, units: dict[str, str],
 
 
 def transformer_flux(samples: PeriodicSamples, turns: int, area_m2: float,
-                     magnetizing_inductance_h: float) -> np.ndarray:
+                     magnetizing_inductance_h: float, spec=None) -> np.ndarray:
     """Preserve modeled DC flux from Lm*Im/(N*Ae), cross-check Faraday's law.
 
     The linear Lm state retains a DC-current offset; physical remanence and
@@ -65,6 +65,13 @@ def transformer_flux(samples: PeriodicSamples, turns: int, area_m2: float,
     quadrature error for switching edges, never a free flux-walk correction.
     """
     voltage = samples.signals["v_transformer_primary"]
+    current = samples.signals["i_magnetizing"]
+    if spec is not None and spec.integrated_magnetics:
+        from ..core.integrated_magnetics import from_spec
+        magnetic = from_spec(spec)
+        voltage = magnetic.physical_core_voltage(voltage, samples.signals["v_resonant_inductor"])
+        current = magnetic.physical_magnetizing_current(samples.signals["i_resonant"], current)
+        magnetizing_inductance_h = magnetic.physical_magnetizing_h
     mean = float(np.mean(voltage))
     scale = max(float(np.max(np.abs(voltage))), 1e-12)
     if abs(mean) > 1e-6 * scale:
@@ -74,7 +81,7 @@ def transformer_flux(samples: PeriodicSamples, turns: int, area_m2: float,
     dt = samples.time_s[1] - samples.time_s[0]
     increments = 0.5 * (voltage + np.roll(voltage, -1)) * dt
     integral = np.concatenate(([0.0], np.cumsum(increments[:-1])))
-    state_flux = magnetizing_inductance_h * samples.signals["i_magnetizing"]
+    state_flux = magnetizing_inductance_h * current
     ac_error = np.max(np.abs((integral - np.mean(integral)) - (state_flux - np.mean(state_flux))))
     quadrature_bound = dt * float(np.sum(np.abs(np.roll(voltage, -1) - voltage)))
     numerical_floor = 1e-7 * max(float(np.ptp(state_flux)), 1e-12)

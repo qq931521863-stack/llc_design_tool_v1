@@ -108,13 +108,13 @@ def _three_phase_electrical_from_model(
     source=model.source_norm*((2.0/3.0)*vbus_v)
     angle=_three_phase_fundamental_impedance_angle(source,model.i_resonant_a)
     src_rms=float(np.sqrt(np.mean(source*source)))
-    iload_primary=model.i_secondary_phase_a/max(topology_spec.turns_ratio,1e-30)
+    iload_primary=model.i_secondary_phase_a/max(topology_spec.electrical_turns_ratio,1e-30)
     iload_rms=float(np.sqrt(np.mean(iload_primary*iload_primary)))
-    required_m=topology_spec.turns_ratio*(spec.vout_v+spec.rectifier_equivalent_drop_v)/vbus_v
+    required_m=topology_spec.electrical_turns_ratio*(spec.vout_v+spec.rectifier_equivalent_drop_v)/vbus_v
     phases=tuple(
         PhaseElectricalPoint(
             idx+1,off,pphase,100.0/3.0,q,model.normalized_gain,required_m,angle,
-            model.resonant_current_rms_a,tank,off-angle,src_rms,topology_spec.turns_ratio,
+            model.resonant_current_rms_a,tank,off-angle,src_rms,topology_spec.electrical_turns_ratio,
             topology_spec.primary_turns,topology_spec.secondary_turns,iload_rms,off,
         )
         for idx,off in enumerate(fixed_phase_offsets_deg(3))

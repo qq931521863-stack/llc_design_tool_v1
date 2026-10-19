@@ -456,6 +456,18 @@ def reconstruct_dynamic_phasor_waveforms(
         "vds_sr3": ("SR3 VDS", "V", vds_sr3, "sr_switching", "理想全桥 SR 阻断电压", fs),
         "vds_sr4": ("SR4 VDS", "V", vds_sr4, "sr_switching", "理想全桥 SR 阻断电压", fs),
     }
+    from ..core.integrated_magnetics import add_physical_waveform_signals
+    add_physical_waveform_signals(raw, lr_h=p.lr_h, lm_h=p.lm_h,
+        effective_ratio=p.turns_ratio, physical_ratio=p.physical_turns_ratio,
+        physical_lmu_h=p.physical_magnetizing_h, frequency_hz=fs,
+        voltage_projection_name="EDF")
+    if p.physical_turns_ratio > 0 and p.primary_turns > 0 and p.transformer_core_area_m2 > 0:
+        imu = raw["i_magnetizing_physical"][2]
+        bphys = p.physical_magnetizing_h*imu/(p.primary_turns*p.transformer_core_area_m2)
+        hphys = (p.primary_turns*imu/p.transformer_magnetic_path_m
+                 if p.transformer_magnetic_path_m > 0 else np.zeros_like(imu))
+        optional_magnetic["b_transformer"] = ("实体变压器磁通密度 B", "T", bphys, "magnetics", "Lμ*Iμ/(Np*Ae); physical shared core", fs)
+        optional_magnetic["h_transformer"] = ("总磁路等效磁场 H", "A/m", hphys, "magnetics", "Np*Iμ/le; includes gap reluctance, not local ferrite H", fs)
     raw.update(optional_magnetic)
     signals: dict[str, WaveformSignal] = {}
     for key, (label, unit, values, group, description, fundamental_hz) in raw.items():
@@ -484,12 +496,16 @@ def reconstruct_dynamic_phasor_waveforms(
             "Fast waveform mode retains only fundamental resonant-state components.",
             "Primary VDS traces are ideal switch states; nonlinear Coss commutation is not included.",
             "EDF output-capacitor current uses constant mean load current; plotted Vo/R has a ripple/R KCL residual. Use HB or detailed mode for instantaneous output-network balance.",
+            *(("Integrated EDF voltage traces are display projections: square clamp/KVL voltages are not derivative-consistent with fundamental current states and are not Faraday validated.",
+               "SystemAnalyzer FHA magnetic-loss reports use a separate triangular-Im reconstruction, not this EDF display waveform.") if p.physical_turns_ratio > 0 else ()),
         ),
         metadata={
             "output_voltage_v": steady_state.output_voltage_v,
             "series_resistance_ohm": p.series_resistance_ohm,
             "cycles": cycles,
             "samples_per_cycle": samples_per_cycle,
+            **({"physical_voltage_model": "display_projection", "faraday_validated": "false",
+                "voltage_projection_method": "EDF"} if p.physical_turns_ratio > 0 else {}),
         },
     ), bus_voltage_v=inputs.bus_voltage_v, primary_topology=p.primary_topology,
         series_resistance_ohm=p.series_resistance_ohm, output_cap_esr_ohm=p.output_cap_esr_ohm)

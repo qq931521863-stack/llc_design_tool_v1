@@ -22,7 +22,7 @@ def plot_gain_curves(analysis: SystemAnalysis, path: str | Path) -> Path:
         pout = spec.pout_w * max(load, spec.minimum_modeled_load_fraction)
         transferred_power = pout * (1.0 + spec.rectifier_equivalent_drop_v / spec.vout_v)
         rac = equivalent_ac_load_ohm(
-            spec.turns_ratio, spec.vout_v + spec.rectifier_equivalent_drop_v,
+            spec.electrical_turns_ratio, spec.vout_v + spec.rectifier_equivalent_drop_v,
             transferred_power)
         values = [gain(tank, float(f), rac) for f in frequencies]
         ax.plot(frequencies / 1e3, values, label=f"{load*100:.0f}% load")

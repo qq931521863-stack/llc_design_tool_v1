@@ -50,12 +50,14 @@ class LLCOperatingPoint:
 
 def solve_operating_point(spec: LLCDesignSpec, tank: TankDesign,
                           vbus_v: float, load_fraction: float) -> LLCOperatingPoint:
+    from .integrated_magnetics import require_consistent_tank
+    require_consistent_tank(spec, tank)
     modeled_fraction = max(load_fraction, spec.minimum_modeled_load_fraction)
     pout = spec.pout_w * modeled_fraction
     io = pout / spec.vout_v
     transferred_power = pout * (1.0 + spec.rectifier_equivalent_drop_v / spec.vout_v)
     rac = equivalent_ac_load_ohm(
-        spec.turns_ratio, spec.vout_v + spec.rectifier_equivalent_drop_v,
+        spec.electrical_turns_ratio, spec.vout_v + spec.rectifier_equivalent_drop_v,
         transferred_power)
     required = target_gain(spec, vbus_v)
     solution = solve_frequency(tank, spec, rac, required)
@@ -72,7 +74,7 @@ def solve_operating_point(spec: LLCDesignSpec, tank: TankDesign,
     i_mag_rms = abs(i_mag)
     i_mag_peak = math.sqrt(2.0) * i_mag_rms
     i_load_rms = abs(i_load)
-    i_sec_rms = spec.turns_ratio * i_load_rms
+    i_sec_rms = spec.electrical_turns_ratio * i_load_rms
     i_sec_peak = math.sqrt(2.0) * i_sec_rms
 
     phase_rad = math.radians(state.input_phase_deg)

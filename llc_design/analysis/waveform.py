@@ -76,6 +76,9 @@ def build_standard_waveform_bundle(
     resonant_capacitor_voltage_v: NDArray[np.float64],
     magnetizing_current_a: NDArray[np.float64],
     transformer_primary_voltage_v: NDArray[np.float64],
+    physical_turns_ratio: float = 0.0,
+    physical_magnetizing_h: float = 0.0,
+    apr_magnetizing_h: float = 0.0,
     warnings: tuple[str, ...] = (),
     metadata: Mapping[str, float | str] | None = None,
 ) -> WaveformBundle:
@@ -207,6 +210,11 @@ def build_standard_waveform_bundle(
         "vds_sr4": ("SR4 VDS", "V", vds_sr4, "sr_switching", "理想 SR 阻断电压", switching_frequency_hz),
     }
 
+    from ..core.integrated_magnetics import add_physical_waveform_signals
+    add_physical_waveform_signals(raw, lr_h=resonant_inductance_h, lm_h=apr_magnetizing_h,
+        effective_ratio=turns_ratio, physical_ratio=physical_turns_ratio,
+        physical_lmu_h=physical_magnetizing_h, frequency_hz=switching_frequency_hz,
+        voltage_projection_name="FHA" if model_name.startswith("fha") else "")
     signals: dict[str, WaveformSignal] = {}
     for key, (label, unit, values, group, description, fundamental_hz) in raw.items():
         values = np.asarray(values, dtype=float)

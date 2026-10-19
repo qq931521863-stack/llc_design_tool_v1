@@ -200,7 +200,10 @@ def run(config, vbus, vout, pout, fr_khz, fmin_khz, fmax_khz, ln, q_full,
     click.echo(f"  Input/output: {spec.vbus_nom_v:.0f} Vdc -> {spec.vout_v:.1f} V / {spec.pout_w/1000:.2f} kW")
     click.echo(f"  Tank source: {spec.parameter_mode.value}; Lr={analysis.tank.lr_h*1e6:.3f} uH, Cr={analysis.tank.cr_f*1e9:.3f} nF, Lm={analysis.tank.lm_h*1e6:.3f} uH, fr={analysis.tank.fr_hz/1e3:.3f} kHz, Ln={analysis.tank.ln_ratio:.4f}, Q={analysis.tank.q_full_load:.4f}")
     click.echo(f"  Transformer: {analysis.transformer.core.part_number}, {spec.primary_turns}:{spec.secondary_turns}, fill={analysis.transformer.fill_factor*100:.1f}%")
-    click.echo(f"  Resonant inductor: {analysis.resonant_inductor.core.part_number}, {analysis.resonant_inductor.turns} T, {analysis.resonant_inductor.layers} layers")
+    if analysis.resonant_inductor is None:
+        click.echo("  Integrated transformer leakage Lr; no separate resonant inductor")
+    else:
+        click.echo(f"  Resonant inductor: {analysis.resonant_inductor.core.part_number}, {analysis.resonant_inductor.turns} T, {analysis.resonant_inductor.layers} layers")
     click.echo(f"  Nominal: fs={nominal.operating_point.switching_frequency_hz/1e3:.2f} kHz, loss={nominal.total_loss_w:.2f} W, eta={nominal.efficiency*100:.3f}%")
     click.echo(f"  Feasibility: {'PASS' if analysis.feasible else 'FAIL'}")
     for reason in analysis.feasibility_reasons:
@@ -764,7 +767,10 @@ def v8_magnetics(config, vbus, load_fraction):
     result=solve_harmonic_balance(LLCAnalysisRequest(spec,vbus_v=vin,load_fraction=load_fraction,waveform_cycles=1,samples_per_cycle=1024))
     m=analyze_golden_magnetics(spec,result,system.transformer)
     click.echo(f"Core={m.core_loss_w:.3f} W, CuP={m.primary_copper_w:.3f} W, CuS={m.secondary_copper_w:.3f} W, total={m.total_loss_w:.3f} W")
-    click.echo(f"Bpk={m.b_peak_t*1e3:.2f} mT, Llk={m.leakage_inductance_h*1e6:.3f} uH, Cps={m.primary_secondary_capacitance_f*1e12:.1f} pF, hotspot={m.hotspot_c:.1f} C")
+    click.echo(f"Leakage definition: {m.leakage_definition}")
+    if m.apr_lr_h is not None:
+        click.echo(f"APR Lr=Lshort={m.apr_lr_h*1e6:.6f} uH; no separate Lr magnetic component")
+    click.echo(f"Bpk={m.b_peak_t*1e3:.2f} mT, balanced_geometry={m.leakage_inductance_h*1e6:.3f} uH, Cps={m.primary_secondary_capacitance_f*1e12:.1f} pF, hotspot={m.hotspot_c:.1f} C")
 
 
 @cli.command("closed-loop-selftest")

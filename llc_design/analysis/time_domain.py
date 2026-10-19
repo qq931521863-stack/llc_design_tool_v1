@@ -293,7 +293,7 @@ def solve_time_domain(
     )
     output_average = bundle.signal("v_output").statistics.average
     normalized_gain = (
-        spec.turns_ratio
+        spec.electrical_turns_ratio
         * (output_average + spec.rectifier_equivalent_drop_v)
         / (spec.bridge_gain * request.bus_voltage_v)
     )

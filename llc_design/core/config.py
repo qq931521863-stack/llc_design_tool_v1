@@ -14,7 +14,14 @@ from typing import Any
 
 from llc_design import __version__
 
-from .spec import LLCDesignSpec, PrimaryTopology, SecondaryTopology, TankParameterMode
+from .spec import (
+    IntegratedInductanceSource,
+    LLCDesignSpec,
+    MagneticsMode,
+    PrimaryTopology,
+    SecondaryTopology,
+    TankParameterMode,
+)
 
 PROJECT_SCHEMA_VERSION = 1
 
@@ -32,6 +39,10 @@ def _normalize(data: dict) -> dict:
         normalized["secondary_topology"] = SecondaryTopology(normalized["secondary_topology"])
     if "parameter_mode" in normalized:
         normalized["parameter_mode"] = TankParameterMode(normalized["parameter_mode"])
+    if "magnetics_mode" in normalized:
+        normalized["magnetics_mode"] = MagneticsMode(normalized["magnetics_mode"])
+    if "integrated_inductance_source" in normalized:
+        normalized["integrated_inductance_source"] = IntegratedInductanceSource(normalized["integrated_inductance_source"])
     return normalized
 
 
@@ -213,7 +224,13 @@ WAVEFORM_COMPONENTS = frozenset({
 
 def waveform_spec_identity(spec: LLCDesignSpec) -> str:
     """Identity includes every physical spec input, even fields not shown in the GUI."""
-    return hashlib.sha256(json.dumps(_spec_payload(spec), sort_keys=True,
+    payload = _spec_payload(spec)
+    defaults = _spec_payload(LLCDesignSpec())
+    added = {key for key in defaults if key == "magnetics_mode" or key.startswith("integrated_")}
+    if all(payload[key] == defaults[key] for key in added):
+        # Legacy separate-magnetics waveform sessions retain the exact identity.
+        payload = {key: value for key, value in payload.items() if key not in added}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True,
                                      allow_nan=False).encode()).hexdigest()
 
 

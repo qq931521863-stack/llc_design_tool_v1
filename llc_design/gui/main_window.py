@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -65,7 +66,13 @@ from ..core.config import (
     waveform_request_identity,
 )
 from ..core.q_zvs import LLCQZVSAnalysis, build_q_zvs_analysis
-from ..core.spec import LLCDesignSpec, PrimaryTopology, TankParameterMode
+from ..core.spec import (
+    IntegratedInductanceSource,
+    LLCDesignSpec,
+    MagneticsMode,
+    PrimaryTopology,
+    TankParameterMode,
+)
 from ..core.tank import design_tank, equivalent_ac_load_ohm, gain, target_gain
 from ..dynamics.plant import DynamicPhasorModel
 from ..dynamics.switched import SwitchedSimulationConfig, simulate_switched_steady_state
@@ -134,9 +141,16 @@ class LLCMainWindow(QMainWindow):
         for key, widget in self.fields.items():
             widget.valueChanged.connect(lambda _value, key=key: self._power_stage_field_edited(key))
             widget.valueChanged.connect(self._power_stage_inputs_changed)
-        for widget in (self.topology, self.parameter_mode_combo, self.primary_device_combo):
+            if key.startswith("integrated_"):
+                widget.valueChanged.connect(self._integrated_mode_changed)
+        for widget in (self.topology, self.parameter_mode_combo, self.primary_device_combo, self.magnetics_mode_combo, self.integrated_source_combo, self.integrated_core_combo):
             widget.currentIndexChanged.connect(self._power_stage_inputs_changed)
+        self.primary_turns.valueChanged.connect(self._integrated_mode_changed)
+        self.secondary_turns.valueChanged.connect(self._integrated_mode_changed)
+        self.integrated_core_combo.currentIndexChanged.connect(self._integrated_mode_changed)
+        self.integrated_note.textChanged.connect(self._integrated_mode_changed)
         self.topology_view.set_primary_topology(self.topology.currentData())
+        self.topology_view.set_integrated_magnetics(self.magnetics_mode_combo.currentData() == MagneticsMode.INTEGRATED)
         comparison = self.model_comparison_view
         for widget in (comparison.vbus, comparison.load_percent,
                        comparison.max_harmonic, comparison.hb_samples):
@@ -168,8 +182,13 @@ class LLCMainWindow(QMainWindow):
         self.digital_loop_view.invalidate_analysis()
         self.small_signal_analysis = None
         self.topology_view.set_primary_topology(self.topology.currentData())
+        self.topology_view.set_integrated_magnetics(self.magnetics_mode_combo.currentData() == MagneticsMode.INTEGRATED)
         self.waveform_view.set_primary_topology(self.topology.currentData())
-        if not self._results_current and self.system_analysis is None:
+        if (not self._results_current and all(getattr(self, name, None) is None for name in (
+                "system_analysis", "small_signal_analysis", "digital_loop_analysis",
+                "q_zvs_analysis", "transformer_synthesis", "multi_fidelity_analysis",
+                "external_control_design")) and self.transformer_design_view.result is None
+                and self.waveform_view.bundle is None):
             return
         self._results_current = False
         self.system_analysis = self.small_signal_analysis = self.digital_loop_analysis = None
@@ -186,10 +205,7 @@ class LLCMainWindow(QMainWindow):
         self.waveform_view.refresh()
         self.q_zvs_view.result = None; self.q_zvs_view.table.clear()
         self.small_signal_view.result = None; self.small_signal_view.text.clear()
-        self.transformer_design_view.result = None
-        self.transformer_design_view.sketch.set_result(None)
-        self.transformer_design_view.apply_btn.setEnabled(False)
-        self.transformer_design_view.export_btn.setEnabled(False)
+        self.transformer_design_view.invalidate_result()
         self.sr_design_view.text.clear(); self.interleaved_view.text.clear()
         for canvas in self.findChildren(FigureCanvasQTAgg):
             canvas.figure.clear(); canvas.draw_idle()
@@ -425,9 +441,14 @@ class LLCMainWindow(QMainWindow):
 
         tank = QGroupBox("谐振腔与变压器")
         form = QFormLayout(tank)
+        self.magnetics_mode_combo = QComboBox()
+        self.magnetics_mode_combo.addItem("分立 Lr + 变压器", MagneticsMode.SEPARATE)
+        self.magnetics_mode_combo.addItem("集成漏感 Lr", MagneticsMode.INTEGRATED)
+        self.magnetics_mode_combo.setToolTip("默认分立磁件；集成模式使用同一变压器漏场作为 Lr，支持两绕组全桥 SR。表征输入在下方磁件结构组。")
+        form.addRow("磁件方案", self.magnetics_mode_combo)
         self.parameter_mode_combo = QComboBox()
-        self.parameter_mode_combo.addItem("Auto Design — fr / Ln / Q 综合", TankParameterMode.AUTO_DESIGN)
-        self.parameter_mode_combo.addItem("User Defined — Lr / Cr / Lm / Np:Ns 验证", TankParameterMode.USER_DEFINED)
+        self.parameter_mode_combo.addItem("Auto：fr / Ln / Q", TankParameterMode.AUTO_DESIGN)
+        self.parameter_mode_combo.addItem("User：Lr / Cr / Lm", TankParameterMode.USER_DEFINED)
         self.parameter_mode_combo.currentIndexChanged.connect(self._parameter_mode_changed)
         form.addRow("参数来源", self.parameter_mode_combo)
         tank_specs = [
@@ -455,7 +476,7 @@ class LLCMainWindow(QMainWindow):
         self.manual_derived_label = QLabel("User Defined: fr / Ln / Q 将由输入值实时派生")
         self.manual_derived_label.setWordWrap(True)
         form.addRow("派生参数", self.manual_derived_label)
-        self.copy_auto_button = QPushButton("复制 Auto Tank → User Defined")
+        self.copy_auto_button = QPushButton("复制 Auto → User")
         self.copy_auto_button.clicked.connect(self._copy_auto_to_manual)
         form.addRow(self.copy_auto_button)
         for w in self.manual_tank_widgets:
@@ -473,6 +494,56 @@ class LLCMainWindow(QMainWindow):
         self.topology.addItem("半桥 LLC", PrimaryTopology.HALF_BRIDGE)
         form.addRow("一次侧拓扑", self.topology)
         layout.addWidget(tank)
+
+        integrated = QGroupBox("磁件结构 / 集成谐振漏感")
+        form = QFormLayout(integrated)
+        self.integrated_source_combo = QComboBox()
+        self.integrated_source_combo.addItem("电感矩阵 Lp / Ls / M", IntegratedInductanceSource.INDUCTANCE_MATRIX)
+        self.integrated_source_combo.addItem("开短路 Lp / Ls / Lshort", IntegratedInductanceSource.OPEN_SHORT)
+        form.addRow("实体表征输入", self.integrated_source_combo)
+        self.integrated_core_combo = QComboBox()
+        self.integrated_core_combo.addItem("请选择表征磁芯", "")
+        from ..magnetics.core import CoreDatabase
+        for core in CoreDatabase().for_purpose("transformer"):
+            self.integrated_core_combo.addItem(core.part_number, core.part_number)
+        form.addRow("表征磁芯（锁定）", self.integrated_core_combo)
+        self.integrated_note = QLineEdit()
+        self.integrated_note.setPlaceholderText("样件/来源、偏置、温度、测试条件；参考模型请注明")
+        form.addRow("表征来源/条件", self.integrated_note)
+        self.integrated_note.textChanged.connect(self._power_stage_inputs_changed)
+        for key, label, widget in (
+            ("integrated_characterized_primary_turns", "表征时 Np", QSpinBox()),
+            ("integrated_characterized_secondary_turns", "表征时 Ns", QSpinBox()),
+            ("integrated_lp_h", "Lp（次级开路）", self._spin(0, 1000000, 6, " µH")),
+            ("integrated_ls_h", "Ls（原边开路）", self._spin(0, 1000000, 6, " µH")),
+            ("integrated_mutual_h", "M（同名端为正）", self._spin(0, 1000000, 6, " µH")),
+            ("integrated_lshort_h", "Lshort（次级短路）", self._spin(0, 1000000, 6, " µH")),
+            ("integrated_measurement_frequency_hz", "表征频率", self._spin(0.001, 10000, 3, " kHz")),
+            ("integrated_target_lr_h", "Lr 目标（0=未指定）", self._spin(0, 1000000, 6, " µH")),
+            ("integrated_interwinding_gap_m", "P-S 每界面绝缘间距", self._spin(0, 50, 4, " mm")),
+            ("integrated_interlayer_gap_m", "同绕组层间绝缘", self._spin(0, 10, 4, " mm")),
+            ("integrated_minimum_insulation_m", "声明最小绝缘", self._spin(0, 50, 4, " mm")),
+            ("integrated_geometry_tolerance", "几何匹配容差", self._spin(0.001, 99.999, 3, " %")),
+            ("integrated_target_tolerance", "Lr 目标容差", self._spin(0.001, 99.999, 3, " %")),
+        ):
+            if isinstance(widget, QSpinBox):
+                widget.setRange(1, 500)
+            self.fields[key] = widget
+            form.addRow(label, widget)
+        self.integrated_summary = QLabel("表征实体后推导 APR Lr / Lm / n_eff；目标值不代表已实现。")
+        self.fields["integrated_minimum_insulation_m"].setToolTip("用户声明的一维几何筛查下限；不是安规电气间隙、爬电距离或绝缘认证。")
+        self.integrated_summary.setWordWrap(True)
+        form.addRow(self.integrated_summary)
+        example = QPushButton("双漏感参考例（非实测）")
+        example.clicked.connect(self._load_integrated_example)
+        form.addRow(example)
+        reachable_example = QPushButton("可达参考例（非实测）")
+        reachable_example.setToolTip("标称工作点的一维几何可达例；不是硬件实测，也未通过全工作范围认证。")
+        reachable_example.clicked.connect(self._load_reachable_integrated_example)
+        form.addRow(reachable_example)
+        self.magnetics_mode_combo.currentIndexChanged.connect(self._integrated_mode_changed)
+        self.integrated_source_combo.currentIndexChanged.connect(self._integrated_mode_changed)
+        layout.addWidget(integrated)
 
         capacitors = QGroupBox("电容与控制建模")
         form = QFormLayout(capacitors)
@@ -500,9 +571,9 @@ class LLCMainWindow(QMainWindow):
         action_layout = QVBoxLayout(actions)
         action_layout.setSpacing(6)
         self.run_button = QPushButton("运行 LLC 完整计算")
-        self.fast_wave_button = QPushButton("快速波形")
-        self.hb_wave_button = QPushButton("多谐波 HB 波形")
-        self.detail_wave_button = QPushButton("详细开关波形")
+        self.fast_wave_button = QPushButton("FHA 波形")
+        self.hb_wave_button = QPushButton("HB 波形")
+        self.detail_wave_button = QPushButton("TD 波形")
         self.small_signal_button = QPushButton("小信号 G(s) / G(z)")
         self.run_button.clicked.connect(self.run_design)
         self.fast_wave_button.clicked.connect(lambda: self.run_waveforms(False))
@@ -518,6 +589,22 @@ class LLCMainWindow(QMainWindow):
         action_layout.addWidget(self.small_signal_button)
         layout.addWidget(actions)
         layout.addStretch(1)
+        # The default 300 px dock must not require horizontal scrolling to
+        # reveal selectors or engineering boundaries, including long device IDs.
+        for group in content.findChildren(QGroupBox):
+            group_form = group.layout()
+            if isinstance(group_form, QFormLayout):
+                group_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+                group_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        for combo in content.findChildren(QComboBox):
+            combo.setMinimumContentsLength(10)
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            combo.setMinimumWidth(112)
+        for label in content.findChildren(QLabel):
+            if label.wordWrap():
+                label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+                label.setMinimumWidth(0)
         scroll.setWidget(content)
         scroll.setMinimumWidth(265)
         scroll.setMaximumWidth(420)
@@ -646,6 +733,72 @@ class LLCMainWindow(QMainWindow):
     def _append_log(self, message: str) -> None:
         self.log_text.appendPlainText(message.rstrip())
 
+    def _load_reachable_integrated_example(self):
+        base = LLCDesignSpec()
+        mu, sigma, n = 300e-6, 3.5e-6, base.turns_ratio
+        sample = base.clone(magnetics_mode=MagneticsMode.INTEGRATED,
+            integrated_characterized_primary_turns=30, integrated_characterized_secondary_turns=4,
+            integrated_characterized_core="PQ50_REF", integrated_lp_h=mu+sigma,
+            integrated_ls_h=(mu+sigma)/n**2, integrated_mutual_h=mu/n,
+            integrated_interwinding_gap_m=0.0010325249820337418,
+            integrated_target_lr_h=mu+sigma-mu*mu/(mu+sigma),
+            integrated_measurement_note="Synthetic nominal-point geometry-reachable reference; NOT a hardware measurement or full-envelope qualification")
+        self.spec=sample
+        self._load_spec_to_widgets(sample)
+        self.transformer_design_view.workpoint_scope.setCurrentIndex(
+            self.transformer_design_view.workpoint_scope.findData("nominal"))
+        if hasattr(self, "two_stage_optimization_view"):
+            self.two_stage_optimization_view.set_initial_spec(sample)
+
+    def _load_integrated_example(self):
+        # Deliberately labeled synthetic reference, never a measured achievement.
+        base = self.spec.clone(magnetics_mode=MagneticsMode.SEPARATE,
+            primary_turns=self.primary_turns.value(), secondary_turns=self.secondary_turns.value())
+        tank = design_tank(base)
+        r, n = .98, base.turns_ratio
+        mu = tank.lm_h/r
+        sample = base.clone(magnetics_mode=MagneticsMode.INTEGRATED,
+            integrated_characterized_primary_turns=base.primary_turns,
+            integrated_characterized_secondary_turns=base.secondary_turns,
+            integrated_characterized_core="PQ50_REF",
+            integrated_lp_h=mu+tank.lr_h-mu*(1-r),
+            integrated_ls_h=mu/(r*n*n), integrated_mutual_h=mu/n,
+            integrated_lshort_h=tank.lr_h,
+            integrated_target_lr_h=tank.lr_h,
+            integrated_measurement_note="Synthetic linear two-leakage reference model; NOT a hardware measurement")
+        self.spec = sample
+        self._load_spec_to_widgets(sample)
+        if hasattr(self, "two_stage_optimization_view"):
+            self.two_stage_optimization_view.set_initial_spec(sample)
+
+    def _integrated_mode_changed(self):
+        self._parameter_mode_changed()
+        if not hasattr(self, "integrated_summary"):
+            return
+        integrated = self.magnetics_mode_combo.currentData() == MagneticsMode.INTEGRATED
+        source = self.integrated_source_combo.currentData()
+        if hasattr(self, "transformer_design_view"):
+            self.transformer_design_view.set_magnetics_mode(integrated, self.integrated_core_combo.currentData())
+        for key, widget in self.fields.items():
+            if key.startswith("integrated_"):
+                widget.setEnabled(integrated)
+        self.fields["integrated_mutual_h"].setEnabled(integrated and source == IntegratedInductanceSource.INDUCTANCE_MATRIX)
+        self.fields["integrated_lshort_h"].setEnabled(integrated and source == IntegratedInductanceSource.OPEN_SHORT)
+        self.integrated_note.setEnabled(integrated)
+        self.integrated_core_combo.setEnabled(integrated)
+        self.integrated_source_combo.setEnabled(integrated)
+        if integrated:
+            try:
+                spec = self._spec_from_widgets()
+                from ..core.integrated_magnetics import from_spec
+                m = from_spec(spec)
+                self.integrated_summary.setText(f"APR 等效：\nLr={m.lr_h*1e6:.4f} µH\nLm={m.lm_h*1e6:.4f} µH\nn_eff={m.effective_turns_ratio:.5f}\n实体 n={spec.turns_ratio:.5f}\nLμ={m.physical_magnetizing_h*1e6:.4f} µH\n单个共用磁件，无独立 Lr。\n两绕组全桥 SR；几何估计仍需实测。")
+            except (ValueError, TypeError) as exc:
+                self.integrated_summary.setText("集成输入待完成：" + str(exc))
+        else:
+            self.integrated_summary.setText("选择上方集成漏感 Lr 后输入表征矩阵。目标值不代表已实现。声明绝缘与容差仅作工程筛查，不是安规认证。")
+        self._parameter_mode_changed()
+
     def _parameter_mode_changed(self) -> None:
         if not hasattr(self, "parameter_mode_combo"):
             return
@@ -656,6 +809,9 @@ class LLCMainWindow(QMainWindow):
             w.setEnabled(manual)
         if hasattr(self, "copy_auto_button"):
             self.copy_auto_button.setEnabled(not manual)
+        if hasattr(self, "magnetics_mode_combo") and self.magnetics_mode_combo.currentData() == MagneticsMode.INTEGRATED:
+            self.user_lr.setEnabled(False); self.user_lm.setEnabled(False)
+            self.fields["ln_ratio"].setEnabled(False); self.fields["q_full_load"].setEnabled(False)
         self._update_manual_derived_label()
 
     def _copy_auto_to_manual(self) -> None:
@@ -674,6 +830,14 @@ class LLCMainWindow(QMainWindow):
     def _update_manual_derived_label(self) -> None:
         if not hasattr(self, "manual_derived_label"):
             return
+        if (hasattr(self, "integrated_summary") and self.magnetics_mode_combo.currentData() == MagneticsMode.INTEGRATED):
+            try:
+                spec = self._spec_from_widgets()
+                tank = design_tank(spec)
+                self.manual_derived_label.setText(f"APR: fr={tank.fr_hz/1e3:.3f} kHz\nLn={tank.ln_ratio:.4f}\nn_eff={spec.electrical_turns_ratio:.5f}\nLr/Lm 由表征矩阵导出")
+            except (ValueError, TypeError):
+                self.manual_derived_label.setText("APR 派生参数等待完整表征输入")
+            return
         lr = self.user_lr.value() * 1e-6 if hasattr(self, "user_lr") else 0.0
         cr = self.user_cr.value() * 1e-9 if hasattr(self, "user_cr") else 0.0
         lm = self.user_lm.value() * 1e-6 if hasattr(self, "user_lm") else 0.0
@@ -687,9 +851,9 @@ class LLCMainWindow(QMainWindow):
 
     def _spec_from_widgets(self) -> LLCDesignSpec:
         changes = {}
-        frequency_keys = {"resonant_frequency_hz", "minimum_frequency_hz", "maximum_frequency_hz"}
+        frequency_keys = {"resonant_frequency_hz", "minimum_frequency_hz", "maximum_frequency_hz", "integrated_measurement_frequency_hz"}
         microfarad_keys = {"bus_capacitance_f", "output_capacitance_f"}
-        microhenry_keys = {"user_lr_h", "user_lm_h"}
+        microhenry_keys = {"user_lr_h", "user_lm_h", "integrated_lp_h", "integrated_ls_h", "integrated_mutual_h", "integrated_lshort_h", "integrated_target_lr_h"}
         nanofarad_keys = {"user_cr_f"}
         for key, widget in self.fields.items():
             value = widget.value()
@@ -701,6 +865,10 @@ class LLCMainWindow(QMainWindow):
                 value *= 1e-6
             elif key in nanofarad_keys:
                 value *= 1e-9
+            elif key in {"integrated_interwinding_gap_m", "integrated_interlayer_gap_m", "integrated_minimum_insulation_m"}:
+                value *= 1e-3
+            elif key in {"integrated_geometry_tolerance", "integrated_target_tolerance"}:
+                value /= 100.0
             elif key == "requested_hold_time_s":
                 value *= 1e-3
             elif key == "output_cap_esr_ohm":
@@ -717,19 +885,37 @@ class LLCMainWindow(QMainWindow):
                 and original is not None and original.parameter_mode != TankParameterMode.USER_DEFINED)
             if original is not None and widget.value() == loaded.get(key) and not entering_manual:
                 value = getattr(original, key)
+            if key in {"integrated_lp_h", "integrated_ls_h", "integrated_mutual_h", "integrated_lshort_h", "integrated_target_lr_h"} and not value:
+                value = None
+            if key.startswith("integrated_characterized_") and value is None and self.magnetics_mode_combo.currentData() == MagneticsMode.INTEGRATED:
+                value = int(widget.value())
             changes[key] = value
         changes["primary_topology"] = PrimaryTopology(self.topology.currentData())
         changes["parameter_mode"] = TankParameterMode(self.parameter_mode_combo.currentData())
+        changes["magnetics_mode"] = MagneticsMode(self.magnetics_mode_combo.currentData())
+        changes["integrated_inductance_source"] = IntegratedInductanceSource(self.integrated_source_combo.currentData())
+        changes["integrated_characterized_core"] = self.integrated_core_combo.currentData()
+        changes["integrated_measurement_note"] = self.integrated_note.text()
         changes["primary_device"] = self.primary_device_combo.currentData()
         spec = self.spec.clone(**changes)
         spec.validate()
         return spec
 
-    def _load_spec_to_widgets(self, spec: LLCDesignSpec) -> None:
-        self._power_stage_inputs_changed()
+    def _project_spec_widget_values(self, spec: LLCDesignSpec) -> dict:
+        """Validate a characterized model's display before mutating live inputs."""
+        if spec.integrated_magnetics and self.integrated_core_combo.findData(spec.integrated_characterized_core) < 0:
+            raise ValueError("Unknown characterized transformer core: " + spec.integrated_characterized_core)
+        projected = {}
         for key, widget in self.fields.items():
             value = getattr(spec, key)
-            if key in {"resonant_frequency_hz", "minimum_frequency_hz", "maximum_frequency_hz"}:
+            if key.startswith("integrated_") and value is None:
+                value = (spec.primary_turns if key.endswith("primary_turns") else
+                         spec.secondary_turns if key.endswith("secondary_turns") else 0.0)
+            if key in {"integrated_lp_h", "integrated_ls_h", "integrated_mutual_h", "integrated_lshort_h", "integrated_target_lr_h"}:
+                value *= 1e6
+            elif key in {"integrated_interwinding_gap_m", "integrated_interlayer_gap_m", "integrated_minimum_insulation_m"}:
+                value *= 1e3
+            if key in {"resonant_frequency_hz", "minimum_frequency_hz", "maximum_frequency_hz", "integrated_measurement_frequency_hz"}:
                 value /= 1e3
             elif key in {"bus_capacitance_f", "output_capacitance_f"}:
                 value *= 1e6
@@ -742,13 +928,29 @@ class LLCMainWindow(QMainWindow):
                 if value is None:
                     value = design_tank(spec.clone(parameter_mode=TankParameterMode.AUTO_DESIGN)).cr_f
                 value *= 1e9
+            elif key in {"integrated_geometry_tolerance", "integrated_target_tolerance"}:
+                value *= 100.0
             elif key == "requested_hold_time_s":
                 value *= 1e3
             elif key == "output_cap_esr_ohm":
                 value *= 1e3
             elif key == "primary_deadtime_s":
                 value *= 1e9
-            widget.setValue(value)
+            if (key.startswith("integrated_") or spec.integrated_magnetics) and not widget.minimum() <= value <= widget.maximum():
+                raise ValueError(f"{key}: value {value:g} outside supported GUI range [{widget.minimum():g}, {widget.maximum():g}]; input was not loaded")
+            projected[key] = value
+        return projected
+
+    def _load_spec_to_widgets(self, spec: LLCDesignSpec) -> None:
+        projected = self._project_spec_widget_values(spec)
+        self._power_stage_inputs_changed()
+        for key, value in projected.items():
+            self.fields[key].setValue(value)
+        self.magnetics_mode_combo.setCurrentIndex(self.magnetics_mode_combo.findData(MagneticsMode(spec.magnetics_mode)))
+        self.integrated_source_combo.setCurrentIndex(self.integrated_source_combo.findData(IntegratedInductanceSource(spec.integrated_inductance_source)))
+        self.integrated_core_combo.setCurrentIndex(max(0, self.integrated_core_combo.findData(spec.integrated_characterized_core)))
+        self.integrated_note.setText(spec.integrated_measurement_note)
+        self._integrated_mode_changed()
         self.topology.setCurrentIndex(0 if PrimaryTopology(spec.primary_topology) == PrimaryTopology.FULL_BRIDGE else 1)
         mode_idx = self.parameter_mode_combo.findData(TankParameterMode(spec.parameter_mode))
         if mode_idx >= 0:
@@ -773,6 +975,7 @@ class LLCMainWindow(QMainWindow):
             self.interleaved_view.set_nominal_spec(spec)
         self._loaded_spec = deepcopy(spec)
         self._loaded_widget_values = {key: widget.value() for key, widget in self.fields.items()}
+        self._integrated_mode_changed()
 
     def _project_owner(self):
         optimization = getattr(self, "_two_stage_optimization_state", {})
@@ -803,6 +1006,7 @@ class LLCMainWindow(QMainWindow):
                 if json.dumps(asdict(spec), sort_keys=True) != json.dumps(asdict(exact_spec), sort_keys=True):
                     raise ValueError("Project spec and control-session spec do not match")
                 spec = exact_spec
+            self._project_spec_widget_values(spec)
             self.spec = spec
             self._load_spec_to_widgets(self.spec)
             if session is not None:
@@ -856,6 +1060,7 @@ class LLCMainWindow(QMainWindow):
         # Capture the clicked physical state before entering the nested dialog
         # event loop. Workers never read live host.spec or publish external files.
         import tempfile
+
         from .optimization_install import publish_export_files
         try:
             spec = deepcopy(self._spec_from_widgets())
@@ -982,7 +1187,7 @@ class LLCMainWindow(QMainWindow):
             f"标称 fs={op.switching_frequency_hz/1e3:.6f} kHz",
             "",
             f"变压器: {analysis.transformer.core.part_number}, {analysis.spec.primary_turns}:{analysis.spec.secondary_turns}, fill={analysis.transformer.fill_factor*100:.3f}%",
-            f"谐振电感: {analysis.resonant_inductor.core.part_number}, {analysis.resonant_inductor.turns} T, {analysis.resonant_inductor.layers} layers",
+            (f"谐振电感: {analysis.resonant_inductor.core.part_number}, {analysis.resonant_inductor.turns} T, {analysis.resonant_inductor.layers} layers" if analysis.resonant_inductor else "集成谐振电感: 同一变压器漏感，无独立磁芯/绕组/热节点"),
             "",
             f"标称损耗={nominal.total_loss_w:.5f} W",
             f"器件电流来源={nominal.semiconductor_source}",
@@ -991,6 +1196,13 @@ class LLCMainWindow(QMainWindow):
             f"标称效率={nominal.efficiency*100:.5f}%",
             design_status(analysis.feasible),
         ]
+        if analysis.spec.integrated_magnetics:
+            m = analysis.spec
+            geometry = analysis.transformer.integrated_leakage
+            text.extend(["", f"实体 n={m.turns_ratio:.6f}; APR n_eff={m.electrical_turns_ratio:.6f}",
+                f"几何平衡漏感={geometry.balanced_geometry_h*1e6:.5f} µH；矩阵平衡目标={geometry.characterized_balanced_h*1e6:.5f} µH（不是 APR Lr）",
+                f"层序 P/2-S-P/2；每界面建议间距={geometry.required_interwinding_gap_m*1e3:.4f} mm；所需build={geometry.required_radial_build_m*1e3:.4f}/{geometry.available_window_height_m*1e3:.4f} mm",
+                f"几何状态: {geometry.status}；1D 工程筛查，须样件表征/绝缘验证。"])
         if analysis.feasibility_reasons:
             text.extend(["", t("设计提醒："), t("可继续查看和导出已有结果；未满足项与未求解工况仍需复核。")]
                         + [f"- {design_reason(reason)}" for reason in analysis.feasibility_reasons])
@@ -1014,7 +1226,7 @@ class LLCMainWindow(QMainWindow):
         frequencies = np.linspace(spec.minimum_frequency_hz, spec.maximum_frequency_hz, 800)
         for load in (0.1, 0.25, 0.5, 0.75, 1.0):
             pout = spec.pout_w * max(load, spec.minimum_modeled_load_fraction)
-            rac = equivalent_ac_load_ohm(spec.turns_ratio, spec.vout_v + spec.rectifier_equivalent_drop_v,
+            rac = equivalent_ac_load_ohm(spec.electrical_turns_ratio, spec.vout_v + spec.rectifier_equivalent_drop_v,
                                          pout * (1.0 + spec.rectifier_equivalent_drop_v / spec.vout_v))
             ax.plot(frequencies / 1e3, [gain(tank, f, rac) for f in frequencies], label=f"{load*100:.0f}%")
         for bus in (spec.vbus_hold_end_v, spec.vbus_min_normal_v, spec.vbus_nom_v, spec.vbus_max_v):
@@ -1152,6 +1364,7 @@ class LLCMainWindow(QMainWindow):
                 include_time_domain=include_td,
                 harmonic_balance=HarmonicBalanceConfig(
                     max_harmonic=max_harmonic,
+                    minimum_harmonic=min(5, max_harmonic),
                     samples_per_cycle=hb_samples,
                     output_cycles=2,
                 ),
@@ -1231,6 +1444,7 @@ class LLCMainWindow(QMainWindow):
         if not directory or not current():
             return
         import tempfile
+
         from ..analysis import export_multifidelity_analysis
         from ..report.export import export_calculation_book
         from .optimization_install import publish_export_files

@@ -139,6 +139,12 @@ def component_waveform_evidence(bundle: WaveformBundle, spec: LLCDesignSpec) -> 
             "summary": (f"同源 |B|峰值={peak:.6g} T / 限值 {limit:g} T；磁损/温升：未计算。"
                         if peak is not None else f"磁通限值={limit:g} T；本来源缺少 B 波形，磁损/温升：未计算。"),
         }
+    if spec.integrated_magnetics:
+        result["lr"] = {"source_identity": identity, "flux_signal": None,
+            "peak_flux_density_t": None, "flux_density_limit_t": None,
+            "flux_within_model_limit": None, "loss_status": "NOT_APPLICABLE: no separate Lr magnetic body",
+            "summary": "APR 漏感为同一变压器的等效元件；无独立 Lr 磁芯/铜损/温升。实体 B 与共用磁件损耗见变压器。"}
+        result["transformer"]["summary"] += " 集成模式：端电压包含漏感；B 来自实体 Lμ 与 Ir−Is/n_phys。"
     result["load"] = {"source_identity": identity, "summary": "同源输出端 V/I 见统计；负载为等效电阻，不表示实际负载瞬态。"}
     return result
 

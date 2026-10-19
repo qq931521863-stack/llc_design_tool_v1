@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import asdict
 from enum import Enum
-import json
 from pathlib import Path
 
 import pandas as pd
 
 from ..core.config import create_project_document
-from ..models.system import SystemAnalysis
 from ..magnetics.core import CoreDatabase
+from ..models.system import SystemAnalysis
 from ..plotting.plots import create_all_plots
 
 
@@ -31,12 +31,53 @@ def _jsonable(value):
     return value
 
 
+def integrated_magnetic_record(spec) -> dict | None:
+    """Expose exact electrical/physical identities without claiming hardware proof."""
+    if not spec.integrated_magnetics:
+        return None
+    from ..core.integrated_magnetics import from_spec
+    model = from_spec(spec)
+    target = spec.integrated_target_lr_h
+    return {
+        "mode": spec.magnetics_mode.value,
+        "source": spec.integrated_inductance_source.value,
+        "characterized_core": spec.integrated_characterized_core,
+        "configured_interwinding_gap_m": spec.integrated_interwinding_gap_m,
+        "configured_interlayer_gap_m": spec.integrated_interlayer_gap_m,
+        "minimum_insulation_m": spec.integrated_minimum_insulation_m,
+        "geometry_relative_tolerance": spec.integrated_geometry_tolerance,
+        "characterized_primary_turns": spec.integrated_characterized_primary_turns,
+        "characterized_secondary_turns": spec.integrated_characterized_secondary_turns,
+        "characterization_frequency_hz": spec.integrated_measurement_frequency_hz,
+        "characterization_note": spec.integrated_measurement_note,
+        "physical_matrix": asdict(model),
+        "primary_short_h": model.lr_h,
+        "apr_lr_h": model.lr_h, "apr_lm_h": model.lm_h,
+        "apr_effective_turns_ratio": model.effective_turns_ratio,
+        "physical_magnetizing_h": model.physical_magnetizing_h,
+        "physical_primary_leakage_h": model.primary_leakage_h,
+        "physical_secondary_leakage_h": model.secondary_leakage_h,
+        "coupling": model.coupling,
+        "target_lr_h": target,
+        "target_relative_error": abs(model.lr_h - target) / target if target else None,
+        "target_relative_tolerance": spec.integrated_target_tolerance,
+        "external_resonant_inductor_present": False,
+        "scope": "Linear two-winding APR equivalent; physical core/winding losses counted once. "
+                 "Entered characterization and target agreement do not certify a constructed transformer, "
+                 "frequency-independent permeability, nonlinear saturation or multi-winding rectification.",
+    }
+
+
 def operating_point_rows(analysis: SystemAnalysis) -> list[dict]:
     rows = []
     for point in analysis.operating_points:
         op = point.operating_point
         row = {
             "label": point.label,
+            "magnetics_mode": analysis.spec.magnetics_mode.value,
+            "physical_turns_ratio": analysis.spec.turns_ratio,
+            "electrical_turns_ratio": analysis.spec.electrical_turns_ratio,
+            "external_resonant_inductor_present": analysis.resonant_inductor is not None,
             "vbus_v": op.vbus_v,
             "load_pct": op.load_fraction * 100.0,
             "pout_w": op.pout_w,
@@ -82,6 +123,48 @@ def write_markdown_report(analysis: SystemAnalysis, path: str | Path) -> Path:
     t = analysis.transformer
     ind = analysis.resonant_inductor
     bus = analysis.bus_capacitor
+    integrated = integrated_magnetic_record(spec)
+    if ind is None:
+        if integrated is None:
+            raise ValueError("Missing external resonant-inductor design in separate mode")
+        inductor_lines = [
+            "## 5. 集成漏感谐振：无独立 Lr 磁件",
+            "",
+            "- Lr 是同一变压器的 APR 等效漏感，不额外生成磁芯、绕组、气隙、BOM 或热节点。",
+            "- 独立电感损耗列为 0，仅用于账务兼容；共同磁芯与两绕组损耗已计入变压器一次。",
+            "- 实体主磁化电感与 APR Lm 不同；实体主磁通由两绕组电流映射求得。",
+            f"- 表征来源：{spec.integrated_measurement_note}",
+            f"- 表征频率：{spec.integrated_measurement_frequency_hz:g} Hz；模式：{spec.integrated_inductance_source.value}",
+            "",
+            "```json",
+            json.dumps(integrated, ensure_ascii=False, indent=2),
+            "```",
+            "",
+        ]
+        screen = t.integrated_leakage
+        if screen is not None:
+            inductor_lines.extend([
+                "### 绕组场能与漏感可实现性筛查", "",
+                f"- 状态：{screen.status}；本检查不会把平衡场能直接当作 APR Lshort。",
+                f"- 配置/表征平衡漏感：{screen.balanced_geometry_h*1e6:.6g} / {screen.characterized_balanced_h*1e6:.6g} µH",
+                f"- 每个 P-S 界面配置/所需间距：{screen.configured_interwinding_gap_m*1e3:.6g} / {screen.required_interwinding_gap_m*1e3:.6g} mm",
+                f"- 所需径向构建 / 可用窗口高度：{screen.required_radial_build_m*1e3:.6g} / {screen.available_window_height_m*1e3:.6g} mm",
+                f"- 几何 APR Lr 界限：{screen.geometry_apr_lr_lower_h*1e6:.6g}–{screen.geometry_apr_lr_upper_h*1e6:.6g} µH；未凭空分配一次/二次漏感。",
+                "```json", json.dumps(asdict(screen), ensure_ascii=False, indent=2), "```", "",
+            ])
+    else:
+        inductor_lines = [
+            "## 5. 外置谐振电感初算", "",
+            f"- 磁芯：`{ind.core.part_number}`，{ind.core.family}/{ind.core.shape}，材料 {ind.core.material}",
+            f"- 有效参数：Ae={ind.core.ae_mm2:.1f} mm²，Amin={ind.core.amin_mm2:.1f} mm²，Aw={ind.core.aw_mm2:.1f} mm²，Ve={ind.core.ve_mm3/1000:.1f} cm³",
+            f"- 匝数：{ind.turns} T", f"- 绕线：{ind.wire.description}",
+            f"- 层数：{ind.layers}（限制 ≤ {spec.resonant_inductor_max_layers}）",
+            f"- 总气隙：{ind.gap_total_mm:.3f} mm",
+            f"- 窗口利用率：{ind.fill_factor*100:.2f}%",
+            f"- 最差 Bpk（Amin）：{ind.worst_b_peak_t:.4f} T",
+            f"- 标称热点估算：{nominal.resonant_inductor.estimated_hotspot_c:.1f} °C",
+            f"- 标称磁芯/铜损：{nominal.resonant_inductor.core_w:.3f} / {nominal.resonant_inductor.copper_w:.3f} W", "",
+        ]
     lines = [
         f"# LLC {'半桥' if spec.primary_topology.value == 'HALF_BRIDGE' else '全桥'} + 全桥同步整流 V2 磁性损耗计算书",
         "",
@@ -98,7 +181,8 @@ def write_markdown_report(analysis: SystemAnalysis, path: str | Path) -> Path:
         f"| 一次侧 | {spec.primary_topology.value} |",
         f"| 二次侧 | {spec.secondary_topology.value} |",
         f"| 频率 | {spec.minimum_frequency_hz/1e3:.1f}–{spec.maximum_frequency_hz/1e3:.1f} kHz，fr={spec.resonant_frequency_hz/1e3:.1f} kHz |",
-        f"| 匝数/匝比 | {spec.primary_turns}:{spec.secondary_turns} / {spec.turns_ratio:.4f} |",
+        f"| 实体匝数/匝比 | {spec.primary_turns}:{spec.secondary_turns} / {spec.turns_ratio:.4f} |",
+        f"| 电气等效匝比 / 磁件模式 | {spec.electrical_turns_ratio:.6f} / {spec.magnetics_mode.value} |",
         f"| Litz 单丝裸铜直径 | {spec.litz_strand_copper_diameter_m*1e3:.3f} mm |",
         f"| 母线电容/维持时间 | {spec.bus_capacitance_f*1e6:.0f} µF / {spec.requested_hold_time_s*1e3:.1f} ms |",
         "",
@@ -145,30 +229,18 @@ def write_markdown_report(analysis: SystemAnalysis, path: str | Path) -> Path:
         f"- 二次线：{t.secondary_wire.description}；{t.secondary_layers} 层",
         f"- 窗口利用率：{t.fill_factor*100:.2f}%",
         f"- 径向构建：{t.radial_build_mm:.2f} mm / 窗口高度 {t.core.window_height_mm:.2f} mm",
-        f"- Lm 所需总气隙：{t.gap_total_mm:.3f} mm",
+        f"- 实体主磁化电感所需总气隙：{t.gap_total_mm:.3f} mm（Lmu={spec.physical_magnetizing_inductance_h(tank.lm_h)*1e6:.3f} µH）",
         f"- 最差 Bpk（Amin）：{t.worst_b_peak_t:.4f} T",
         f"- 标称热点估算：{nominal.transformer.estimated_hotspot_c:.1f} °C",
         f"- 标称磁芯/一次铜/二次铜损：{nominal.transformer.core_w:.3f} / {nominal.transformer.primary_copper_w:.3f} / {nominal.transformer.secondary_copper_w:.3f} W",
         "",
-        "## 5. 外置谐振电感初算",
-        "",
-        f"- 磁芯：`{ind.core.part_number}`，{ind.core.family}/{ind.core.shape}，材料 {ind.core.material}",
-        f"- 有效参数：Ae={ind.core.ae_mm2:.1f} mm²，Amin={ind.core.amin_mm2:.1f} mm²，Aw={ind.core.aw_mm2:.1f} mm²，Ve={ind.core.ve_mm3/1000:.1f} cm³",
-        f"- 匝数：{ind.turns} T",
-        f"- 绕线：{ind.wire.description}",
-        f"- 层数：{ind.layers}（限制 ≤ {spec.resonant_inductor_max_layers}）",
-        f"- 总气隙：{ind.gap_total_mm:.3f} mm",
-        f"- 窗口利用率：{ind.fill_factor*100:.2f}%",
-        f"- 最差 Bpk（Amin）：{ind.worst_b_peak_t:.4f} T",
-        f"- 标称热点估算：{nominal.resonant_inductor.estimated_hotspot_c:.1f} °C",
-        f"- 标称磁芯/铜损：{nominal.resonant_inductor.core_w:.3f} / {nominal.resonant_inductor.copper_w:.3f} W",
-        "",
+        *inductor_lines,
         "### 自动磁芯选型前列候选",
         "",
         "| 部件 | 排名 | 磁芯 | 家族 | 匝数 | 标称损耗 | 热点 | Bpk | 气隙 |",
         "|---|---:|---|---|---:|---:|---:|---:|---:|",
         *[f"| 变压器 | {x.rank} | {x.part_number} | {x.family} | {spec.primary_turns}:{spec.secondary_turns} | {x.nominal_total_loss_w:.3f} W | {x.nominal_hotspot_c:.1f} °C | {x.worst_b_peak_t:.3f} T | {x.gap_total_mm:.2f} mm |" for x in t.alternatives[:5]],
-        *[f"| 谐振电感 | {x.rank} | {x.part_number} | {x.family} | {x.turns} | {x.nominal_total_loss_w:.3f} W | {x.nominal_hotspot_c:.1f} °C | {x.worst_b_peak_t:.3f} T | {x.gap_total_mm:.2f} mm |" for x in ind.alternatives[:5]],
+        *[f"| 谐振电感 | {x.rank} | {x.part_number} | {x.family} | {x.turns} | {x.nominal_total_loss_w:.3f} W | {x.nominal_hotspot_c:.1f} °C | {x.worst_b_peak_t:.3f} T | {x.gap_total_mm:.2f} mm |" for x in (ind.alternatives[:5] if ind is not None else ())],
         "",
         "## 6. 标称磁性损耗深度分解",
         "",
@@ -249,15 +321,24 @@ def export_calculation_book(analysis: SystemAnalysis,
     paths["transformer_candidates_csv"] = out / "transformer_core_candidates.csv"
     pd.DataFrame([asdict(x) for x in analysis.transformer.alternatives]).to_csv(
         paths["transformer_candidates_csv"], index=False)
-    paths["inductor_candidates_csv"] = out / "resonant_inductor_core_candidates.csv"
-    pd.DataFrame([asdict(x) for x in analysis.resonant_inductor.alternatives]).to_csv(
-        paths["inductor_candidates_csv"], index=False)
+    if analysis.resonant_inductor is not None:
+        paths["inductor_candidates_csv"] = out / "resonant_inductor_core_candidates.csv"
+        pd.DataFrame([asdict(x) for x in analysis.resonant_inductor.alternatives]).to_csv(
+            paths["inductor_candidates_csv"], index=False)
+    else:
+        # Reusing an output folder must not leave an older external-Lr candidate
+        # file masquerading as part of this integrated design.
+        stale = out / "resonant_inductor_core_candidates.csv"
+        if stale.exists():
+            stale.unlink()
     paths["result_json"] = out / "analysis.json"
     payload = create_project_document(analysis.spec, analysis)
     payload.update({
         "tank": _jsonable(asdict(analysis.tank)),
         "transformer": _jsonable(asdict(analysis.transformer)),
-        "resonant_inductor": _jsonable(asdict(analysis.resonant_inductor)),
+        "resonant_inductor": (_jsonable(asdict(analysis.resonant_inductor))
+                              if analysis.resonant_inductor is not None else None),
+        "integrated_magnetics": integrated_magnetic_record(analysis.spec),
         "bus_capacitor": _jsonable(asdict(analysis.bus_capacitor)),
         "feasible": analysis.feasible,
         "feasibility_reasons": list(analysis.feasibility_reasons),

@@ -315,7 +315,11 @@ class MultiHarmonicLLCSolver:
             output_cycles=request.waveform_cycles,
         )
         self.config.validate()
+        if request.spec.integrated_magnetics and self.config.magnetizing_series_resistance_ohm != 0:
+            raise ValueError("integrated magnetics requires zero APR magnetizing series resistance; this loss mapping is not implemented")
         self.tank = tank or design_tank(request.spec)
+        from ..core.integrated_magnetics import require_consistent_tank
+        require_consistent_tank(request.spec, self.tank)
         self.series_resistance_ohm = (
             request.spec.resonant_cap_esr_ohm
             if self.config.series_resistance_ohm is None
@@ -360,7 +364,7 @@ class MultiHarmonicLLCSolver:
             output_guess = self.request.output_voltage_target_v
             rload = self.request.load_resistance_ohm
             drop = spec.rectifier_equivalent_drop_v
-            rac = (8.0 / math.pi**2) * spec.turns_ratio**2 * rload * (
+            rac = (8.0 / math.pi**2) * spec.electrical_turns_ratio**2 * rload * (
                 1.0 + drop / max(output_guess, 1e-9)
             )
             omega = 2.0 * math.pi * frequency_hz
@@ -418,7 +422,7 @@ class MultiHarmonicLLCSolver:
             math.pi * self.request.requested_output_power_w
             / (
                 2.0
-                * spec.turns_ratio
+                * spec.electrical_turns_ratio
                 * self.request.output_voltage_target_v
             )
         )
@@ -459,24 +463,24 @@ class MultiHarmonicLLCSolver:
                     )
                 )
                 primary_voltage_phasors = (
-                    spec.turns_ratio
+                    spec.electrical_turns_ratio
                     * (output_voltage + spec.rectifier_equivalent_drop_v)
                     * polarity_phasors
                 )
                 rectifier_current_average = (
-                    spec.turns_ratio * mean_absolute_current
+                    spec.electrical_turns_ratio * mean_absolute_current
                 )
             else:
                 polarity = np.tanh(load_current / smoothing_current)
                 primary_voltage_waveform = (
-                    spec.turns_ratio
+                    spec.electrical_turns_ratio
                     * (output_voltage + spec.rectifier_equivalent_drop_v)
                     * polarity
                 )
                 primary_voltage_phasors = extract_peak_phasors(
                     primary_voltage_waveform, harmonics)
                 rectifier_current_average = (
-                    spec.turns_ratio * float(np.mean(np.abs(load_current)))
+                    spec.electrical_turns_ratio * float(np.mean(np.abs(load_current)))
                 )
                 zero_crossings = ()
             resonant_phasors = (
@@ -509,7 +513,7 @@ class MultiHarmonicLLCSolver:
         maximum_current = max(100.0, 30.0 * current_scale)
         maximum_output_voltage = max(
             4.0 * self.request.output_voltage_target_v,
-            3.0 * spec.bridge_gain * self.request.bus_voltage_v / spec.turns_ratio,
+            3.0 * spec.bridge_gain * self.request.bus_voltage_v / spec.electrical_turns_ratio,
             10.0,
         )
         lower = np.concatenate(
@@ -927,7 +931,7 @@ class MultiHarmonicLLCSolver:
         )
         primary_load = ir - im
         polarity = np.where(primary_load >= 0.0, 1.0, -1.0)
-        vp = spec.turns_ratio * (
+        vp = spec.electrical_turns_ratio * (
             solution.output_voltage_v + spec.rectifier_equivalent_drop_v
         ) * polarity
         history_text = ",".join(
@@ -937,7 +941,7 @@ class MultiHarmonicLLCSolver:
         model_warnings = [
             "Multi-harmonic HB uses an ideal transformer and ideal full-bridge rectifier clamp.",
             "Output-capacitor ripple is reconstructed after the HB DC balance; it is not a retained harmonic state.",
-            "Nonlinear MOSFET Coss, winding capacitance and leakage parasitics are reserved for the V8 parasitic layer.",
+            "Nonlinear MOSFET Coss and winding capacitance are not modeled; integrated mode includes the characterized linear leakage matrix through APR.",
         ]
         if bool(solution.diagnostics.get("regularized_fallback", False)):
             model_warnings.append(
@@ -952,7 +956,10 @@ class MultiHarmonicLLCSolver:
             bus_voltage_v=self.request.bus_voltage_v,
             primary_topology=spec.primary_topology.value,
             primary_deadtime_s=spec.primary_deadtime_s,
-            turns_ratio=spec.turns_ratio,
+            turns_ratio=spec.electrical_turns_ratio,
+            physical_turns_ratio=spec.turns_ratio if spec.integrated_magnetics else 0.0,
+            physical_magnetizing_h=spec.physical_magnetizing_inductance_h(self.tank.lm_h) if spec.integrated_magnetics else 0.0,
+            apr_magnetizing_h=self.tank.lm_h,
             load_resistance_ohm=self.request.load_resistance_ohm,
             output_capacitance_f=spec.output_capacitance_f,
             output_cap_esr_ohm=spec.output_cap_esr_ohm,
@@ -990,7 +997,7 @@ class MultiHarmonicLLCSolver:
                 self.request.spec.resonant_frequency_hz)
         waveform = self.build_waveform(native)
         normalized_gain = (
-            self.request.spec.turns_ratio
+            self.request.spec.electrical_turns_ratio
             * (
                 native.output_voltage_v
                 + self.request.spec.rectifier_equivalent_drop_v

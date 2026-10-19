@@ -36,6 +36,8 @@ class EnhancedMagneticsResult:
     primary_loss: WindingLossBreakdown
     secondary_loss: WindingLossBreakdown
     warnings: tuple[str,...]=()
+    apr_lr_h: float | None = None
+    leakage_definition: str = "conductor-only balanced field energy estimate"
 
 
 def _one_cycle(result: LLCModelResult, key: str) -> tuple[np.ndarray,np.ndarray]:
@@ -101,14 +103,22 @@ def analyze_golden_magnetics(spec: LLCDesignSpec, result: LLCModelResult, design
     _,vp=_one_cycle(result,'v_transformer_primary')
     if len(secondary)!=len(primary):
         secondary=np.interp(time,*_one_cycle(result,'i_transformer_secondary'))
-    b=_flux_from_voltage(time,vp,design.primary_turns,design.core.ae_m2)
+    if spec.integrated_magnetics:
+        from ..core.integrated_magnetics import from_spec
+        _, im = _one_cycle(result, 'i_magnetizing')
+        b = from_spec(spec).flux_density(primary, im, design.primary_turns, design.core.ae_m2)
+    else:
+        b=_flux_from_voltage(time,vp,design.primary_turns,design.core.ae_m2)
     bpk=float(np.max(np.abs(b))); bmin=bpk*design.core.ae_m2/design.core.amin_m2
     fs=result.metrics.switching_frequency_hz
     leakage=estimate_leakage_from_stack(design); cps=estimate_interwinding_capacitance(design,insulation_thickness_m,relative_permittivity)
+    if spec.integrated_magnetics:
+        from .leakage_geometry import screen_integrated_leakage
+        leakage=screen_integrated_leakage(spec,design).balanced_geometry_h
     temp=max(spec.winding_temperature_c,spec.ambient_temperature_c); last=None
     for _ in range(spec.magnetic_thermal_max_iterations):
         core=design.core.core_loss_waveform_w(time,b,temp)
-        losses=layered_litz_stack_loss(_stack(design,primary,secondary),fs,design.core.window_width_m,temp,
+        losses=layered_litz_stack_loss(_stack(design,primary,-secondary),fs,design.core.window_width_m,temp,
             max_harmonic=spec.litz_max_harmonic,transposition_quality=spec.litz_transposition_quality,
             sub_bundle_coupling_factor=spec.litz_sub_bundle_coupling_factor,termination_resistance_fraction=spec.winding_termination_resistance_fraction,
             calibration_factor=spec.litz_proximity_correction*spec.transformer_proximity_severity)
@@ -119,7 +129,9 @@ def analyze_golden_magnetics(spec: LLCDesignSpec, result: LLCModelResult, design
         temp=updated
     core,p,s,total=last if last else (0.0,None,None,0.0)
     assert p is not None and s is not None
-    warnings=list(design.core.loss_range_warnings(fs,bpk))
+    warnings=list(design.core.loss_range_warnings(fs,bpk)) + list(result.waveform.warnings)
     if bmin>spec.transformer_max_b_t: warnings.append('Minimum-area Bpk exceeds configured transformer flux limit.')
     if temp>spec.magnetic_hotspot_limit_c: warnings.append('Estimated transformer hotspot exceeds configured limit.')
-    return EnhancedMagneticsResult(float(core),p.total_w,s.total_w,float(total),p.effective_ac_factor,s.effective_ac_factor,bpk,bmin,leakage,cps,temp,p,s,tuple(warnings))
+    return EnhancedMagneticsResult(float(core),p.total_w,s.total_w,float(total),p.effective_ac_factor,s.effective_ac_factor,bpk,bmin,leakage,cps,temp,p,s,tuple(warnings),
+        from_spec(spec).lr_h if spec.integrated_magnetics else None,
+        "balanced geometry Lsigma,p+n_phys²Lsigma,s including insulation; NOT APR Lr" if spec.integrated_magnetics else "conductor-only balanced field energy estimate")

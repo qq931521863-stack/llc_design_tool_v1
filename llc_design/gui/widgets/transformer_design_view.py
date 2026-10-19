@@ -153,6 +153,9 @@ class TransformerDesignView(QWidget):
         self.export_btn.clicked.connect(self.export_requested.emit)
         header.addWidget(self.run_btn); header.addWidget(self.apply_btn); header.addWidget(self.export_btn)
         root.addLayout(header)
+        self.magnetics_hint = QLabel("磁件方案在左侧全局参数的“磁件结构 / 集成谐振漏感”设置。")
+        self.magnetics_hint.setWordWrap(True)
+        root.addWidget(self.magnetics_hint)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._build_inputs())
@@ -184,9 +187,9 @@ class TransformerDesignView(QWidget):
         self.core_source = QLabel()
         self.core_source.setWordWrap(True)
         f.addRow("数据来源", self.core_source)
-        catalog_button = QPushButton("浏览磁芯参数库（含待补全记录）")
-        catalog_button.clicked.connect(self._open_catalog)
-        f.addRow(catalog_button)
+        self.catalog_button = QPushButton("浏览磁芯参数库（含待补全记录）")
+        self.catalog_button.clicked.connect(self._open_catalog)
+        f.addRow(self.catalog_button)
 
         self.core_fields = {}
         specs = [
@@ -309,6 +312,8 @@ class TransformerDesignView(QWidget):
         self.catalog_dialog.activateWindow()
 
     def _select_catalog_preset(self, key):
+        if getattr(self, "_integrated_mode_active", False):
+            return
         self.core_search.clear()
         self.family_filter.setCurrentIndex(0)
         self._load_preset(key)
@@ -325,6 +330,8 @@ class TransformerDesignView(QWidget):
         if midx >= 0: self.material.setCurrentIndex(midx)
 
     def _core_input(self) -> FerriteCoreInput:
+        if getattr(self, "_integrated_core_input", None) is not None:
+            return self._integrated_core_input
         key = self.preset.currentData()
         base = self._presets.get(key, next(iter(self._presets.values())))
         changes = {name: widget.value() for name, widget in self.core_fields.items()}
@@ -356,6 +363,18 @@ class TransformerDesignView(QWidget):
         self.run_btn.setEnabled(not busy)
         self.apply_btn.setEnabled((not busy) and self.result is not None)
         self.export_btn.setEnabled((not busy) and self.result is not None)
+
+    def invalidate_result(self) -> None:
+        self.result = None
+        self.apply_btn.setEnabled(False)
+        self.export_btn.setEnabled(False)
+        self.sketch.set_result(None)
+        self.status.setText("输入已改变，旧结果已失效；请重新设计。")
+        self.status.setStyleSheet("padding:8px 10px;background:#f2f4f7;border:1px solid #d0d5dd;border-radius:6px;")
+        self.summary.clear()
+        self.work_table.setRowCount(0)
+        self.loss_figure.clear()
+        self.loss_canvas.draw_idle()
 
     def set_result(self, result: TransformerSynthesisResult) -> None:
         self.result = result; self.apply_btn.setEnabled(True); self.export_btn.setEnabled(True); self.sketch.set_result(result)
@@ -433,6 +452,38 @@ class TransformerDesignView(QWidget):
             self.apply_turns_requested.emit(self.result.primary_turns, self.result.secondary_turns)
 
     def set_nominal_spec(self, spec: LLCDesignSpec) -> None:
-        # Keep transformer-specific settings independent; the current LLC spec is
-        # consumed by the worker in the parent main window.
-        pass
+        self.set_magnetics_mode(spec.integrated_magnetics, spec.integrated_characterized_core)
+
+    def set_magnetics_mode(self, integrated: bool, core_identifier: str = "") -> None:
+        """Switch identity locks even while the other matrix fields are invalid."""
+        was_integrated = getattr(self, "_integrated_mode_active", False)
+        if integrated and not was_integrated:
+            self._separate_core_snapshot = ({name: widget.value() for name, widget in self.core_fields.items()}, self.core_source.text())
+        if not integrated and was_integrated:
+            values, source = self._separate_core_snapshot
+            for name, value in values.items():
+                self.core_fields[name].setValue(value)
+            self.core_source.setText(source)
+        self._integrated_mode_active = integrated
+        self._integrated_core_input = None
+        if integrated and core_identifier:
+            from ...magnetics.core import CoreDatabase
+            core = CoreDatabase().get(core_identifier)
+            import math
+            self._integrated_core_input = FerriteCoreInput(preset_key="INTEGRATED_CHARACTERIZED",
+                part_number=core.part_number, shape=core.shape, manufacturer=core.manufacturer,
+                material_key=core.material_key, material_grade=core.material,
+                ae_mm2=core.ae_mm2, amin_mm2=core.amin_mm2, le_mm=core.le_mm, ve_mm3=core.ve_mm3,
+                al_nh=4e-7*math.pi*core.mu_r*core.ae_m2/core.le_m*1e9, mu_e=core.mu_r,
+                winding_area_mm2=core.aw_mm2, usable_winding_width_mm=core.window_width_mm,
+                mean_turn_length_mm=core.mlt_primary_mm, core_mass_g=core.core_mass_g,
+                thermal_resistance_k_per_w=core.thermal_resistance_k_per_w,
+                source="Characterized core identity fixed; geometry/material remain library reference estimates")
+            for name, widget in self.core_fields.items():
+                widget.setValue(float(getattr(self._integrated_core_input, name)))
+            self.core_source.setText(core.part_number + "：表征磁芯记录锁定；实体几何筛查采用该记录。")
+        for widget in (self.preset, self.core_search, self.family_filter, self.material, self.catalog_button, *self.core_fields.values()):
+            widget.setEnabled(not integrated)
+        self.magnetics_hint.setText(
+            "集成漏感模式：表征 Np/Ns 和磁芯固定；本页评估同一实体磁件。APR Lr/Lm/n_eff 与实体 Lμ/Np:Ns 分开，改变磁芯/绕组须重新表征。"
+            if integrated else "分立模式：独立 Lr + 变压器。可在左侧全局参数切换集成谐振漏感。")

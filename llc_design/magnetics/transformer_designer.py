@@ -263,6 +263,11 @@ def _solve_workpoints(spec: LLCDesignSpec, tank: TankDesign, scope: str = "all")
 
 
 def _candidate_turn_pairs(spec: LLCDesignSpec, settings: TransformerSynthesisSettings) -> Iterable[tuple[int, int, float]]:
+    if spec.integrated_magnetics:
+        # Characterization belongs to the measured physical winding. Searching
+        # new turns while retaining its L matrix is not a realizable candidate.
+        yield spec.primary_turns, spec.secondary_turns, spec.turns_ratio
+        return
     vsec = spec.vout_v + spec.rectifier_equivalent_drop_v
     target_ratio = (spec.bridge_gain * spec.vbus_nom_v * settings.nominal_tank_gain) / max(vsec, 1e-12)
     for ns in range(1, settings.max_secondary_turns_search + 1):
@@ -303,6 +308,14 @@ def synthesize_transformer(
             delta_t_rise_c=settings.area_product_delta_t_rise_c,
         ).core
     core = core_input.to_core_spec()
+    if base_spec.integrated_magnetics:
+        base_spec.validate()
+        if core.part_number.casefold() != base_spec.integrated_characterized_core.casefold():
+            raise ValueError("selected core differs from integrated characterization; select the characterized core or re-characterize")
+        # The characterized library core is immutable. Do not accept edited
+        # dimensions/material under its identity or a lossy GUI projection.
+        from .core import CoreDatabase
+        core = CoreDatabase().get(base_spec.integrated_characterized_core)
 
     candidate_records: list[tuple[float, LLCDesignSpec, TankDesign, tuple[LLCOperatingPoint, ...], float]] = []
     solve_notes: list[str] = []
@@ -315,11 +328,9 @@ def synthesize_transformer(
             if len(solve_notes) < 6:
                 solve_notes.append(str(exc))
             continue
-        b_values = [
-            op.transformer_square_equivalent_v /
-            (4.0 * np_ * core.amin_m2 * op.switching_frequency_hz)
-            for op in ops
-        ]
+        from .magnetic_waveforms import physical_transformer_flux
+        b_values = [max(abs(physical_transformer_flux(spec, op, np_, core.amin_m2,
+                        spec.magnetic_waveform_samples)[1])) for op in ops]
         worst_b = max(b_values)
         if worst_b > settings.max_flux_density_t * 1.20:
             # Keep the search compact: clearly under-turn candidates are discarded.
@@ -358,12 +369,12 @@ def synthesize_transformer(
     )
 
     length_p = spec.primary_turns * core_input.mean_turn_length_mm * 1e-3
-    length_s = spec.secondary_turns * core_input.mean_turn_length_mm * 1e-3
+    length_s = spec.secondary_turns * (core.mlt_secondary_mm if spec.integrated_magnetics else core_input.mean_turn_length_mm) * 1e-3
     rdc_p = dc_resistance_ohm(p_wire, length_p, spec.winding_temperature_c)
     rdc_s = dc_resistance_ohm(s_wire, length_s, spec.winding_temperature_c)
 
     gap_mm, ungapped_lm_h, target_al_nh = _estimate_gap_mm(
-        core_input, spec.primary_turns, tank.lm_h
+        core_input, spec.primary_turns, spec.physical_magnetizing_inductance_h(tank.lm_h)
     )
 
     transformer = TransformerDesign(
@@ -386,6 +397,10 @@ def synthesize_transformer(
         reasons=(),
     )
 
+    from .transformer import attach_integrated_leakage_screen
+    transformer = attach_integrated_leakage_screen(spec, transformer)
+    if spec.integrated_magnetics:
+        radial_build = transformer.radial_build_mm
     nominal_op = min(
         ops,
         key=lambda op: abs(op.vbus_v - spec.vbus_nom_v) + 100.0 * abs(op.load_fraction - 1.0),
@@ -407,7 +422,7 @@ def synthesize_transformer(
             total_transformer_loss_w=loss.total_w,
         ))
 
-    reasons: list[str] = []
+    reasons: list[str] = list(transformer.reasons)
     warnings: list[str] = []
     if worst_b > settings.max_flux_density_t:
         reasons.append(
@@ -426,7 +441,7 @@ def synthesize_transformer(
             f"round-bundle radial-build screen {radial_build:.2f} mm exceeds equivalent window height "
             f"{core.window_height_mm:.2f} mm; consider parallel/flattened Litz bundles and verify the bobbin drawing"
         )
-    if gap_mm <= 0.0 and tank.lm_h > ungapped_lm_h:
+    if gap_mm <= 0.0 and spec.physical_magnetizing_inductance_h(tank.lm_h) > ungapped_lm_h:
         reasons.append("target Lm is higher than the ungapped AL estimate")
     if gap_mm > 5.0:
         warnings.append(f"estimated total gap is large ({gap_mm:.2f} mm); verify fringing/leakage")
@@ -439,6 +454,11 @@ def synthesize_transformer(
     target_ratio = (spec.bridge_gain * spec.vbus_nom_v * settings.nominal_tank_gain) / (
         spec.vout_v + spec.rectifier_equivalent_drop_v
     )
+    if spec.integrated_magnetics:
+        # The synthesis table reports PHYSICAL Np/Ns. Convert the electrical
+        # gain target by the characterized n_phys/n_eff before comparing it.
+        target_ratio *= spec.turns_ratio/spec.electrical_turns_ratio
+        warnings.append(f"Integrated APR effective ratio={spec.electrical_turns_ratio:.6g}; physical turns fixed by characterization. Balanced geometry screen: {transformer.integrated_leakage.status}; required interface spacing={transformer.integrated_leakage.required_interwinding_gap_m*1e3:.4f} mm")
     actual_ratio = spec.turns_ratio
     return TransformerSynthesisResult(
         core=core_input,
@@ -450,7 +470,7 @@ def synthesize_transformer(
         target_turns_ratio=target_ratio,
         actual_turns_ratio=actual_ratio,
         turns_ratio_error_pct=100.0 * (actual_ratio - target_ratio) / target_ratio,
-        target_lm_uh=tank.lm_h * 1e6,
+        target_lm_uh=spec.physical_magnetizing_inductance_h(tank.lm_h) * 1e6,
         ungapped_lm_uh=ungapped_lm_h * 1e6,
         target_al_nh=target_al_nh,
         estimated_gap_mm=gap_mm,

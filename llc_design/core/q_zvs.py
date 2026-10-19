@@ -143,7 +143,7 @@ def build_q_zvs_analysis(
             1.0 + spec.rectifier_equivalent_drop_v / spec.vout_v
         )
         rac = equivalent_ac_load_ohm(
-            spec.turns_ratio,
+            spec.electrical_turns_ratio,
             spec.vout_v + spec.rectifier_equivalent_drop_v,
             transferred_power,
         )

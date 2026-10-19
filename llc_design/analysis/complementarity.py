@@ -46,7 +46,7 @@ def solve_complementarity_time_domain(request: LLCAnalysisRequest, config: Compl
     series_loss=series*float(np.mean(ir**2))
     rect_loss=spec.rectifier_equivalent_drop_v*bundle.signal('i_rectified').statistics.average
     vavg=bundle.signal('v_output').statistics.average
-    gain=spec.turns_ratio*(vavg+spec.rectifier_equivalent_drop_v)/(spec.bridge_gain*request.bus_voltage_v)
+    gain=spec.electrical_turns_ratio*(vavg+spec.rectifier_equivalent_drop_v)/(spec.bridge_gain*request.bus_voltage_v)
     metrics=metrics_from_waveform(request,bundle,input_phase_deg=phase,normalized_gain=gain,modeled_series_loss_w=series_loss,modeled_rectifier_drop_loss_w=rect_loss)
     mismatch=float(bundle.metadata.get('periodic_mismatch',math.inf)); converged=bundle.metadata.get('converged')=='True'
     open_fraction=float(np.mean(np.abs(bundle.signal('rectifier_state').values)<0.5))

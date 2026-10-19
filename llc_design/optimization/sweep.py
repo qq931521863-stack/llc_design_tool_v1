@@ -56,6 +56,15 @@ class OptimizationConfig:
         )
 
     @classmethod
+    def integrated(cls, spec):
+        from ..core.tank import design_tank
+        frequency_hz = design_tank(spec).fr_hz
+        return cls((spec.ln_ratio,), (spec.q_full_load,),
+            (frequency_hz*.9, frequency_hz, frequency_hz*1.1),
+            (spec.primary_turns,), (spec.secondary_turns,), (spec.primary_device,),
+            (spec.sr_parallel_devices_per_position,))
+
+    @classmethod
     def full(cls) -> "OptimizationConfig":
         return cls(
             ln_values=(3.5, 4.5, 5.5, 6.5),
@@ -90,9 +99,15 @@ class LLCOptimizer:
             config: OptimizationConfig | None = None,
             maximum_candidates: int | None = None, *,
             cancelled: Callable[[], bool] | None = None) -> OptimizationResult:
-        cfg = config or OptimizationConfig.quick()
+        cfg = config or (OptimizationConfig.integrated(base_spec) if base_spec.integrated_magnetics else OptimizationConfig.quick())
         cfg.validate()
         base_spec.validate()
+        if base_spec.integrated_magnetics:
+            for name, expected in (("primary_turn_values", base_spec.primary_turns),
+                    ("secondary_turn_values", base_spec.secondary_turns),
+                    ("ln_values", base_spec.ln_ratio), ("q_values", base_spec.q_full_load)):
+                if any(value != expected for value in getattr(cfg, name)):
+                    raise ValueError("integrated characterization fixes physical turns and Lr/Lm; only Cr/fr and devices may be optimized without re-characterization")
         if maximum_candidates is not None and (type(maximum_candidates) is not int or maximum_candidates < 1):
             raise ValueError("maximum_candidates must be a positive integer")
         combinations = itertools.product(
@@ -113,6 +128,14 @@ class LLCOptimizer:
                 primary_turns=int(np_turns), secondary_turns=int(ns_turns),
                 primary_device=primary_device,
                 sr_parallel_devices_per_position=int(sr_parallel))
+            if spec.integrated_magnetics:
+                from ..core.spec import TankParameterMode
+                from ..core.tank import design_tank
+                if TankParameterMode(spec.parameter_mode) == TankParameterMode.USER_DEFINED:
+                    # The characterized L matrix remains fixed. In manual mode
+                    # an fr sweep must vary Cr, not an unused nominal fr field.
+                    lr_h = design_tank(spec).lr_h
+                    spec = spec.clone(user_cr_f=1.0/((2.0*math.pi*fr)**2*lr_h))
             try:
                 analysis = self.analyzer.analyze(spec)
                 row = self._row(analysis)
@@ -178,7 +201,7 @@ class LLCOptimizer:
                           for p in analysis.operating_points
                           if p.operating_point.load_fraction >= 0.25)
         volume_cm3 = ((analysis.transformer.core.ve_mm3
-                       + analysis.resonant_inductor.core.ve_mm3) / 1000.0)
+                       + (analysis.resonant_inductor.core.ve_mm3 if analysis.resonant_inductor else 0.0)) / 1000.0)
         penalty = 0.0 if analysis.feasible else 1e6 + 1e4 * len(analysis.feasibility_reasons)
         full_load = [p for p in analysis.operating_points
                      if p.operating_point.load_fraction >= 0.999]
@@ -197,14 +220,16 @@ class LLCOptimizer:
             "minimum_efficiency_pct": analysis.minimum_efficiency.efficiency * 100.0,
             "worst_loss_w": analysis.worst_loss.total_loss_w,
             "minimum_zvs_margin": minimum_zvs,
-            "ln": spec.ln_ratio,
-            "q_full": spec.q_full_load,
-            "fr_khz": spec.resonant_frequency_hz / 1e3,
+            "ln": analysis.tank.ln_ratio,
+            "q_full": analysis.tank.q_full_load,
+            "fr_khz": analysis.tank.fr_hz / 1e3,
             "f_hold_khz": (hold_point.operating_point.switching_frequency_hz / 1e3
                            if hold_point else None),
             "primary_turns": spec.primary_turns,
             "secondary_turns": spec.secondary_turns,
             "turns_ratio": spec.turns_ratio,
+            "electrical_turns_ratio": spec.electrical_turns_ratio,
+            "magnetics_mode": spec.magnetics_mode.value,
             "lr_uh": analysis.tank.lr_h * 1e6,
             "cr_nf": analysis.tank.cr_f * 1e9,
             "lm_uh": analysis.tank.lm_h * 1e6,
@@ -213,9 +238,9 @@ class LLCOptimizer:
             "transformer_core": analysis.transformer.core.part_number,
             "transformer_fill": analysis.transformer.fill_factor,
             "transformer_b_t": analysis.transformer.worst_b_peak_t,
-            "inductor_core": analysis.resonant_inductor.core.part_number,
-            "inductor_turns": analysis.resonant_inductor.turns,
-            "inductor_layers": analysis.resonant_inductor.layers,
-            "inductor_b_t": analysis.resonant_inductor.worst_b_peak_t,
+            "inductor_core": analysis.resonant_inductor.core.part_number if analysis.resonant_inductor else "INTEGRATED_NO_SEPARATE_CORE",
+            "inductor_turns": analysis.resonant_inductor.turns if analysis.resonant_inductor else 0,
+            "inductor_layers": analysis.resonant_inductor.layers if analysis.resonant_inductor else 0,
+            "inductor_b_t": analysis.resonant_inductor.worst_b_peak_t if analysis.resonant_inductor else 0,
             "magnetics_volume_cm3": volume_cm3,
         }

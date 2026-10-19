@@ -131,7 +131,7 @@ def _parallel_rac_for_power(spec: LLCDesignSpec, output_voltage_v: float, power_
     vrect, rdc = _rectifier_dc_proxy(spec, output_voltage_v, power_w)
     # equivalent_ac_load_ohm expects V/P; using Rdc directly is equivalent.
     del vrect
-    return (8.0 / math.pi**2) * spec.turns_ratio**2 * rdc
+    return (8.0 / math.pi**2) * spec.electrical_turns_ratio**2 * rdc
 
 
 def solve_phase_power_at_frequency(
@@ -234,7 +234,7 @@ def _solve_parallel_electrical_point(
         rac = _parallel_rac_for_power(ps, vo, max(p, 1e-9)); st = tank_state(t, fs, rac); required = target_gain(ps, vbus_v)
         vbridge_rms = (2.0 * math.sqrt(2.0) / math.pi) * ps.bridge_gain * vbus_v
         ir = abs(vbridge_rms / st.z_input_ohm)
-        phase_points.append(PhaseElectricalPoint(i + 1, off, p, 100 * p / max(total, 1e-12), t.zr_ohm / rac, st.gain, required, st.input_phase_deg, ir, t, off - st.input_phase_deg, vbridge_rms, ps.turns_ratio, ps.primary_turns, ps.secondary_turns))
+        phase_points.append(PhaseElectricalPoint(i + 1, off, p, 100 * p / max(total, 1e-12), t.zr_ohm / rac, st.gain, required, st.input_phase_deg, ir, t, off - st.input_phase_deg, vbridge_rms, ps.electrical_turns_ratio, ps.primary_turns, ps.secondary_turns))
     imbalance = (max(powers) - min(powers)) / max(avg, 1e-12) * 100
     if imbalance > 2.0:
         warnings.append(f"Resonant-tank mismatch produces {imbalance:.3f}% phase-power imbalance at the common switching frequency.")
@@ -342,6 +342,8 @@ def three_phase_design_context(
     total_power_w: float | None = None,
 ) -> ThreePhaseDesignContext:
     """Return the balanced 3P topology spec/tank without single-phase fan-out."""
+    if spec.integrated_magnetics:
+        raise ValueError("integrated characterization currently supports independent two-winding full-bridge SR cells; three-phase star/shared-rectifier magnetics is not implemented")
     p = float(spec.pout_w if total_power_w is None else total_power_w)
     if p <= 0:
         raise ValueError("three-phase total power must be positive")
@@ -363,7 +365,7 @@ def three_phase_design_context(
         ps = spec.clone(primary_topology=PrimaryTopology.HALF_BRIDGE, pout_w=p)
 
     _vrect, rdc = _rectifier_dc_proxy(ps, ps.vout_v, p)
-    rac = three_phase_equivalent_ac_load_ohm(ps.turns_ratio, rdc)
+    rac = three_phase_equivalent_ac_load_ohm(ps.electrical_turns_ratio, rdc)
     tank = _tank_with_rac(ps, rac)
     return ThreePhaseDesignContext(ps, tank, rac, rdc, p)
 
@@ -402,7 +404,7 @@ def _solve_star_electrical_point(
     ctx = three_phase_design_context(spec, total_power_w=ptotal)
     ps, tank, rac = ctx.spec, ctx.tank, ctx.rac_ohm
     vrect = spec.vout_v + spec.rectifier_equivalent_drop_v
-    required_m = ps.turns_ratio * vrect / vbus_v
+    required_m = ps.electrical_turns_ratio * vrect / vbus_v
     fs = _select_3p_fha_frequency(
         tank, rac_ohm=rac, required_m=required_m,
         fmin_hz=ps.minimum_frequency_hz, fmax_hz=ps.maximum_frequency_hz,
@@ -418,7 +420,7 @@ def _solve_star_electrical_point(
         PhaseElectricalPoint(
             i + 1, off, phase_power, 100.0 / 3.0, q,
             st.gain, required_m, st.input_phase_deg, ir_rms, tank,
-            off - st.input_phase_deg, source_rms, ps.turns_ratio,
+            off - st.input_phase_deg, source_rms, ps.electrical_turns_ratio,
             ps.primary_turns, ps.secondary_turns,
             abs(iload), math.degrees(math.atan2(iload.imag, iload.real)) + off,
         )
@@ -449,7 +451,7 @@ def _solve_star_gain_curve(
     ps, tank, rac = ctx.spec, ctx.tank, ctx.rac_ohm
     freqs = np.geomspace(ps.minimum_frequency_hz, ps.maximum_frequency_hz, int(points))
     m = np.asarray([gain(tank, float(f), rac) for f in freqs], dtype=float)
-    vo = np.maximum(m * vbus_v / ps.turns_ratio - spec.rectifier_equivalent_drop_v, 0.0)
+    vo = np.maximum(m * vbus_v / ps.electrical_turns_ratio - spec.rectifier_equivalent_drop_v, 0.0)
     rload = spec.vout_v**2 / max(pnom, 1e-30)
     ptotal = vo * vo / rload
     pphase = tuple((ptotal / 3.0).copy() for _ in range(3))

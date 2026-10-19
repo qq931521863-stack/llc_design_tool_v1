@@ -199,6 +199,8 @@ def simulate_complementarity_steady_state(model: DynamicPhasorModel, steady_stat
         time_s=time,switching_frequency_hz=fs,model_name="V8 Complementarity TD",
         bus_voltage_v=inputs.bus_voltage_v,primary_topology=model.p.primary_topology,
         primary_deadtime_s=model.p.primary_deadtime_s,turns_ratio=model.p.turns_ratio,
+        physical_turns_ratio=model.p.physical_turns_ratio,
+        physical_magnetizing_h=model.p.physical_magnetizing_h,apr_magnetizing_h=model.p.lm_h,
         load_resistance_ohm=model.p.load_resistance_ohm,output_capacitance_f=model.p.output_capacitance_f,
         output_cap_esr_ohm=model.p.output_cap_esr_ohm,series_resistance_ohm=model.p.series_resistance_ohm,
         resonant_inductance_h=model.p.lr_h,output_voltage_mean_v=float(np.mean(vout)),bridge_voltage_v=bridge,

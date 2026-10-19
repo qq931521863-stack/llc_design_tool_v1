@@ -89,6 +89,8 @@ class LLCPlantParameters:
     secondary_turns: int = 0
     transformer_core_area_m2: float = 0.0
     transformer_magnetic_path_m: float = 0.0
+    physical_turns_ratio: float = 0.0
+    physical_magnetizing_h: float = 0.0
     resonant_inductor_turns: int = 0
     resonant_inductor_core_area_m2: float = 0.0
     resonant_inductor_magnetic_path_m: float = 0.0
@@ -106,6 +108,8 @@ class LLCPlantParameters:
         bad = [name for name, value in positive.items() if value <= 0.0]
         if bad:
             raise ValueError("plant parameters must be positive: " + ", ".join(bad))
+        if self.physical_turns_ratio > 0 and self.magnetizing_series_resistance_ohm != 0:
+            raise ValueError("integrated magnetics requires zero APR magnetizing series resistance; this loss mapping is not implemented")
         if self.output_cap_esr_ohm < 0.0:
             raise ValueError("output capacitor ESR cannot be negative")
         if self.series_resistance_ohm < 0.0:
@@ -129,6 +133,8 @@ class LLCPlantParameters:
         approximately with current squared; switching and fixed auxiliary
         losses are not folded into the dynamic tank.
         """
+        from ..core.integrated_magnetics import require_consistent_tank
+        require_consistent_tank(spec, tank)
         if operating_point.pout_w <= 0.0:
             raise ValueError("operating point output power must be positive")
         r_load = spec.vout_v**2 / operating_point.pout_w
@@ -148,12 +154,14 @@ class LLCPlantParameters:
             output_capacitance_f=spec.output_capacitance_f,
             output_cap_esr_ohm=spec.output_cap_esr_ohm,
             load_resistance_ohm=r_load,
-            turns_ratio=spec.turns_ratio,
+            turns_ratio=spec.electrical_turns_ratio,
             bridge_gain=spec.bridge_gain,
             series_resistance_ohm=max(r_series, 1e-6),
             rectifier_equivalent_drop_v=spec.rectifier_equivalent_drop_v,
             primary_deadtime_s=spec.primary_deadtime_s,
             primary_topology=spec.primary_topology.value,
+            physical_turns_ratio=spec.turns_ratio if spec.integrated_magnetics else 0.0,
+            physical_magnetizing_h=spec.physical_magnetizing_inductance_h(tank.lm_h) if spec.integrated_magnetics else 0.0,
             primary_turns=spec.primary_turns,
             secondary_turns=spec.secondary_turns,
             transformer_core_area_m2=(
@@ -163,13 +171,13 @@ class LLCPlantParameters:
                 analysis.transformer.core.le_m if analysis is not None else 0.0
             ),
             resonant_inductor_turns=(
-                analysis.resonant_inductor.turns if analysis is not None else 0
+                analysis.resonant_inductor.turns if analysis is not None and analysis.resonant_inductor is not None else 0
             ),
             resonant_inductor_core_area_m2=(
-                analysis.resonant_inductor.core.ae_m2 if analysis is not None else 0.0
+                analysis.resonant_inductor.core.ae_m2 if analysis is not None and analysis.resonant_inductor is not None else 0.0
             ),
             resonant_inductor_magnetic_path_m=(
-                analysis.resonant_inductor.core.le_m if analysis is not None else 0.0
+                analysis.resonant_inductor.core.le_m if analysis is not None and analysis.resonant_inductor is not None else 0.0
             ),
         )
         params.validate()

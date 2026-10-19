@@ -496,7 +496,7 @@ def _solve_reduced_multiseed(fun, *, lower: NDArray[np.float64], upper: NDArray[
 
 
 def _regulated_mode_solve(spec: LLCDesignSpec,tank: TankDesign,*,vbus_v:float,output_power_w:float,mode:ThreePhaseMode,seed:NDArray[np.float64]|None=None):
-    n=spec.turns_ratio
+    n=spec.electrical_turns_ratio
     vrect=spec.vout_v+spec.rectifier_equivalent_drop_v
     M=n*vrect/vbus_v
     vb=(2.0/3.0)*vbus_v
@@ -548,10 +548,10 @@ def _at_frequency_mode_solve(spec: LLCDesignSpec,tank:TankDesign,*,vbus_v:float,
     if mode==ThreePhaseMode.ABOVE_RESONANCE and zeta>=math.pi*(1+2e-5): return None
     if mode==ThreePhaseMode.BELOW_RESONANCE and zeta<=math.pi*(1-2e-5): return None
     lam=tank.lr_h/tank.lm_h
-    M0=max(0.08,min(2.5,spec.turns_ratio*(spec.vout_v+spec.rectifier_equivalent_drop_v)/vbus_v))
+    M0=max(0.08,min(2.5,spec.electrical_turns_ratio*(spec.vout_v+spec.rectifier_equivalent_drop_v)/vbus_v))
 
     def pnorm_target_for(M: float) -> float:
-        vrect=M*vbus_v/max(spec.turns_ratio,1e-30)
+        vrect=M*vbus_v/max(spec.electrical_turns_ratio,1e-30)
         vo=max(vrect-spec.rectifier_equivalent_drop_v,1e-9)
         pout=vo*vo/max(load_r_ohm,1e-30)
         ptransfer=pout*vrect/max(vo,1e-30)
@@ -611,9 +611,9 @@ def _build_result(spec:LLCDesignSpec,tank:TankDesign,*,vbus_v:float,output_power
     # Half-wave antisymmetry creates the second half-cycle exactly.
     theta=np.r_[theta_h,theta_h+zeta]
     mcr=np.r_[mcr,-mcr];jr=np.r_[jr,-jr];jm=np.r_[jm,-jm];mlm=np.r_[mlm,-mlm];src=np.r_[src,-src]
-    vb=(2.0/3.0)*vbus_v; ib=vb/tank.zr_ohm; vrect=M*vbus_v/spec.turns_ratio; vo=max(vrect-spec.rectifier_equivalent_drop_v,0.0)
+    vb=(2.0/3.0)*vbus_v; ib=vb/tank.zr_ohm; vrect=M*vbus_v/spec.electrical_turns_ratio; vo=max(vrect-spec.rectifier_equivalent_drop_v,0.0)
     load=jr-jm
-    ir=jr*ib; im=jm*ib; iload=load*ib; isec=iload*spec.turns_ratio
+    ir=jr*ib; im=jm*ib; iload=load*ib; isec=iload*spec.electrical_turns_ratio
     vcr=mcr*vb; vlm=mlm*vb; vphase=src*vb
     # Reconstruct the common six-pulse bridge current from three 120°-shifted
     # secondary phase currents. For a balanced three-wire set ia+ib+ic=0 and
@@ -680,7 +680,7 @@ def solve_three_phase_td_at_frequency(spec:LLCDesignSpec,tank:TankDesign,frequen
     mode=ThreePhaseMode.ABOVE_RESONANCE if frequency_hz>=tank.fr_hz else ThreePhaseMode.BELOW_RESONANCE
     item=_at_frequency_mode_solve(spec,tank,vbus_v=vin,frequency_hz=float(frequency_hz),load_r_ohm=rload,mode=mode)
     if item is None: raise RuntimeError("Requested frequency is inconsistent with selected 3P mode")
-    M=float(item.M); vrect=M*vin/spec.turns_ratio; vo=max(vrect-spec.rectifier_equivalent_drop_v,0.0); pout=vo*vo/rload
+    M=float(item.M); vrect=M*vin/spec.electrical_turns_ratio; vo=max(vrect-spec.rectifier_equivalent_drop_v,0.0); pout=vo*vo/rload
     report=max(float(item.residual_norm),float(item.point.periodic_error),max(0.0,-float(item.point.complementarity_margin)))
     return _build_result(spec,tank,vbus_v=vin,output_power_w=pout,mode=mode,zeta=item.zeta,M=M,event_frac=item.event_frac,s0=item.point.s0,residual_norm=report,samples_per_cycle=samples_per_cycle)
 

@@ -81,7 +81,7 @@ class TwoStageLLCOptimizer:
             raise ValueError("top_n must be an integer in 1..32")
         if TankParameterMode(base_spec.parameter_mode) != TankParameterMode.AUTO_DESIGN:
             raise ValueError("Ln/Q/fr optimization requires AUTO_DESIGN tank mode; explicit Lr/Cr/Lm remain unchanged")
-        cfg = config or OptimizationConfig.quick()
+        cfg = config or (OptimizationConfig.integrated(base_spec) if base_spec.integrated_magnetics else OptimizationConfig.quick())
         cfg.validate()
         if maximum_candidates is None:
             maximum_candidates = min(cfg.count, 4096)

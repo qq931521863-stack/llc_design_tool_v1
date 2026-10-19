@@ -259,6 +259,8 @@ def recommend_core_by_area_product(
     core may be of a different material (the pool is filtered by family, not
     material), so the result is an order-of-magnitude pre-screen.
     """
+    if spec.integrated_magnetics:
+        raise ValueError("automatic area-product core replacement is unsupported for characterized integrated magnetics; the measured core is fixed")
     mat = MaterialDatabase().get(material_key)
     temp_c = spec.winding_temperature_c if temperature_c is None else temperature_c
     b_cap = spec.transformer_max_b_t if b_sat_cap_t is None else b_sat_cap_t

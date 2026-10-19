@@ -19,6 +19,16 @@ class SecondaryTopology(str, Enum):
     FULL_BRIDGE_SR = "FULL_BRIDGE_SR"
 
 
+class MagneticsMode(str, Enum):
+    SEPARATE = "SEPARATE"
+    INTEGRATED = "INTEGRATED"
+
+
+class IntegratedInductanceSource(str, Enum):
+    INDUCTANCE_MATRIX = "INDUCTANCE_MATRIX"
+    OPEN_SHORT = "OPEN_SHORT"
+
+
 class TankParameterMode(str, Enum):
     """Source of the resonant-tank parameters.
 
@@ -89,6 +99,25 @@ class LLCDesignSpec:
 
     primary_topology: PrimaryTopology = PrimaryTopology.FULL_BRIDGE
     secondary_topology: SecondaryTopology = SecondaryTopology.FULL_BRIDGE_SR
+
+    # Two-winding integrated leakage model; old projects remain separate.
+    magnetics_mode: MagneticsMode = MagneticsMode.SEPARATE
+    integrated_inductance_source: IntegratedInductanceSource = IntegratedInductanceSource.INDUCTANCE_MATRIX
+    integrated_characterized_primary_turns: int | None = None
+    integrated_characterized_secondary_turns: int | None = None
+    integrated_characterized_core: str = ""
+    integrated_minimum_insulation_m: float = 0.20e-3
+    integrated_geometry_tolerance: float = 0.35
+    integrated_interwinding_gap_m: float = 0.20e-3
+    integrated_interlayer_gap_m: float = 0.05e-3
+    integrated_lp_h: float | None = None
+    integrated_ls_h: float | None = None
+    integrated_mutual_h: float | None = None
+    integrated_lshort_h: float | None = None
+    integrated_measurement_frequency_hz: float = 100_000.0
+    integrated_measurement_note: str = ""
+    integrated_target_lr_h: float | None = None
+    integrated_target_tolerance: float = 0.10
 
     # Resonant tank
     parameter_mode: TankParameterMode = TankParameterMode.AUTO_DESIGN
@@ -202,6 +231,24 @@ class LLCDesignSpec:
         return self.primary_turns / self.secondary_turns
 
     @property
+    def integrated_magnetics(self) -> bool:
+        return MagneticsMode(self.magnetics_mode) == MagneticsMode.INTEGRATED
+
+    @property
+    def electrical_turns_ratio(self) -> float:
+        """APR circuit ratio; physical turns_ratio remains Np/Ns."""
+        if self.integrated_magnetics:
+            from .integrated_magnetics import from_spec
+            return from_spec(self).effective_turns_ratio
+        return self.turns_ratio
+
+    def physical_magnetizing_inductance_h(self, tank_lm_h: float) -> float:
+        if self.integrated_magnetics:
+            from .integrated_magnetics import from_spec
+            return from_spec(self).physical_magnetizing_h
+        return tank_lm_h
+
+    @property
     def output_current_a(self) -> float:
         return self.pout_w / self.vout_v
 
@@ -226,7 +273,35 @@ class LLCDesignSpec:
             errors.append("output voltage and power must be positive")
         if not (0 < self.minimum_frequency_hz < self.maximum_frequency_hz):
             errors.append("frequency range is invalid")
+        import math
         mode = TankParameterMode(self.parameter_mode)
+        if self.integrated_magnetics:
+            from .integrated_magnetics import from_spec
+            if self.primary_turns <= 0 or self.secondary_turns <= 0:
+                raise ValueError("transformer physical turns must be positive")
+            if SecondaryTopology(self.secondary_topology) != SecondaryTopology.FULL_BRIDGE_SR:
+                errors.append("integrated model supports only two-winding FULL_BRIDGE_SR, not center tap")
+            if (self.integrated_characterized_primary_turns != self.primary_turns
+                    or self.integrated_characterized_secondary_turns != self.secondary_turns):
+                errors.append("integrated characterization turns do not match physical Np/Ns; re-characterize after winding changes")
+            if not isinstance(self.integrated_characterized_core, str) or not self.integrated_characterized_core.strip():
+                errors.append("integrated characterization requires a core identifier")
+            for spacing in (self.integrated_interwinding_gap_m, self.integrated_interlayer_gap_m, self.integrated_minimum_insulation_m):
+                if not math.isfinite(spacing) or spacing < 0:
+                    errors.append("integrated winding spacing must be finite and nonnegative")
+            if not math.isfinite(self.integrated_geometry_tolerance) or not 0 < self.integrated_geometry_tolerance < 1:
+                errors.append("integrated geometry tolerance must lie between 0 and 1")
+            if self.transformer_winding_layout != "P/2-S-P/2":
+                errors.append("integrated geometry screen currently supports P/2-S-P/2 only")
+            from_spec(self)
+            if not math.isfinite(self.integrated_measurement_frequency_hz) or self.integrated_measurement_frequency_hz <= 0:
+                errors.append("integrated characterization frequency must be finite and positive")
+            if not isinstance(self.integrated_measurement_note, str) or not self.integrated_measurement_note.strip():
+                errors.append("integrated characterization requires a measurement/model source note")
+            if (not math.isfinite(self.integrated_target_tolerance) or not 0 < self.integrated_target_tolerance < 1):
+                errors.append("integrated target tolerance must lie between 0 and 1")
+            if self.integrated_target_lr_h is not None and (not math.isfinite(self.integrated_target_lr_h) or self.integrated_target_lr_h <= 0):
+                errors.append("integrated Lr target must be finite and positive")
         if mode == TankParameterMode.AUTO_DESIGN:
             if not (self.minimum_frequency_hz <= self.resonant_frequency_hz <= self.maximum_frequency_hz):
                 errors.append("resonant frequency must lie inside the switching range")
@@ -235,13 +310,13 @@ class LLCDesignSpec:
             if self.q_full_load <= 0:
                 errors.append("full-load Q must be positive")
         else:
-            if self.user_lr_h is None or self.user_lr_h <= 0:
+            if not self.integrated_magnetics and (self.user_lr_h is None or self.user_lr_h <= 0):
                 errors.append("USER_DEFINED requires positive user_lr_h")
-            if self.user_cr_f is None or self.user_cr_f <= 0:
+            if self.user_cr_f is None or self.user_cr_f <= 0 or (self.integrated_magnetics and not math.isfinite(self.user_cr_f)):
                 errors.append("USER_DEFINED requires positive user_cr_f")
-            if self.user_lm_h is None or self.user_lm_h <= 0:
+            if not self.integrated_magnetics and (self.user_lm_h is None or self.user_lm_h <= 0):
                 errors.append("USER_DEFINED requires positive user_lm_h")
-            if self.user_lr_h and self.user_lm_h and self.user_lm_h <= self.user_lr_h:
+            if not self.integrated_magnetics and self.user_lr_h and self.user_lm_h and self.user_lm_h <= self.user_lr_h:
                 errors.append("USER_DEFINED requires Lm > Lr")
         if self.primary_turns <= 0 or self.secondary_turns <= 0:
             errors.append("transformer turns must be positive integers")
