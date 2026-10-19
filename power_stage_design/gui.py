@@ -7,10 +7,11 @@ from dataclasses import asdict
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QByteArray, QRectF, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QByteArray, QEvent, QRectF, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QPainter
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -139,6 +140,7 @@ class PowerStageMainWindow(QMainWindow):
         self.resize(1360, 900)
         self.result = None; self.loop_result = None; self._loop_settings = None;self.corner_sweep=None;self._sweep_request=None;self._sweep_enabled=False;self._sweep_generation=0
         self._generation = 0; self._loading = False; self._restored_loop = None
+        self._stage_edit_pending=False;self._loop_edit_pending=False
         self._exact_inputs = {}; self._exact_loop = {}; self._exact_comp = {}; self._hidden_comp = {}
         self._exact_topology=None;self._exact_mode=None;self._exact_loop_request={};self._loop_live=False
         self._open_debounce=(False,False)
@@ -236,7 +238,108 @@ class PowerStageMainWindow(QMainWindow):
         self.advanced_model=AdvancedModelWidget();self.advanced_model.changed.connect(self.invalidate)
         advanced_scroll=QScrollArea();advanced_scroll.setWidgetResizable(True);advanced_scroll.setWidget(self.advanced_model)
         self.tabs.addTab(advanced_scroll,"扩展物理参数")
+        self._suggestion_editors=(self.suggestion_ripple,self.suggestion_duty,self.suggestion_second,
+                                  self.suggestion_magnetizing,self.suggestion_reflected)
+        self._loop_editors=(*self.loop_widgets.values(),*self.comp_widgets.values())
+        self._loop_request_editors=(self.target_fc,self.target_pm)
+        for box in (*self.input_widgets.values(),*self.advanced_model.findChildren(QAbstractSpinBox),
+                    *self._suggestion_editors,*self._loop_editors,*self._loop_request_editors):
+            box.installEventFilter(self)
+        for key,box in self.input_widgets.items():
+            box.lineEdit().textEdited.connect(lambda _text,box=box,key=key:self._stage_text_edited(box,key))
+            box.editingFinished.connect(lambda box=box:self._numeric_edit_finished(box))
+        for box in self.advanced_model.findChildren(QAbstractSpinBox):
+            box.lineEdit().textEdited.connect(lambda _text,box=box:self._stage_text_edited(box))
+            box.editingFinished.connect(lambda box=box:self._numeric_edit_finished(box))
+        for key,box in self.loop_widgets.items():
+            box.lineEdit().textEdited.connect(lambda _text,key=key:self._loop_text_edited(key,False))
+            box.editingFinished.connect(lambda box=box:self._numeric_edit_finished(box,loop=True))
+        for key,box in self.comp_widgets.items():
+            box.lineEdit().textEdited.connect(lambda _text,key=key:self._loop_text_edited(key,True))
+            box.editingFinished.connect(lambda box=box:self._numeric_edit_finished(box,loop=True))
+        for box in self._suggestion_editors:box.lineEdit().textEdited.connect(lambda _text:self._invalidate_suggestions())
+        self.target_fc.lineEdit().textEdited.connect(lambda _text:self._loop_request_changed("target_crossover_hz"))
+        self.target_pm.lineEdit().textEdited.connect(lambda _text:self._loop_request_changed("target_phase_margin_deg"))
         self.load_preset()
+
+    def _stage_text_edited(self,box,key=None):
+        if self._loading or (box.keyboardTracking() and box.hasAcceptableInput()):return
+        if key is not None:self._exact_inputs.pop(key,None)
+        # An uncommitted edit still supersedes in-flight work, but must not
+        # launch an expensive solver on every key. Keep old plots read-only.
+        self._stage_edit_pending=True
+        self._generation+=1;self._loop_generation+=1
+        for event in self._cancel_events:event.set()
+        self._invalidate_suggestions(clear_record=True);self.invalidate_corners()
+        self._timer.stop();self._loop_timer.stop()
+        self.status.setText("输入尚未提交；当前图形仅对应上次已提交参数。重算或保存/导出前将先校验当前输入。")
+
+    def _loop_text_edited(self,key,comp):
+        self._loop_edit_pending=True
+        self._loop_numeric_changed(key,comp)
+        self._loop_timer.stop()
+
+    def _numeric_edit_finished(self,box,*,loop=False):
+        if self._loading or self._closing or not box.hasAcceptableInput():return
+        # A user may repair an empty field with the same stored number, so Qt
+        # need not emit valueChanged. Resume normal debounce on commit anyway.
+        if loop:
+            if self._loop_edit_pending:self._request_loop_update()
+        elif self._stage_edit_pending:self.invalidate()
+
+    def eventFilter(self,watched,event):
+        # Qt otherwise silently restores the old number on focus loss/Return
+        # for an intermediate edit such as an empty field. Preserve the editor
+        # so the action can reject it, including focus-taking push buttons.
+        committing=(event.type()==QEvent.Type.FocusOut or
+                    (event.type()==QEvent.Type.KeyPress and
+                     event.key() in (Qt.Key.Key_Return,Qt.Key.Key_Enter)))
+        if (not self._loading and not self._closing and isinstance(watched,QAbstractSpinBox)
+                and committing and not watched.hasAcceptableInput()):
+            self._reject_numeric_edit(watched)
+            return True
+        return super().eventFilter(watched,event)
+
+    def _reject_numeric_edit(self,box):
+        message="数值输入无效或尚未完成；请填写允许范围内的完整数值后重试。"
+        if box in self._suggestion_editors:
+            self._invalidate_suggestions();self.suggestion_output.setPlainText(message)
+        elif box in self._loop_request_editors:
+            self._loop_request_changed("target_crossover_hz" if box is self.target_fc else "target_phase_margin_deg")
+            self.loop_status.setText(message)
+        elif box in self._loop_editors:
+            self.invalidate_loop();self.loop_status.setText(message)
+        else:
+            self.invalidate();self._timer.stop();self.status.setText(message)
+
+    def _stage_editors(self):
+        editors=list(self.input_widgets.values())
+        if self.advanced_model.enabled.isChecked():
+            group={"T05":self.advanced_model.t05,"T11":self.advanced_model.qr,
+                   "T18":self.advanced_model.psfb}.get(self.topology_combo.currentData())
+            if group is not None:editors.extend(group.findChildren(QAbstractSpinBox))
+        return editors
+
+    def _commit_numeric_edits(self,editors):
+        # Validate before interpretText: Qt's default correction may revert or
+        # clamp invalid text. Use Qt itself for locale and range handling.
+        for box in editors:
+            if not box.hasAcceptableInput():
+                self._reject_numeric_edit(box);return False
+        for box in editors:box.interpretText()
+        return True
+
+    def _prepare_current_result(self,*,include_loop=False):
+        if self._closing or not self._commit_numeric_edits(self._stage_editors()):return False
+        if self._timer.isActive() or self._stage_edit_pending:self.calculate()
+        if self.result is None:
+            if ("stage",self._generation) in self._jobs:
+                self.status.setText("当前输入正在计算；本次操作尚未执行，请在计算完成后重试。")
+            return False
+        if include_loop:
+            if not self._commit_numeric_edits((*self._loop_editors,*self._loop_request_editors)):return False
+            if self._loop_timer.isActive() or self._loop_edit_pending:self.analyze_loop()
+        return True
 
     def _topology_changed(self):
         if not self._loading:self._exact_topology=None
@@ -340,6 +443,8 @@ class PowerStageMainWindow(QMainWindow):
         self._timer.start()
 
     def calculate(self):
+        if not self._commit_numeric_edits(self._stage_editors()):return
+        self._stage_edit_pending=False
         self._timer.stop();self._loop_timer.stop();self._generation+=1;self._loop_generation+=1
         for cancellation in self._cancel_events:cancellation.set()
         self.invalidate_corners()
@@ -541,7 +646,8 @@ class PowerStageMainWindow(QMainWindow):
         self.suggestion_output.setPlainText("已取消建议计算；迟到结果不会应用。")
 
     def propose_parameters(self):
-        if self._timer.isActive():self.calculate()
+        if not self._commit_numeric_edits((*self._stage_editors(),*self._suggestion_editors)):return
+        if self._timer.isActive() or self._stage_edit_pending:self.calculate()
         self._invalidate_suggestions();token=self._suggestion_generation
         try:
             inputs=self.current_inputs();targets=self._suggestion_targets()
@@ -600,6 +706,8 @@ class PowerStageMainWindow(QMainWindow):
         self.suggestion_output.setPlainText("\n".join(lines))
 
     def apply_parameter_proposal(self):
+        if not self._commit_numeric_edits((*self._stage_editors(),*self._suggestion_editors)):return
+        if self._timer.isActive() or self._stage_edit_pending:self.calculate()
         proposal=self.parameter_proposal
         if self._closing or proposal is None:return
         if proposal.source_design_id!=self.current_inputs().design_id:
@@ -671,6 +779,7 @@ class PowerStageMainWindow(QMainWindow):
 
     def apply_integrator_branch(self):
         from .loop import integrator_branch_settings
+        if not self._prepare_current_result() or not self._commit_numeric_edits(self._loop_editors):return
         try:
             _,current=self.loop_parameters()
             selected=integrator_branch_settings(current)
@@ -737,7 +846,8 @@ class PowerStageMainWindow(QMainWindow):
 
     def analyze_loop(self):
         from .loop import analyze_loop
-        if self._closing:return
+        if not self._prepare_current_result() or not self._commit_numeric_edits(self._loop_editors):return
+        self._loop_edit_pending=False
         self._loop_live=True
         self.invalidate_loop()
         try:
@@ -754,6 +864,7 @@ class PowerStageMainWindow(QMainWindow):
 
     def synthesize_loop(self):
         from .loop import synthesize_compensator
+        if not self._prepare_current_result() or not self._commit_numeric_edits((*self._loop_editors,*self._loop_request_editors)):return
         self.invalidate_loop()
         try:
             plant,comp=self.loop_parameters()
@@ -861,6 +972,7 @@ class PowerStageMainWindow(QMainWindow):
 
     def run_corners(self):
         from .corners import analyze_corners
+        if not self._prepare_current_result(include_loop=True):return
         self.invalidate_corners()
         if self.result is None:
             self.corner_status.setText("请先获得有效功率级结果");return
@@ -911,7 +1023,7 @@ class PowerStageMainWindow(QMainWindow):
         self.corner_table.resizeRowsToContents()
 
     def save_to(self,path):
-        if self.result is None:raise ValueError("当前没有有效结果，不能保存过期设计")
+        if not self._prepare_current_result(include_loop=True):raise ValueError("当前没有有效结果，不能保存过期设计")
         device=self.device_combo.currentData()
         return save_project(self.result.inputs,path,loop_settings=self._loop_settings,selected_device=asdict(device) if device else None,corner_request=asdict(self._parse_corner_request()) if self._sweep_enabled else None,parameter_suggestion=self._applied_suggestion,loop_request=self._current_loop_request())
 
@@ -921,6 +1033,7 @@ class PowerStageMainWindow(QMainWindow):
 
     def _restore_project(self,inputs,document):
         self._restore_corner_request_pending=False;self._sweep_enabled=False;self._sweep_request=None
+        self._loop_edit_pending=False
         self._loop_live=False
         # Only this project's applied record may restore an optional Lm target.
         self.suggestion_magnetizing.setValue(0)
@@ -973,7 +1086,7 @@ class PowerStageMainWindow(QMainWindow):
             else:self.run_corners()
 
     def report_to(self,path):
-        if self.result is None:raise ValueError("当前没有有效结果，不能导出旧报告")
+        if not self._prepare_current_result(include_loop=True):raise ValueError("当前没有有效结果，不能导出旧报告")
         device=self.device_combo.currentData()
         return write_report(self.result,path,loop_result=self.loop_result,loop_settings=self._loop_settings,
                             selected_device=asdict(device) if device else None,device_assessment=self.device_assessment(),corner_sweep=self.corner_sweep,parameter_suggestion=self._applied_suggestion,loop_request=self._current_loop_request())
@@ -987,6 +1100,7 @@ class PowerStageMainWindow(QMainWindow):
                 id(self.result),id(self.loop_result),id(self.corner_sweep),id(self._applied_suggestion))
 
     def _save_dialog(self):
+        if not self._prepare_current_result(include_loop=True):return
         token=self._modal_revision()
         if token is None or self.result is None:
             return
@@ -994,7 +1108,7 @@ class PowerStageMainWindow(QMainWindow):
         if path and token==self._modal_revision():self._guard(lambda:self._start_project_save(path))
 
     def _start_project_save(self,path):
-        if self.result is None:raise ValueError("当前没有有效结果，不能保存过期设计")
+        if not self._prepare_current_result(include_loop=True):raise ValueError("当前没有有效结果，不能保存过期设计")
         token=(self._generation,self._loop_generation,self._sweep_generation)
         inputs=self.result.inputs;settings=self._loop_settings
         suggestion=self._applied_suggestion
@@ -1078,6 +1192,7 @@ class PowerStageMainWindow(QMainWindow):
         self.status.setText("打开请求已因当前工程变化取消；继续计算当前工程。")
 
     def _report_dialog(self):
+        if not self._prepare_current_result(include_loop=True):return
         token=self._modal_revision()
         if token is None or self.result is None:
             return
@@ -1085,6 +1200,7 @@ class PowerStageMainWindow(QMainWindow):
         if path and token==self._modal_revision():self._guard(lambda:self.report_to(path))
 
     def _csv_dialog(self):
+        if not self._prepare_current_result():return
         result=self.result
         generation=self._generation
         if self._closing or result is None:return
