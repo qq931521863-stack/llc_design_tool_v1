@@ -344,7 +344,7 @@ def test_saved_exact_snapshot_detaches_from_live_editor_and_exports(host, monkey
     assert report["status"] == "PASS", report
     assert report["controller"]["b"] == list(exact.b)
     assert report["controller"]["a"] == list(exact.a)
-    assert report["controller"]["sample_rate_hz"] == exact.sample_rate_hz
+    assert report["controller"]["sample_rate_hz"] == 1 / reloaded.controller.sample_time_s
     assert report["controller"]["source"] == reloaded.controller_source
     view.page_scroll.ensureWidgetVisible(view.external_controller_check)
     _click(view.external_controller_check)
