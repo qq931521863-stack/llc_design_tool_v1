@@ -4,8 +4,10 @@
 
 Publication is paused. No remote push, CI dispatch, tag or release was performed.
 Version 9.9.0 and release preflight changes remain local preparation only.
-The requirement-by-requirement consumer audit and its confirmed implementation
-repairs are complete. Fresh aggregate and artifact qualification is now in progress;
+The latest priority is Buck, Boost/Buck-Boost and full-bridge functionality plus
+clear desktop access. A further real-consumer audit found and repaired advanced
+suggestion records, T17 light-load sizing and missing LLC component terminals.
+Screen-level layout and the new aggregate/artifact qualification are in progress;
 prior row labels and historical full-suite counts are not treated as this pass.
 T05 floating-node dynamics, QR valley/data options and PSFB finite-Coss commutation
 are implemented opt-in models with explicit source parameters.
@@ -88,8 +90,8 @@ remain in the source tree.
   workflow dispatch, tag or release was created in this resumed pass.
 - Explicitly correct the earlier broad A03/A05 acceptance: real two-stage LLC
   candidate consumers were absent, and LLC/Control Tools could announce successful
-  C99 generation despite actual float32 verification failure. Those are being
-  implemented with actual consumers; A05 has independent red/green acceptance,
+  C99 generation despite actual float32 verification failure. Those have been
+  repaired with actual consumers; A05 has independent red/green acceptance,
   and A03 final independent report/CLI review has passed. Source-engine
   tests alone are insufficient.
 - Completed focused repairs: same-temperature nominal/corner reports, exact
@@ -103,9 +105,10 @@ remain in the source tree.
   actual raw TD arrays. Exact immutable waveform-input summaries and per-item
   source-aware formulas preserve retained FHA approximations explicitly. CLI
   repeat-output mixing is repaired by requiring a new TwoStage directory.
-- No concrete implementation defect remains open in the completed independent
-  audit cuts. A fresh full regression/RSS and strengthened actual production
-  frozen/wheel qualification are next; this is not yet an aggregate pass claim.
+- The earlier audit cuts did not cover every cross-feature combination. The new
+  priority audit found additional real advanced-suggestion and LLC schematic
+  consumer defects; these are documented and repaired, not hidden by the previous
+  acceptance labels. Fresh aggregate qualification remains required.
 - After these paths stabilize: freeze sources, rerun affected modules, then full
   regression/RSS and installed/frozen application checks. Linux evidence cannot
   establish unrun Windows/macOS or hardware/TI executable equivalence.
@@ -118,6 +121,55 @@ runs the optional T05/QR/T18 desktop solvers, all 47 branches, exact plotted arr
 save/recompute/report identities and the real nominal TwoStage candidate/Apply/
 save/history/report path. The verifier rejects incomplete or tampered evidence.
 The solver-inclusive safety timeout is 900 s, not a startup-performance target;
-no numerical tolerance was relaxed. The source preflight and 136 contract tests
-passed. The final wheel and actual production frozen executable must run the same
+no numerical tolerance was relaxed. The first source preflight and 136 contract tests
+passed at the historical freeze. The priority extension below has its own fresh proof. The final wheel and actual production frozen executable must run the same
 self-test outside the repository. A separate QA executable is not substituted.
+
+
+## Latest priority checkpoint
+
+- Buck/Boost/inverting Buck-Boost actual nine-mode workflows independently pass.
+- Advanced T05/T18 parameter proposals now preserve typed options and support
+  their existing Preview/Apply/save/report consumer path with local invalid-input
+  handling. Model-specific help reflects the selected optional physics.
+- T17 Full Bridge recommendations now cover its solved light-load magnetic-state
+  branches, including BCM/DCM. Actual targets and component values are rechecked;
+  three numerical endpoints are repaired and unsupported physical modes still fail.
+- T21 LLC Full Bridge Co ESR/RΣ/DC-bus views are actual selectable same-source
+  components, with saved selection and report/CSV/PNG. Earlier A02 every-component
+  coverage was overstated; the new independent click audit explicitly corrects it.
+- PSD is the prominent first-level Chinese/English launcher entry. Existing
+  workspaces remain directly available; contact information uses one compact row.
+  Real 720p PSD plotting is repaired, with scroll/collapse controls and both traces
+  visible together after collapsing the schematic. LLC fit is separately checked.
+- The old-source full run ended with one confirmed i18n failure and SIGKILL, not a
+  pass. Translation/owned-window teardown checks now pass; the signal-kill cause
+  is unconfirmed. New-source all-path regression and RSS will be run after freeze,
+  followed by the opt-in long PFC run and actual installed/frozen artifact checks.
+- The clean historical Linux wheel/frozen proof remains available for 1878658;
+  it does not qualify these newer changes. Windows/macOS native proofs, exact TI
+  software comparison and hardware correlation remain distinct unfinished gates.
+- Publication is still paused. No remote write, CI dispatch, tag or release has
+  been performed during this work.
+
+### Priority qualification freeze
+
+All requested Buck/Boost/Buck-Boost/full-bridge repair owners have finished their
+source edits. The source is being committed locally for a fresh, sequential
+full-suite/RSS → opt-in long PFC → installed-wheel/Linux-frozen qualification.
+No earlier aggregate count or artifact proof is reused as a result for this source.
+
+- Advanced/ordinary parameter consumers: 102 pass in 447.06 s.
+- LLC passive/component/desktop-layout integration: 52 pass with normal exit;
+  waveform lifetime, digital/research/session/TwoStage ownership: 106 pass in
+  83.32 s; final three-screen replay: 3 pass in 27.67 s. These overlap and are
+  not summed into an aggregate count.
+- Actual configured LLC screens preserve all 12 original page objects. The
+  minimum is 1228×624; waveforms retain readable per-trace heights and real
+  scrolling, the two-row statistics table is compact, and the Bode canvas fits
+  its actual ancestor viewport. Source arrays and ownership are unchanged.
+- Production schema-3 proof now additionally requires T17 light-load suggestion
+  Apply/save/report, T05 typed-option suggestion replay, and actual T21 Co ESR,
+  RΣ and full-bridge DC-bus selection/export. Existing gates remain mandatory.
+  210 contract cases and an actual 84.51 s source preflight pass with normal
+  cleanup; installed/frozen proofs are still pending at this checkpoint.

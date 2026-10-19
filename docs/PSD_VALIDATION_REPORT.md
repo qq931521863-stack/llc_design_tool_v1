@@ -425,3 +425,110 @@ actual production frozen-process evidence are recorded separately when completed
 The ngspice batch prerequisite is supplied from an official Debian 44.2 package,
 privately extracted and source/SHA-verified; a real RC transient agrees with the
 analytic 1τ/5τ responses within 2 µV. No system security setting was changed.
+
+
+## Priority re-audit and preserved baseline red run (2026-10-19)
+
+The clean `187865855b77060124eb01b217a4d243182663b4` source ran the full configured
+suite with aggregate process-group RSS sampled each second. It recorded 2429 of
+3330 outcomes (including one failure and the explicit long-PFC skip), then its
+pytest process terminated with SIGKILL / exit -9 after 1311.174 s. Peak sampled
+aggregate RSS was 4,843,824 KiB (4.62 GiB). No completed JUnit or aggregate pass is
+claimed. The environment did not expose kernel/cgroup evidence establishing OOM,
+so the cause of SIGKILL remains unconfirmed. The unmodified baseline and its logs,
+RSS history and collection-index mapping are retained.
+
+The recorded failing test was independently rerun by exact name:
+`llc_design/tests/test_i18n.py::test_every_bound_shell_string_is_translated`.
+Five new TwoStage shell labels lacked translations. These and seven launcher
+labels now have en/ja/ko entries. Fifteen focused i18n checks pass, including
+finally-backed cleanup of all six owned windows. A real subprocess repeats three
+construct/destroy cycles, injects a missing-translation assertion in the middle,
+retains native wrappers to prove destruction, runs cancellable T18 work, and
+preserves an unrelated-window sentinel. Each cycle destroys 109 retained native
+wrappers. The negative control shows close() alone retaining all six windows.
+This verifies a cleanup contract, not the reason for the earlier SIGKILL.
+
+The same baseline separately passed actual installed-wheel and production Linux
+frozen schema-3 self-tests: six workspaces, all 47 advanced branches, identical
+saved/recomputed waveform fingerprints, and actual TwoStage nominal Apply/report.
+The proofs differed only in the frozen flag. Those artifacts qualify that baseline,
+not the subsequent priority repairs. New source aggregate/artifact qualification
+must run after the new freeze; prior counts and proofs are not substituted.
+
+### Requested-stage defects and independent repair evidence
+
+- T01/T02/T03: nine actual CCM/BCM/DCM workflows; all drawn component clicks and
+  arrays/statistics; independent volt-second/charge/power checks; actual parameter
+  inverse, valid CCM loop, save→edit→restore→HTML and current identity.
+- T05/T18/QR recommendation records: unchanged advanced dataclasses were wrongly
+  marked as changed, breaking preview and persistence. Exact typed comparisons
+  repair both producer and validator; forged parameter-source edits still reject.
+  The T05 invalid-Ron click now gives local error feedback without an uncaught
+  Qt slot exception or worker. Independent red/green probes are retained.
+- T17: one-call physical inverse for ordinary CCM, joint-demagnetizing CCM, BCM
+  and DCM. Independent switched-circuit IVPs check final L/Lm/n, charge, flux and
+  energy. The independently replayed 71-case set includes the BCM root boundary,
+  alpha=k zero-freewheel endpoint and tiny representable intervals. 452 reachable
+  target round trips and three actual light-load GUI Apply/save/reopen/report
+  flows pass; seven originally invalid forward points remain rejected.
+- T21: actual clickable Co ESR, RΣ and DC bus now select their physical same-source
+  terminal signals and persist through recomputation/report. Eleven focused
+  full/half-bridge cases pass, including FHA, harmonic and detailed sources.
+  Detailed half bridge at 1024 samples genuinely converges; its failing 256/512
+  cases retain the strict rejection. Independent baseline/new comparisons show
+  all original 44/42/44/48 FHA/fast signal arrays, time axes and request identities
+  unchanged; only terminal projections are added. Model-specific output-node
+  approximation and underdetermined half-bridge source current remain explicit.
+
+A newly written T05 GUI test initially used a tight QTest.qWait loop and timed out
+waiting for Python ODE callbacks. The retained red result is not hidden. Switching
+the test to the actual native QEventLoop allowed the real 3%-different target,
+Preview→Apply→save→change→restore→report path to finish (169.99 s); no target or
+solver tolerance was relaxed. The combined optional-model and existing parameter
+suggestion suites then passed all 102 tests in 447.06 s with normal exit.
+Focused counts are not added to an aggregate total.
+
+### Screen-level acceptance
+
+The first-level PSD entry and all existing launcher choices are genuinely clicked
+on configured Linux Qt screens, including 1280×720. A real screenshot exposed
+zero-height PSD ViewBoxes despite correct data arrays. Minimum 180 px plot widgets,
+scroll access and a reversible schematic-collapse control fix that layout defect.
+The refreshed 720p collapsed view shows both V/I traces and complete statistics;
+array identity and subsequent schematic selection remain checked. The existing LLC whole-window
+layout was separately tested and repaired rather than inferred from a successful
+PSD→LLC handoff. Native Windows/macOS and hardware remain unrun.
+
+### LLC screen and production-proof closure before aggregate qualification
+
+The digital-control page originally propagated a roughly 977 px minimum height
+into every LLC tab. It now scrolls its original controls locally, preserving the
+outer page object and existing callbacks, while a screen-bounded initial size and
+readable Bode height keep the complete window within 1280×720, 1366×768 and
+1440×900 at 100% Qt scale. Minimum size is 1228×624. Actual mouse/scroll tests
+visit all 12 pages, compute waveforms and the digital loop, run a real nominal TD
+candidate, save a project and export the candidate report. Waveform-array identity,
+request identity and the original page objects remain unchanged.
+
+A separate hidden-tab defect retained an old 1350 px waveform canvas after a
+two-signal component was selected. The fix resizes only the plotting viewport,
+retaining each trace's readable minimum. An interim mixed test then exposed a
+400/353 px canvas/viewport mismatch and assertion-path Qt SIGSEGV; both red logs
+are retained. Compacting the actual two-row statistics table restores the old
+1360×900 simultaneous-visible assertion without weakening it. The integrated
+52-case component/layout run and 106-case lifetime/digital/session/TwoStage run
+now exit normally; final three-screen replay also passes. On 720p, real scrolling
+provides access to both complete waveform plots, while the digital Bode plots
+fit together after scrolling the page. This is not a claim of native OS/DPI parity.
+
+The production launcher self-test retains schema 3 and every previous gate, adding
+a mandatory priority-workflow evidence object. It uses actual T17 light-load
+suggestion/Apply/save/reopen/report, an actual T05 typed-option proposal, and
+real T21 Co ESR/RΣ/DC-bus clicks, exact curve arrays, export selection and replay.
+The T17 independent oracle checks D=0.08629449216106147 and ΔI=0.02 A. Its initial
+frequency equality incorrectly rejected 99999.99999999999 versus 100000 Hz; a
+1e-12 relative floating-point comparison and retained boundary regression repair
+that oracle without changing model tolerances. All 210 contract cases and an
+84.51 s actual source-helper preflight pass with worker/Qt cleanup. These remain
+source evidence until the clean frozen source is built and exercised separately.
