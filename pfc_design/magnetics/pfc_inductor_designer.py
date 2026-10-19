@@ -16,6 +16,7 @@ from typing import Literal
 import numpy as np
 
 from .high_flux import HighFluxCoreGeometry, HighFluxMaterial
+from .manufacturer_catalog import CatalogDomainError, CatalogPowderMaterial, source_pfc_components
 
 TopologyKind = Literal["ttpl", "vienna"]
 RHO_CU_20 = 1.724e-8
@@ -41,8 +42,44 @@ class PFCInductorDesignRequest:
     max_fill_factor: float = 0.45
     winding_length_factor: float = 1.10
     curve_points: int = 161
+    source_snapshot: dict | None = None
+    model_declaration: dict | None = None
 
     def validate(self) -> None:
+        if isinstance(self.material, CatalogPowderMaterial) and self.source_snapshot is None:
+            raise ValueError("Source material requires its provenance snapshot")
+        if self.source_snapshot is not None:
+            for name in ("input_rms_v", "bus_voltage_v", "output_power_w", "switching_frequency_hz",
+                         "target_inductance_uh", "efficiency", "wire_copper_diameter_mm", "enamel_build_mm",
+                         "target_current_density_a_mm2", "copper_temperature_c", "max_fill_factor", "winding_length_factor"):
+                value = getattr(self, name)
+                if type(value) not in (int, float) or not math.isfinite(value):
+                    raise ValueError(f"{name} must be a finite number")
+            if type(self.n_cores) is not int or self.n_cores < 1:
+                raise ValueError("n_cores must be a positive integer")
+            if type(self.curve_points) is not int or not 2 <= self.curve_points <= 10000:
+                raise ValueError("curve_points must be an integer in [2, 10000]")
+            if not 0 < self.efficiency <= 1 or self.enamel_build_mm < 0 or self.winding_length_factor <= 0:
+                raise ValueError("Invalid efficiency, enamel build or winding length factor")
+            if not 20 <= self.copper_temperature_c <= 180:
+                raise ValueError("Source winding estimate supports copper temperatures from 20 to 180 °C")
+            if 1 + CU_TEMP_COEFF * (self.copper_temperature_c - 20) <= 0:
+                raise ValueError("Linear copper-resistance correction must remain positive")
+            if self.topology not in ("ttpl", "vienna"):
+                raise ValueError("topology must be 'ttpl' or 'vienna'")
+            active_bus, line_peak = _active_bus_level(self), math.sqrt(2) * _phase_rms_voltage(self)
+            if active_bus <= line_peak or math.isclose(active_bus, line_peak, rel_tol=1e-12):
+                raise ValueError("Insufficient boost headroom: line peak must be below the active bus level")
+            if not isinstance(self.material, CatalogPowderMaterial):
+                raise ValueError("Source catalog cores require their exact source model")
+            if self.material.selection.snapshot != self.source_snapshot or self.material.declaration != self.model_declaration:
+                raise ValueError("Catalog selection/model identity mismatch")
+            expected_core, _ = source_pfc_components(self.material.selection, self.model_declaration)
+            if self.core != expected_core:
+                raise ValueError("Catalog geometry identity mismatch")
+            if self.material.declaration["H_Oe"][0] != 0 or self.material.declaration["B_T"][0] != 0:
+                raise ValueError("PFC line-cycle estimate needs explicitly declared H/B coverage down to zero")
+            self.material.core_loss_density_mw_cm3(0, self.switching_frequency_hz)
         if self.topology not in ("ttpl", "vienna"):
             raise ValueError("topology must be 'ttpl' or 'vienna'")
         for name, value in (
@@ -207,28 +244,32 @@ def design_pfc_inductor(req: PFCInductorDesignRequest) -> PFCInductorDesignResul
     # guaranteed monotonic at deep bias, so retain the best feasible candidate.
     best = None
     for turns in range(1, 401):
-        i_peak, l_peak, ripple_peak = _resolve_peak(req, turns)
-        theta, ripple, b_ac, pcore, irms_total = _line_cycle(req, turns, 181)
-        n_parallel = _wire_parallel_count(req, irms_total)
-        fill = _fill_factor(req, turns, n_parallel)
-        h = _h_oe(turns, i_peak, req.core.le_mm)
-        pct = req.material.permeability_percent(h)
-        l0 = req.material.al_nh_per_t2 * req.n_cores * turns * turns / 1000.0
-        ae_total_m2 = req.core.ae_mm2 * req.n_cores * 1.0e-6
-        bdc = l_peak * 1.0e-6 * i_peak / max(turns * ae_total_m2, 1.0e-12)
-        score = abs(l_peak - req.target_inductance_uh)
-        feasible = fill <= req.max_fill_factor and bdc <= 0.80 * req.core.bs_t
-        candidate = (feasible, l_peak >= req.target_inductance_uh, score, turns,
-                     i_peak, l_peak, ripple_peak, irms_total, n_parallel, fill,
-                     h, pct, l0, bdc, theta, ripple, b_ac, pcore)
-        if feasible and l_peak >= req.target_inductance_uh:
-            best = candidate
-            break
-        if best is None or (feasible and (not best[0] or score < best[2])):
-            best = candidate
+        try:
+            i_peak, l_peak, ripple_peak = _resolve_peak(req, turns)
+            theta, ripple, b_ac, pcore, irms_total = _line_cycle(req, turns, 181)
+            n_parallel = _wire_parallel_count(req, irms_total)
+            fill = _fill_factor(req, turns, n_parallel)
+            h = _h_oe(turns, i_peak, req.core.le_mm)
+            pct = req.material.permeability_percent(h)
+            l0 = req.material.al_nh_per_t2 * req.n_cores * turns * turns / 1000.0
+            ae_total_m2 = req.core.ae_mm2 * req.n_cores * 1.0e-6
+            bdc = l_peak * 1.0e-6 * i_peak / max(turns * ae_total_m2, 1.0e-12)
+            score = abs(l_peak - req.target_inductance_uh)
+            feasible = fill <= req.max_fill_factor and bdc <= 0.80 * req.core.bs_t
+            candidate = (feasible, l_peak >= req.target_inductance_uh, score, turns,
+                         i_peak, l_peak, ripple_peak, irms_total, n_parallel, fill,
+                         h, pct, l0, bdc, theta, ripple, b_ac, pcore)
+            if feasible and l_peak >= req.target_inductance_uh:
+                best = candidate
+                break
+            if best is None or (feasible and (not best[0] or score < best[2])):
+                best = candidate
+        except CatalogDomainError:
+            # Reject this winding candidate, never extrapolate the source fit.
+            continue
 
     if best is None:
-        raise RuntimeError("No inductor candidate found")
+        raise RuntimeError("No inductor candidate within the selected material model domain and winding constraints")
 
     (feasible, target_met, _score, turns, i_peak, l_peak, ripple_peak,
      irms_total, n_parallel, fill, h, pct, l0, bdc, theta, ripple,
@@ -247,9 +288,19 @@ def design_pfc_inductor(req: PFCInductorDesignRequest) -> PFCInductorDesignResul
     pcu = irms_total ** 2 * rhot
     pcore_mean = float(np.mean(pcore))
 
-    i_curve = np.linspace(0.0, max(i_peak * 1.25, 1.0), req.curve_points)
+    curve_max = max(i_peak * 1.25, 1.0)
+    if isinstance(req.material, CatalogPowderMaterial):
+        curve_max = min(curve_max, req.material.declaration["H_Oe"][1] * req.core.le_mm * 0.1 / (0.4 * math.pi * turns))
+    i_curve = np.linspace(0.0, curve_max, req.curve_points)
     l_curve = np.array([_l_bias_uh(req, turns, float(i)) for i in i_curve])
     warnings: list[str] = []
+    if isinstance(req.material, CatalogPowderMaterial):
+        warnings.extend((
+            "用户声明的模型参考估算；不代表厂家限定、PFC 波形验证或热资格。",
+            "损耗采用原文双项公式的正弦参考值，未做 PFC 波形修正。",
+            "绕组几何使用涂层后 OD/HT 最大值及 ID 最小值，不是标称尺寸。",
+            f"用户模型声明依据：{req.material.declaration['source']}",
+        ))
     if not target_met:
         warnings.append("当前磁芯/导线约束下，满载峰值电感未达到目标值。")
     if not feasible or fill > req.max_fill_factor:

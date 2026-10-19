@@ -246,6 +246,10 @@ class ViennaControlLabView(QWidget):
             "vienna", self._inductor_context, self._apply_inductor_design)
         self._inductor_input_index = self.input_tabs.addTab(self.inductor_editor, "电感设计")
         self.inductor_editor.design_completed.connect(self._inductor_design_ready)
+        self.inductor_editor.reference_completed.connect(self._inductor_reference_ready)
+        self.inductor_editor.design_invalidated.connect(self._inductor_design_invalidated)
+        for widget in (self.vll, self.vdc, self.pout, self.fsw):
+            widget.valueChanged.connect(self.inductor_editor.stage_context_changed)
         layout.addWidget(self.input_tabs)
         layout.addStretch(1)
         scroll.setWidget(container)
@@ -436,31 +440,38 @@ class ViennaControlLabView(QWidget):
             "recommended_core_count": 5,
         }
 
+    def _inductor_reference_ready(self, result) -> None:
+        self.inductor_result_view.set_reference_result(result)
+        self.tabs.setCurrentIndex(self._inductor_result_index)
+
+    def _inductor_design_invalidated(self) -> None:
+        if hasattr(self, "inductor_result_view"):
+            self.inductor_result_view.clear_result()
+
     def _inductor_design_ready(self, result) -> None:
         self.inductor_result_view.set_result(result)
         self.tabs.setCurrentIndex(self._inductor_result_index)
 
     def _apply_inductor_design(self, result) -> None:
         from pfc_design.magnetics import FerriteInductorResult
+        from .inductor_design import apply_stage_inductor_values
         if isinstance(result, FerriteInductorResult):
             l_uh = result.inductance_h * 1e6
             r_mohm = (result.copper_loss_w / max(result.phase_current_rms_a ** 2, 1e-18)) * 1e3
-            self.lphase.setValue(l_uh)
-            self.rphase.setValue(r_mohm)
+            apply_stage_inductor_values(self.lphase, self.rphase, l_uh, r_mohm)
             QMessageBox.information(
                 self, "Vienna 相电感参数已应用",
-                f"Ferrite Phase L = {l_uh:.3f} µH\n"
-                f"Estimated DCR from copper loss = {r_mohm:.3f} mΩ\n"
+                f"Ferrite Phase L = {self.lphase.value():.3f} µH\n"
+                f"Estimated DCR from copper loss = {self.rphase.value():.3f} mΩ\n"
                 f"Inductor-self loss = {result.total_inductor_loss_w:.3f} W "
                 f"(not converter system loss)\n\n"
                 "已写回 Vienna 功率级；建议重新运行完整分析。")
             return
-        self.lphase.setValue(result.l_full_load_peak_uh)
-        self.rphase.setValue(result.rdc_hot_ohm * 1e3)
+        apply_stage_inductor_values(self.lphase, self.rphase, result.l_full_load_peak_uh, result.rdc_hot_ohm * 1e3)
         QMessageBox.information(
             self, "Vienna 相电感参数已应用",
-            f"Phase L = {result.l_full_load_peak_uh:.3f} µH\n"
-            f"Phase DCR(@{result.request.copper_temperature_c:.0f}°C) = {result.rdc_hot_ohm*1e3:.3f} mΩ\n\n"
+            f"Phase L = {self.lphase.value():.3f} µH\n"
+            f"Phase DCR(@{result.request.copper_temperature_c:.0f}°C) = {self.rphase.value():.3f} mΩ\n\n"
             "已写回 Vienna 功率级；建议重新运行完整分析。")
 
     def _input_tab_changed(self, index: int) -> None:

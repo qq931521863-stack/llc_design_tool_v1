@@ -23,6 +23,24 @@ def install_ttpl_device_loss_stage(pfc_window) -> TTPLDeviceLossView:
     workbench.device_database = database
     workbench.device_loss_view = view
 
+    # The editor lives inside the control stage, while the device view is a
+    # sibling. Route its actual selected-model result, never a test-only alias.
+    editor = workbench.control_lab.inductor_editor
+    def magnetic_result_ready(result):
+        if not editor._context_matches_stage():
+            view.set_inductor_self_loss(None)
+            return
+        from pfc_design.magnetics import FerriteInductorResult
+        if isinstance(result, FerriteInductorResult):
+            identity, loss = result.request.core.part_number, result.total_inductor_loss_w
+        else:
+            identity, loss = result.request.core.core_data, result.total_loss_w
+            if result.request.source_snapshot:
+                identity += "; user-declared reference model"
+        view.set_inductor_self_loss(loss, model_identity=identity)
+    editor.design_completed.connect(magnetic_result_ready)
+    editor.design_invalidated.connect(lambda: view.set_inductor_self_loss(None))
+
     workbench.tabs.insertTab(1, view, "2. Devices / Loss")
     control_index = workbench.tabs.indexOf(workbench.control_lab)
     if control_index >= 0:

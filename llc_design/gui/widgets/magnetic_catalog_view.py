@@ -61,6 +61,14 @@ class MagneticCatalogDialog(QDialog):
         )
         self.tabs.addTab(self.ready, "完整设计预设")
         self.tabs.addTab(self.reference, "历史参数参考")
+        from pfc_design.magnetics.core_database import CoreDatabase
+        self.pdf_catalog = CoreDatabase(include_user=False).source_catalog
+        self.pdf_reference = self._table(["记录类型", "原文型号 / 几何代码", "材料", "μ", "AL nH/T²", "Ae cm²", "Le cm", "Ve cm³", "来源"])
+        self.tabs.addTab(self.pdf_reference, "CSC PDF 来源数据")
+        self.pdf_reference.itemSelectionChanged.connect(self._pdf_selected)
+        from pfc_design.gui.source_reference_view import SourceReferenceView
+        self.supplemental = SourceReferenceView(self)
+        self.tabs.addTab(self.supplemental, "其他 PDF 材料 / 案例")
         from .magnetic_validation_view import MagneticValidationView
 
         self.validation = MagneticValidationView()
@@ -116,7 +124,22 @@ class MagneticCatalogDialog(QDialog):
             ]
             if query in " ".join(map(str, values)).casefold():
                 self._append(self.reference, values)
-        for table in (self.ready, self.reference):
+        from pfc_design.magnetics.manufacturer_catalog import source_text
+        self.pdf_reference.setRowCount(0)
+        self.pdf_keys = []
+        for key, record in self.pdf_catalog.records.items():
+            geometry = self.pdf_catalog.geometries.get(record.get("geometry_id"), record)
+            kind = self.pdf_catalog.record_types[key]
+            values = [kind, record.get("part_number") or record.get("geometry_code") or key,
+                      record.get("material", "UNKNOWN"), record.get("ui", "UNKNOWN"),
+                      record.get("al_nH_per_t2", "UNKNOWN"), geometry.get("ae_cm2", "UNKNOWN"),
+                      geometry.get("le_cm", "UNKNOWN"), geometry.get("ve_cm3", "UNKNOWN"),
+                      source_text(record.get("source") or {})]
+            if query in " ".join(map(str, values)).casefold():
+                self.pdf_keys.append(key)
+                self._append(self.pdf_reference, ["UNKNOWN" if v is None else v for v in values])
+        self.tabs.setTabText(2, f"CSC PDF 来源数据 ({self.pdf_reference.rowCount()})")
+        for table in (self.ready, self.reference, self.pdf_reference):
             table.resizeColumnsToContents()
         self.tabs.setTabText(0, f"完整设计预设 ({self.ready.rowCount()})")
         self.tabs.setTabText(1, f"历史参数参考 ({self.reference.rowCount()})")
@@ -128,6 +151,17 @@ class MagneticCatalogDialog(QDialog):
         table.insertRow(row)
         for col, value in enumerate(values):
             table.setItem(row, col, QTableWidgetItem(str(value)))
+
+    def _pdf_selected(self):
+        row = self.pdf_reference.currentRow()
+        if not hasattr(self, "pdf_keys") or not 0 <= row < len(self.pdf_keys):
+            return
+        selected = self.pdf_catalog.select(self.pdf_keys[row])
+        self.note.setText(
+            selected.label + "\n" + "\n".join(selected.provenance)
+            + "\n粉芯 / 几何来源记录不是完整 LLC 磁芯-骨架预设；不能自动代入铁氧体材料或骨架。"
+            + "电感零偏磁及原厂公式参考计算请从 PFC → 电感设计 → CSC PDF 来源磁环进入。"
+        )
 
     def _update_apply(self):
         self.apply.setEnabled(

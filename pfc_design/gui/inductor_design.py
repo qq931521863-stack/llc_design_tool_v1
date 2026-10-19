@@ -1,7 +1,7 @@
 """Reusable TTPL/Vienna PFC boost-inductor design widgets."""
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import replace, fields
 from typing import Callable
 
 import numpy as np
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -48,6 +49,16 @@ from power_control_tools.part_validation import (
 from llc_design.gui import theme
 from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
+
+
+def apply_stage_inductor_values(l_widget, r_widget, inductance_uh, dcr_mohm):
+    """Check both target controls before writing either; never silently clamp."""
+    import math
+    for name, widget, value in (("L [µH]", l_widget, inductance_uh), ("DCR [mΩ]", r_widget, dcr_mohm)):
+        if not math.isfinite(value) or not widget.minimum() <= value <= widget.maximum():
+            raise ValueError(f"Calculated {name}={value:g} is outside the stage editor range [{widget.minimum():g}, {widget.maximum():g}]; stage unchanged")
+    l_widget.setValue(inductance_uh)
+    r_widget.setValue(dcr_mohm)
 
 
 def _prompt_user_core(parent) -> tuple[CoreSpec, SteinmetzMaterial] | None:
@@ -130,6 +141,8 @@ class PFCInductorDesignEditor(QWidget):
     """Narrow parameter editor suitable for the PFC left inspector."""
 
     design_completed = Signal(object)
+    design_invalidated = Signal()
+    reference_completed = Signal(object)
 
     def __init__(
         self,
@@ -139,6 +152,9 @@ class PFCInductorDesignEditor(QWidget):
         parent=None,
     ) -> None:
         super().__init__(parent)
+        self._saved_context = None
+        self._source_request_extras = {}
+        self._magnetic_generation = 0
         self.topology = topology
         self.context_provider = context_provider
         self.apply_callback = apply_callback
@@ -152,8 +168,8 @@ class PFCInductorDesignEditor(QWidget):
         root.setSpacing(7)
 
         intro = QLabel(
-            "PFC 升压电感设计。粉芯路径使用 Magnetics High Flux DC-bias 拟合；"
-            "铁氧体路径使用显式气隙 + Steinmetz，不套用粉芯偏磁公式。"
+            "PFC 升压电感：High Flux 原有模型、铁氧体气隙模型、CSC 来源数据与参考计算。"
+            "缺参不会借用其他材料。"
         )
         intro.setWordWrap(True)
         intro.setStyleSheet(f"color:{theme.active_theme().text_muted};padding:4px 2px;")
@@ -164,6 +180,9 @@ class PFCInductorDesignEditor(QWidget):
         self.material_path = QComboBox()
         self.material_path.addItem("Powder — Magnetics High Flux", "high_flux")
         self.material_path.addItem("Ferrite — gapped / Steinmetz", "ferrite")
+        self.material_path.addItem("CSC PDF 来源磁环 / 参考模型", "source_catalog")
+        self.material_path.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.material_path.setMinimumContentsLength(12)
         path_form.addRow("Model path", self.material_path)
         root.addWidget(path_group)
         self.material_path.currentIndexChanged.connect(self._path_changed)
@@ -238,6 +257,11 @@ class PFCInductorDesignEditor(QWidget):
         add_user.clicked.connect(self._add_user_core)
         self._rebuild_ferrite_combo()
 
+        from .source_core_selector import SourceCoreSelector
+        self.source_selector = SourceCoreSelector(self.core_db.source_catalog, self)
+        root.addWidget(self.source_selector)
+        self.source_selector.hide()
+
         wire_group = QGroupBox("绕组 — 漆包圆铜线")
         wire = QFormLayout(wire_group)
         self.wire_d = self._spin(0.10, 5.0, 3, 1.00, " mm")
@@ -264,6 +288,16 @@ class PFCInductorDesignEditor(QWidget):
         self.apply_button.setEnabled(False)
         root.addWidget(self.apply_button)
 
+        magnetic_actions = QHBoxLayout()
+        self.save_magnetic_button = QPushButton("保存磁件工程", self)
+        self.open_magnetic_button = QPushButton("打开磁件工程", self)
+        self.report_magnetic_button = QPushButton("磁件报告", self)
+        for button in (self.save_magnetic_button, self.open_magnetic_button, self.report_magnetic_button):
+            magnetic_actions.addWidget(button)
+        root.addLayout(magnetic_actions)
+        self.save_magnetic_button.clicked.connect(lambda: self._magnetic_file_action("save"))
+        self.open_magnetic_button.clicked.connect(lambda: self._magnetic_file_action("open"))
+        self.report_magnetic_button.clicked.connect(lambda: self._magnetic_file_action("report"))
         self.status = QLabel("等待计算")
         self.status.setWordWrap(True)
         _t = theme.active_theme()
@@ -277,6 +311,13 @@ class PFCInductorDesignEditor(QWidget):
         self.run_button.clicked.connect(self.calculate)
         self.apply_button.clicked.connect(self.apply_to_stage)
         self.sync_from_stage()
+        self.source_selector.selection_changed.connect(self._invalidate_design)
+        self.source_selector.reference_completed.connect(self.reference_completed)
+        for widget in self.findChildren(QDoubleSpinBox) + self.findChildren(QSpinBox):
+            widget.valueChanged.connect(self._invalidate_design)
+        for widget in (self.perm, self.ferrite_core):
+            widget.currentIndexChanged.connect(self._invalidate_design)
+        self._path_changed()
 
     @staticmethod
     def _spin(lo: float, hi: float, dec: int, value: float, suffix: str = "") -> QDoubleSpinBox:
@@ -290,9 +331,11 @@ class PFCInductorDesignEditor(QWidget):
         self.al.setValue(HIGH_FLUX_254_MATERIALS[mu].al_nh_per_t2)
 
     def _path_changed(self) -> None:
-        ferrite = self.material_path.currentData() == "ferrite"
-        self.high_flux_group.setVisible(not ferrite)
-        self.ferrite_group.setVisible(ferrite)
+        path = self.material_path.currentData()
+        self.high_flux_group.setVisible(path == "high_flux")
+        self.ferrite_group.setVisible(path == "ferrite")
+        self.source_selector.setVisible(path == "source_catalog")
+        self._invalidate_design()
 
     def _rebuild_ferrite_cores(self) -> None:
         self.core_db.refresh_user()
@@ -349,6 +392,7 @@ class PFCInductorDesignEditor(QWidget):
             show_operation_issue(self, "User core save failed", str(exc), critical=False)
 
     def sync_from_stage(self) -> None:
+        self._saved_context = None
         context = self.context_provider()
         self.target_l.setValue(float(context["target_inductance_uh"]))
         if "recommended_core_count" in context:
@@ -360,16 +404,28 @@ class PFCInductorDesignEditor(QWidget):
         self.context_label.setText(label)
 
     def _request(self) -> PFCInductorDesignRequest:
-        context = self.context_provider()
-        mu = int(self.perm.currentData())
-        material = replace(HIGH_FLUX_254_MATERIALS[mu], al_nh_per_t2=self.al.value())
-        core = HighFluxCoreGeometry(
-            core_data="254/custom",
-            le_mm=self.le.value(), ae_mm2=self.ae.value(), ve_mm3=self.ve.value(),
-            od_mm=self.od.value(), id_mm=self.id_.value(), ht_mm=self.ht.value(),
-            bs_t=self.bsat.value(),
-        )
+        context = self._saved_context or self.context_provider()
+        snapshot = declaration = None
+        if self.material_path.currentData() == "source_catalog":
+            from pfc_design.magnetics.manufacturer_catalog import source_pfc_components
+            selected = self.source_selector.selection
+            if selected is None:
+                raise ValueError("未选择来源磁芯")
+            declaration = self.source_selector.declaration
+            core, material = source_pfc_components(selected, declaration)
+            snapshot = selected.snapshot
+        else:
+            mu = int(self.perm.currentData())
+            material = replace(HIGH_FLUX_254_MATERIALS[mu], al_nh_per_t2=self.al.value())
+            core = HighFluxCoreGeometry(
+                core_data="Magnetics High Flux 254/custom",
+                le_mm=self.le.value(), ae_mm2=self.ae.value(), ve_mm3=self.ve.value(),
+                od_mm=self.od.value(), id_mm=self.id_.value(), ht_mm=self.ht.value(),
+                bs_t=self.bsat.value(),
+            )
         return PFCInductorDesignRequest(
+            **(self._source_request_extras if snapshot is not None else {}),
+            source_snapshot=snapshot, model_declaration=declaration,
             topology=self.topology,
             input_rms_v=float(context["input_rms_v"]),
             bus_voltage_v=float(context["bus_voltage_v"]),
@@ -418,6 +474,7 @@ class PFCInductorDesignEditor(QWidget):
         )
 
     def calculate(self) -> None:
+        self._invalidate_design()
         try:
             if self.material_path.currentData() == "ferrite":
                 result = design_ferrite_pfc_inductor(self._ferrite_request())
@@ -427,7 +484,7 @@ class PFCInductorDesignEditor(QWidget):
             show_operation_issue(self, t("PFC 电感设计失败"), str(exc), critical=False)
             return
         self.last_result = result
-        self.apply_button.setEnabled(True)
+        self.apply_button.setEnabled(self._context_matches_stage())
         if isinstance(result, FerriteInductorResult):
             state = "PASS" if result.b_peak_total_t <= result.request.b_peak_limit_t and result.fill_factor <= result.request.max_fill_factor else "CHECK"
             self.status.setText(
@@ -435,7 +492,7 @@ class PFCInductorDesignEditor(QWidget):
                 f"Bpk={result.b_peak_total_t:.3f}T · Pind={result.total_inductor_loss_w:.3f}W"
             )
         else:
-            state = "PASS" if result.inductance_target_met and result.window_ok else "CHECK"
+            state = ("REFERENCE" if result.request.source_snapshot else "PASS") if result.inductance_target_met and result.window_ok else "CHECK"
             self.status.setText(
                 f"{state} · N={result.turns}T · {result.parallel_wires}×{result.request.wire_copper_diameter_mm:.3g}mm · "
                 f"L(full)={result.l_full_load_peak_uh:.3f}µH · PΣ={result.total_loss_w:.3f}W"
@@ -447,10 +504,150 @@ class PFCInductorDesignEditor(QWidget):
         )
         self.design_completed.emit(result)
 
+    def _context_matches_stage(self):
+        if self._saved_context is None:
+            return True
+        import math
+        current = self.context_provider()
+        return all(math.isclose(float(value), float(current[key]), rel_tol=1e-12, abs_tol=1e-12)
+                   for key, value in self._saved_context.items())
+
+    def stage_context_changed(self, *_):
+        self._invalidate_design()
+        if not self._context_matches_stage():
+            self.status.setText("保存的磁件工况与当前功率级不同；请同步并重新计算后再应用")
+
+    def _invalidate_design(self, *_):
+        self._magnetic_generation += 1
+        self.last_result = None
+        if not hasattr(self, "run_button"):
+            return
+        self.apply_button.setEnabled(False)
+        catalog = self.material_path.currentData() == "source_catalog"
+        blocker = self.source_selector.pfc_blocker() if catalog else ""
+        if catalog and not blocker:
+            try:
+                self._request().validate()
+            except ValueError as exc:
+                blocker = str(exc)
+        self.run_button.setEnabled(not blocker)
+        self.run_button.setToolTip(blocker)
+        self.save_magnetic_button.setEnabled(catalog and self.source_selector.selection is not None)
+        self.report_magnetic_button.setEnabled(catalog and self.source_selector.selection is not None)
+        self.status.setText(blocker or "参数已更改，请重新计算")
+        self.design_invalidated.emit()
+
+    def magnetic_document(self):
+        from pfc_design.magnetics.source_project import project_document
+        if self.material_path.currentData() != "source_catalog" or self.source_selector.selection is None:
+            raise ValueError("磁件工程保存需要选择 PDF 来源记录")
+        pfc_inputs = None
+        if self.last_result is not None and self.last_result.request.source_snapshot:
+            req = self.last_result.request
+            pfc_inputs = {field.name: getattr(req, field.name) for field in fields(req)
+                          if field.name not in {"core", "material", "source_snapshot", "model_declaration"}}
+        reference_inputs = self.source_selector.reference_inputs() if self.source_selector.reference_result is not None else None
+        return project_document(self.source_selector.selection, reference_inputs=reference_inputs,
+                                pfc_inputs=pfc_inputs, declaration=self.source_selector.declaration)
+
+    def save_magnetic_to(self, path):
+        from pfc_design.magnetics.source_project import save_project
+        return save_project(self.magnetic_document(), path)
+
+    def report_magnetic_to(self, path):
+        from pfc_design.magnetics.source_project import write_report
+        return write_report(self.magnetic_document(), path)
+
+    def open_magnetic_from(self, path):
+        from pfc_design.magnetics.source_project import read_project, recompute_project
+        document = read_project(path)
+        selection, reference, result = recompute_project(document)
+        if result is not None and result.request.topology != self.topology:
+            raise ValueError("磁件工程拓扑与当前 PFC 工作区不一致")
+        restore_fields = []
+        reference_inputs = document["reference_inputs"] or {}
+        for key, widget in (("turns", self.source_selector.turns), ("n_cores", self.source_selector.stack)):
+            if key in reference_inputs:
+                restore_fields.append((key, widget, reference_inputs[key]))
+        if result is not None:
+            req = result.request
+            restore_fields.extend((name, widget, getattr(req, name)) for name, widget in (
+                ("target_inductance_uh", self.target_l), ("efficiency", self.eff),
+                ("n_cores", self.n_cores), ("wire_copper_diameter_mm", self.wire_d),
+                ("enamel_build_mm", self.enamel), ("target_current_density_a_mm2", self.j_target),
+                ("copper_temperature_c", self.cu_temp), ("max_fill_factor", self.fill)))
+        for name, widget, value in restore_fields:
+            if not widget.minimum() <= value <= widget.maximum():
+                raise ValueError(f"Saved {name} is outside the editor range; current project preserved")
+            if isinstance(widget, QDoubleSpinBox) and round(float(value), widget.decimals()) != float(value):
+                raise ValueError(f"Saved {name} exceeds editor precision; current project preserved")
+        # All parsing, recomputation and representability checks precede mutation.
+        self.material_path.setCurrentIndex(self.material_path.findData("source_catalog"))
+        self.source_selector.set_snapshot(selection.snapshot, document["user_model_declaration"])
+        self.source_selector.set_reference_inputs(document["reference_inputs"])
+        if result is not None:
+            req = result.request
+            for name, widget in (("target_inductance_uh", self.target_l), ("efficiency", self.eff),
+                                 ("n_cores", self.n_cores), ("wire_copper_diameter_mm", self.wire_d),
+                                 ("enamel_build_mm", self.enamel), ("target_current_density_a_mm2", self.j_target),
+                                 ("copper_temperature_c", self.cu_temp), ("max_fill_factor", self.fill)):
+                widget.setValue(getattr(req, name))
+            self._source_request_extras = {name: getattr(req, name) for name in ("winding_length_factor", "curve_points")}
+            self._saved_context = {name: getattr(req, name) for name in ("input_rms_v", "bus_voltage_v", "output_power_w", "switching_frequency_hz")}
+            self.context_label.setText("已恢复磁件工程工作点（点击同步将切回当前功率级）\n" + str(self._saved_context) + "\n其他保存参数：" + str(self._source_request_extras))
+        else:
+            self._saved_context = None
+            self._source_request_extras = {}
+        self.source_selector.reference_result = reference
+        if reference is not None:
+            import json
+            self.source_selector.reference_output.setPlainText(json.dumps(reference, ensure_ascii=False, indent=2))
+            self.reference_completed.emit(reference)
+        self.last_result = result
+        if result is not None:
+            self.apply_button.setEnabled(self._context_matches_stage())
+            self.status.setText("已从保存的来源与用户声明重新计算 PFC 参考估算" if self._context_matches_stage() else "已恢复保存工况；与当前功率级不同，请同步并重新计算后再应用")
+            self.design_completed.emit(result)
+
+    def _magnetic_file_action(self, action):
+        captured_generation = self._magnetic_generation
+        captured_document = None
+        if action != "open":
+            try:
+                captured_document = self.magnetic_document()
+            except Exception as exc:
+                show_operation_issue(self, "磁件工程操作失败", str(exc), critical=False)
+                return
+        if action == "open":
+            path, _ = QFileDialog.getOpenFileName(self, "打开磁件工程", "", "Magnetic project (*.json)")
+        else:
+            extension = "html" if action == "report" else "json"
+            path, _ = QFileDialog.getSaveFileName(self, "磁件工程", f"magnetic_project.{extension}", f"*.{extension}")
+        if not path:
+            return
+        try:
+            if action == "open":
+                self.open_magnetic_from(path)
+            else:
+                if captured_generation != self._magnetic_generation:
+                    raise ValueError("选择文件期间磁件输入已变化，请重新保存/导出")
+                from pfc_design.magnetics.source_project import save_project, write_report
+                (save_project if action == "save" else write_report)(captured_document, path)
+        except Exception as exc:
+            show_operation_issue(self, "磁件工程操作失败", str(exc), critical=False)
+
     def apply_to_stage(self) -> None:
         if self.last_result is None:
             return
-        self.apply_callback(self.last_result)
+        if not self._context_matches_stage():
+            self.apply_button.setEnabled(False)
+            self.status.setText("保存工况与当前功率级不同，请同步并重新计算后再应用")
+            return
+        try:
+            self.apply_callback(self.last_result)
+        except ValueError as exc:
+            self.status.setText(str(exc))
+            show_operation_issue(self, "磁件参数未应用", str(exc), critical=False)
 
 
 class PFCInductorDesignResultView(QWidget):
@@ -498,6 +695,17 @@ class PFCInductorDesignResultView(QWidget):
         if self.impedance_dialog is dialog:
             self.impedance_dialog = None
 
+    def set_reference_result(self, result):
+        import json
+        self.figure.clear()
+        self.summary.setPlainText("来源磁件参考计算（不是满载资格验证）\n" + json.dumps(result, ensure_ascii=False, indent=2))
+        self.canvas.draw_idle()
+
+    def clear_result(self):
+        self.summary.setPlainText("磁件参数或选择已改变，请重新计算。")
+        self.figure.clear()
+        self.canvas.draw_idle()
+
     def set_result(self, result) -> None:
         if isinstance(result, FerriteInductorResult):
             req = result.request
@@ -532,14 +740,15 @@ class PFCInductorDesignResultView(QWidget):
         warn = "\n".join(f"  - {w}" for w in result.warnings)
         self.summary.setPlainText(
             f"{self.title}\n"
-            f"Core      : Magnetics High Flux 254/custom, μ={req.material.permeability}, AL={req.material.al_nh_per_t2:.3f} nH/T², cores={req.n_cores}\n"
+            f"Core      : {req.core.core_data}, μ={req.material.permeability}, AL={req.material.al_nh_per_t2:.3f} nH/T², cores={req.n_cores}\n"
             f"Geometry  : Le={req.core.le_mm:.3f} mm, Ae={req.core.ae_mm2:.3f} mm², Ve={req.core.ve_mm3:.1f} mm³, OD/ID/HT={req.core.od_mm:.2f}/{req.core.id_mm:.2f}/{req.core.ht_mm:.2f} mm\n"
             f"Winding   : N={result.turns} T, {result.parallel_wires} × Ø{req.wire_copper_diameter_mm:.3f} mm enamel Cu, Cu area={result.copper_area_mm2:.3f} mm², fill={100*result.fill_factor:.2f}%\n"
             f"Inductance: L0={result.l_no_bias_uh:.3f} µH, L@full-peak={result.l_full_load_peak_uh:.3f} µH, drop={result.l_drop_percent:.2f}%\n"
             f"Current   : Iphase,rms={result.phase_current_rms_a:.3f} A, Irms+ripple={result.total_current_rms_with_ripple_a:.3f} A, Ipk={result.full_load_peak_with_ripple_a:.3f} A\n"
             f"Bias      : Hpk={result.h_peak_oe:.3f} Oe, μ/μi={result.permeability_at_peak_percent:.2f}%, Bdc≈{result.b_dc_approx_peak_t:.4f} T, Bac,max={result.b_ac_line_max_t:.4f} T\n"
             f"Copper    : R20={1e3*result.rdc_20_ohm:.3f} mΩ, Rhot={1e3*result.rdc_hot_ohm:.3f} mΩ, J={result.current_density_a_mm2:.3f} A/mm², Pcu={result.copper_loss_w:.3f} W\n"
-            f"Core loss : {result.core_loss_w:.3f} W (Magnetics High Flux fit, line-cycle average)\n"
+            f"Core loss : {result.core_loss_w:.3f} W ({'source-specific user-declared reference' if req.source_snapshot else 'Magnetics High Flux fit'}, line-cycle average)\n"
+            f"Source    : {req.source_snapshot['record']['record_id'] if req.source_snapshot else 'Magnetics Core Data 254'}\n"
             f"Inductor-self total: {result.total_loss_w:.3f} W (not converter system loss)\n"
             f"Warnings:\n{warn}"
         )

@@ -33,12 +33,27 @@ class CoreDatabase:
         self._steinmetz: dict[str, SteinmetzMaterial] = {}
         self._builtin_names: set[str] = set()
         self.user_library = UserCoreLibrary(user_path) if include_user else None
+        self._source_catalog = None
         self._load_cores(cores_file)
         self._load_steinmetz()
         self._merge_user()
 
+    @property
+    def source_catalog(self):
+        """PDF records use an isolated, source-specific model path.
+
+        They are deliberately excluded from legacy polynomial auto-selection.
+        """
+        if self._source_catalog is None:
+            from .manufacturer_catalog import ManufacturerCoreCatalog
+            self._source_catalog = ManufacturerCoreCatalog()
+        return self._source_catalog
+
+    def query_source_catalog(self, text="", *, kind=None):
+        return self.source_catalog.query(text, kind=kind)
+
     def _load_cores(self, path: str):
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         for entry in data["cores"]:
             core = CoreSpec(
@@ -65,7 +80,7 @@ class CoreDatabase:
 
     def _load_steinmetz(self):
         path = str(DATA_DIR / "steinmetz_coefficients.json")
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         for name, coeffs in data["materials"].items():
             self._steinmetz[name] = SteinmetzMaterial(
