@@ -7,7 +7,7 @@ from dataclasses import asdict
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QByteArray, QRectF, QThreadPool, QTimer, Qt, Signal
+from PySide6.QtCore import QByteArray, QRectF, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QPainter
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -152,6 +153,12 @@ class PowerStageMainWindow(QMainWindow):
         self.topology_combo=QComboBox();self.topology_combo.setObjectName("psd_topology")
         for key,name in all_topologies().items():
             self.topology_combo.addItem(f"{name}"+("（既有LLC工作区）" if key in {"T20","T21"} else "（待接入）" if key not in supported_topologies() else ""),key)
+        # Keep long topology labels readable in the popup without widening the
+        # permanently visible parameter column on smaller desktop screens.
+        metrics=self.topology_combo.fontMetrics()
+        self.topology_combo.view().setMinimumWidth(max(
+            metrics.horizontalAdvance(self.topology_combo.itemText(index))
+            for index in range(self.topology_combo.count()))+48)
         form.addRow("拓扑",self.topology_combo)
         preset=QPushButton("加载参考工况");preset.clicked.connect(self.load_preset);form.addRow(preset);self.preset_button=preset
         self.llc_button=QPushButton("进入对应桥型的 LLC 工作区");self.llc_button.clicked.connect(self.open_llc_workspace);form.addRow(self.llc_button)
@@ -178,6 +185,14 @@ class PowerStageMainWindow(QMainWindow):
         self.tabs=QTabWidget();splitter.addWidget(self.tabs);splitter.setStretchFactor(1,1)
         stage=QWidget();stage_layout=QVBoxLayout(stage)
         self.schematic=SchematicView();self.schematic.component_selected.connect(self.select_component)
+        self.schematic_toggle=QPushButton("收起原理图 · 扩大波形区域")
+        self.schematic_toggle.setObjectName("psd_toggle_schematic")
+        self.schematic_toggle.setCheckable(True);self.schematic_toggle.setChecked(True)
+        def toggle_schematic(visible):
+            self.schematic.setVisible(visible)
+            self.schematic_toggle.setText("收起原理图 · 扩大波形区域" if visible else "显示原理图")
+        self.schematic_toggle.toggled.connect(toggle_schematic)
+        stage_layout.addWidget(self.schematic_toggle)
         stage_layout.addWidget(self.schematic)
         self.component_combo=QComboBox();self.component_combo.setObjectName("psd_component")
         self.component_combo.currentIndexChanged.connect(self._show_component);stage_layout.addWidget(self.component_combo)
@@ -186,11 +201,17 @@ class PowerStageMainWindow(QMainWindow):
         self.current_plot=pg.PlotWidget(title="器件电流");self.current_plot.setLabel("left","电流",units="A")
         self.voltage_plot=pg.PlotWidget(title="器件电压");self.voltage_plot.setLabel("left","电压",units="V")
         for plot in (self.current_plot,self.voltage_plot):
+            # Axes/title consume about 72 px. Never squeeze the actual trace
+            # ViewBox to zero on 720p screens; let this tab scroll instead.
+            plot.setMinimumHeight(180)
+            plot.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Ignored)
             plot.setLabel("bottom","时间",units="s");plot.showGrid(x=True,y=True,alpha=.2);stage_layout.addWidget(plot,1)
         self.stress_table=QTableWidget(0,7);self.stress_table.setHorizontalHeaderLabels(["信号","最小","最大","平均","整周期 RMS","峰峰值","交流 RMS"])
         self.stress_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.stress_table.setMaximumHeight(115);stage_layout.addWidget(self.stress_table)
-        self.tabs.addTab(stage,"原理图 · 波形 · 应力")
+        self.stress_table.setMinimumHeight(110);self.stress_table.setMaximumHeight(115);stage_layout.addWidget(self.stress_table)
+        self.stage_scroll=QScrollArea();self.stage_scroll.setObjectName("psd_stage_scroll")
+        self.stage_scroll.setWidgetResizable(True);self.stage_scroll.setWidget(stage)
+        self.tabs.addTab(self.stage_scroll,"原理图 · 波形 · 应力")
         self.loop_tab=self._build_loop_tab();self.tabs.addTab(self.loop_tab,"模拟环路")
         self.evidence=QTextBrowser();self.tabs.addTab(self.evidence,"模型范围与依据")
         self.tabs.addTab(self._build_corners_tab(),"多工况极值")
@@ -271,6 +292,7 @@ class PowerStageMainWindow(QMainWindow):
 
     def invalidate(self, *_):
         if self._loading:return
+        if hasattr(self,"advanced_model"):self._update_suggestion_visibility()
         self._generation+=1;self._loop_generation+=1
         self._invalidate_suggestions(clear_record=True)
         self.invalidate_corners()
@@ -443,10 +465,20 @@ class PowerStageMainWindow(QMainWindow):
         form.setRowVisible(self.suggestion_reflected,topology=="T11")
         self.suggest_button.setEnabled(topology not in {"T20","T21"})
         scope="目标只约束当前输入电压/负载；仍需多工况和磁芯/饱和/损耗核验。"
-        if topology in {"T04","T18"}:scope+=" 此拓扑使用有限漏感模型数值求解；勾选变比时联合求解 L 和 Np/Ns，可能无解或不收敛。PSFB 不验证 ZVS。"
-        if topology=="T11":scope+=" QR 固定功率下仅凭最大占空比不能唯一确定变比，需明确反射电压目标；采用恒定 Cnode，正谷底可选谷，反射电压不低于输入时仅支持首个零电压谷底，超出频率上限即报无解。"
-        if topology in {"T15","T16","T17"}:scope+=" 桥型建议限普通 CCM；输出纹波频率为 2×fsw，Np/Ns 的 Ns 指半副边；单管占空比为此比例的一半。"
-        if topology=="T05":scope+=" 两管同步导通策略；仅 CCM/BCM 建议，不扩展 DCM 或四管工作模式。"
+        advanced=hasattr(self,"advanced_model") and self.advanced_model.enabled.isChecked()
+        if topology in {"T04","T18"}:scope+=" 此拓扑使用有限漏感模型数值求解；勾选变比时联合求解 L 和 Np/Ns，可能无解或不收敛。"
+        if topology=="T18":
+            scope+=(" 已启用有限 Coss/Ron 换流模型：每个候选保留实际死区与器件参数，并报告各开关门极时刻 Vds/ZVS 判据；不保证实现 ZVS 或硬件性能。" if advanced
+                    else " 理想有限电感模型不验证 ZVS；如需门极时刻换流检查，请在“扩展物理参数”明确提供 Coss/Ron 等参数并启用。")
+        if topology=="T11":
+            scope+=" QR 固定功率下仅凭最大占空比不能唯一确定变比，需明确反射电压目标。"
+            scope+=(" 候选逐次求解所选谷底策略、延迟、节点 Q(V)/C(V) 或常数 C，以及实际开通路径；频率上限和数据覆盖限制保持有效。" if advanced
+                    else " 未启用扩展模型时采用恒定 Cnode：正谷底可选谷，反射电压不低于输入时仅支持首个零电压谷底，超出频率上限即报无解。")
+        if topology in {"T15","T16"}:scope+=" 桥型建议限普通 CCM；输出纹波频率为 2×fsw，Np/Ns 的 Ns 指半副边；单管占空比为此比例的一半。"
+        if topology=="T17":scope+=" 全桥建议按实际电荷/磁通平衡求解普通 CCM、联合退磁 CCM/BCM/DCM；输出纹波频率 2×fsw，Ns 指半副边。固定变比时占空比是上限，勾选变比时是实际目标；每项均以最终波形复算。"
+        if topology=="T05":
+            scope+=(" 两管同时驱动；候选保留 Coss/Ron、体二极管和绕组参数，逐次求解浮空节点与实际 CCM/DCM 周期，不替换为四开关模型。" if advanced
+                    else " 两管同时驱动的理想模型仅支持 CCM/BCM；DCM 请在“扩展物理参数”明确提供有限 Coss/Ron 等参数并启用。")
         if topology in {"T20","T21"}:scope="LLC 参数设计请进入对应的既有 LLC 工作区。"
         self.suggestion_scope.setText(scope)
 
@@ -475,7 +507,10 @@ class PowerStageMainWindow(QMainWindow):
     def propose_parameters(self):
         if self._timer.isActive():self.calculate()
         self._invalidate_suggestions();token=self._suggestion_generation
-        inputs=self.current_inputs();targets=self._suggestion_targets()
+        try:
+            inputs=self.current_inputs();targets=self._suggestion_targets()
+        except (ValueError,TypeError,ArithmeticError) as exc:
+            self.suggestion_output.setPlainText("参数建议未生成：输入无效；"+str(exc));return
         event=threading.Event();self._suggestion_events.append(event);self._cancel_events.append(event)
         def compute():
             try:return token,suggest_parameters(inputs,targets,cancelled=event.is_set),None
@@ -540,7 +575,12 @@ class PowerStageMainWindow(QMainWindow):
         self._refresh_evidence()
 
     def _build_loop_tab(self):
-        from .loop import Compensator, LoopPlant, INTEGRATOR_BRANCH_NETWORKS, INTEGRATOR_BRANCH_NOTE
+        from .loop import (
+            INTEGRATOR_BRANCH_NETWORKS,
+            INTEGRATOR_BRANCH_NOTE,
+            Compensator,
+            LoopPlant,
+        )
         tab=QWidget();root=QVBoxLayout(tab);split=QSplitter();root.addWidget(split,1)
         settings=QWidget();form=QFormLayout(settings)
         self.loop_control=QComboBox();self.loop_control.addItem("电压模式 VMC","vmc");self.loop_control.addItem("峰值电流模式 CMC","peak_cmc")

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import itertools
 import math
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, fields, replace
 from numbers import Real
 
 from .models import DesignInputs, ModelDomainError, StageResult
@@ -218,7 +218,18 @@ def suggest_parameters(inputs: DesignInputs, targets: SuggestionTargets, *, canc
     ]
     vin, vo, vf, fs, ripple = inputs.vin_v, inputs.vout_v, inputs.diode_drop_v, inputs.fsw_hz, targets.ripple_pp_a
     candidate = inputs
-    if topology in NUMERICAL_TOPOLOGIES or inputs.two_switch_options is not None:
+    if topology == "T17":
+        from .bridge_sizing import size_full_bridge
+        result = size_full_bridge(inputs, ripple, max_duty=targets.max_duty,
+                                  magnetizing_ripple_pp_a=targets.magnetizing_ripple_pp_a,
+                                  size_turns_ratio=targets.size_turns_ratio, cancelled=cancelled)
+        candidate = result.inputs
+        assumptions.extend((
+            "Full Bridge sizing resolves ordinary CCM, partial joint Lout/Lm demagnetization, BCM and DCM from charge/flux balance; actual full-period waveforms recheck every target.",
+            "At fixed Np/Ns maximum duty is an upper bound; when sizing Np/Ns it is the actual duty target. Lm changes only when its ripple is targeted.",
+            "Symmetric center-tapped-secondary/open-primary model only; supplied capacitances are retained. Leakage, switching transitions, asymmetric timing and body-diode clamp states are not added.",
+        ))
+    elif topology in NUMERICAL_TOPOLOGIES or inputs.two_switch_options is not None:
         if targets.size_turns_ratio and topology in {"T04", "T18"}:
             result = _numerical_ratio(inputs, targets, cancelled)
             assumptions.append("Joint bounded numerical L and Np/Ns sizing against actual ripple and actual maximum duty, including the supplied finite leakage/capacitors/Lm; no parasitic values are invented.")
@@ -310,8 +321,19 @@ def suggest_parameters(inputs: DesignInputs, targets: SuggestionTargets, *, canc
         result = calculate_stage(candidate, cancelled=cancelled)
     _check_achieved(result, targets)
     _cancel(cancelled)
-    changed = tuple(key for key, value in asdict(candidate).items() if value != getattr(inputs, key))
+    changed = _changed_input_fields(inputs, candidate)
     return ParameterProposal(inputs, targets, candidate, result, changed, tuple(assumptions))
+
+
+def _changed_input_fields(source: DesignInputs, candidate: DesignInputs) -> tuple[str, ...]:
+    """Compare the same immutable types, including nested physical-model options.
+
+    Comparing asdict(candidate) to source attributes turns unchanged option
+    dataclasses into false changes. That breaks both preview and saved provenance.
+    Keep exact field values here; serialization is solely the persistence boundary.
+    """
+    return tuple(field.name for field in fields(DesignInputs)
+                 if getattr(candidate, field.name) != getattr(source, field.name))
 
 
 def _check_achieved(result: StageResult, targets: SuggestionTargets) -> None:
@@ -341,7 +363,7 @@ def validate_suggestion_record(record: dict, result: StageResult) -> dict:
         _validate_targets(targets)
     except (TypeError, KeyError, ValueError) as exc:
         raise ValueError("Invalid parameter-suggestion source or targets") from exc
-    expected = [key for key, value in asdict(result.inputs).items() if value != getattr(source, key)]
+    expected = list(_changed_input_fields(source, result.inputs))
     if record["source_design_id"] != source.design_id or record["changed_fields"] != expected:
         raise ValueError("Parameter-suggestion source identity or changed fields do not match")
     if not isinstance(record["assumptions"], list) or not all(isinstance(item, str) for item in record["assumptions"]):
@@ -361,6 +383,10 @@ def validate_suggestion_record(record: dict, result: StageResult) -> dict:
         ratio = result.inputs.turns_ratio_np_ns
         if topology in {"T09", "T10"}:
             expected_ratio = vin*targets.max_duty/((vo+vf)*(1-targets.max_duty))
+        elif topology == "T17":
+            expected_ratio = ratio
+            if not math.isclose(result.duty, targets.max_duty, rel_tol=2e-6, abs_tol=1e-9):
+                raise ValueError("Full Bridge ratio proposal no longer meets its actual duty target")
         elif topology in RATIO_TOPOLOGIES:
             expected_ratio = (vin/2 if topology == "T15" else vin)*targets.max_duty/(vo+vf)
         elif topology == "T11" and targets.reflected_voltage_v is not None:

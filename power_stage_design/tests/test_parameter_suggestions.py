@@ -200,7 +200,6 @@ def test_invalid_target_scalar_rejected(bad):
     ("T13", SuggestionTargets(.6, .7, size_turns_ratio=True), "reset"),
     ("T11", SuggestionTargets(.6, .45, size_turns_ratio=True), "uniquely"),
     ("T11", SuggestionTargets(.6, .45, size_turns_ratio=True, reflected_voltage_v=400), "first-zero-clamp frequency"),
-    ("T17", SuggestionTargets(5, .45), "CCM"),
     ("T19", SuggestionTargets(10, .45, secondary_ripple_pp_a=3), "Iout"),
     ("T06", SuggestionTargets(.6, .45), "L2"),
     ("T20", SuggestionTargets(.6, .45), "LLC"),
@@ -208,6 +207,17 @@ def test_invalid_target_scalar_rejected(bad):
 def test_infeasible_or_underspecified_targets_are_not_silently_replaced(topology, targets, message):
     with pytest.raises(ModelDomainError, match=message):
         suggest_parameters(example(topology), targets)
+
+
+def test_full_bridge_reachable_large_ripple_target_uses_actual_magnetic_mode():
+    source = example("T17")
+    proposal = suggest_parameters(source, SuggestionTargets(5, .45))
+    assert proposal.result.metrics["inductor_ripple_pp_a"] == pytest.approx(5, rel=2e-6)
+    assert proposal.result.duty <= .45
+    assert proposal.inputs.magnetizing_inductance_h == source.magnetizing_inductance_h
+    assert proposal.inputs.turns_ratio_np_ns == source.turns_ratio_np_ns
+    assert set(proposal.changed_fields) == {"inductance_h"}
+    assert validate_suggestion_record(proposal.record(), proposal.result) == proposal.record()
 
 
 @pytest.mark.parametrize("topology", ["T01", "T04", "T11", "T18"])

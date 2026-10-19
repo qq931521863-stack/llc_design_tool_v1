@@ -555,7 +555,7 @@ def _bridge(inputs: DesignInputs, topology_id: str) -> StageResult:
                    assumptions=("fsw is a full bipolar bridge period; output-inductor ripple frequency is 2*fsw. Each main switch conducts D/2 of a full period.",
                                 "Center-tapped secondary; n=Np/Ns uses one secondary half. Push-pull Np is one primary half.",
                                 "Both main diagonals are off during freewheel; secondary current imbalance sustains magnetizing flux. Symmetric device blocking-voltage sharing is assumed.",
-                                "DCM, commutation, leakage and parasitic ringing are outside this bridge model."),
+                                "This result uses the ordinary CCM branch; joint magnetic-state CCM/BCM/DCM is resolved separately. Commutation, leakage and parasitic ringing are outside these ideal bridge branches."),
                    diagnostics={"inductor_mean_voltage_v":vl.statistics()["mean"],"transformer_mean_voltage_v":vp.statistics()["mean"]},
                    metrics={"per_switch_duty":duty/2,"rectified_ripple_frequency_hz":2*inputs.fsw_hz,"magnetizing_ripple_pp_a":imag})
 
@@ -1145,6 +1145,10 @@ def _bridge_demagnetizing(inputs: DesignInputs, topology_id: str) -> StageResult
     nominal_duty=(vo+vf)/vs
     coefficient=k+gamma+gamma*(alpha-k)/beta
     boundary_duty=gamma/coefficient
+    # alpha == k is the physical zero-two-diode-freewheel endpoint. Each
+    # slope contains several floating operations; a handful of ulps must not
+    # turn that endpoint into a different commutation-capacitance sub-mode.
+    requires_commutation = k-alpha > 8*max(math.ulp(alpha),math.ulp(k))
 
     def partial(duty):
         ton=duty*hp
@@ -1157,15 +1161,15 @@ def _bridge_demagnetizing(inputs: DesignInputs, topology_id: str) -> StageResult
         return mean,low,high,demag_start,(ton,tb,ts,0.0)
 
     lower=boundary_duty
-    if alpha < k:
+    if requires_commutation:
         lower=brentq(lambda d:partial(d)[4][1],boundary_duty,nominal_duty,xtol=1e-14)
     minimum_partial=partial(lower)[0]
-    if inputs.iout_a >= minimum_partial*(1-1e-12):
+    if inputs.iout_a >= minimum_partial:
         duty=brentq(lambda d:partial(d)[0]-inputs.iout_a,lower,nominal_duty,xtol=1e-14)
         _,low,high,demag_start,times=partial(duty)
         mode="BCM" if low<1e-10 else "CCM"
     else:
-        if alpha < k:
+        if requires_commutation:
             raise ModelDomainError("Bridge magnetizing inductance is too small for this light-load open-primary sub-mode; commutation capacitances are required")
         bt=(alpha-k)/beta
         st=k/gamma

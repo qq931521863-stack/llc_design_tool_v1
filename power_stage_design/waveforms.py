@@ -162,8 +162,9 @@ def piecewise(period_s: float, durations: tuple[float, ...], endpoints: tuple[tu
             raise ValueError("interval duration cannot be negative")
         if duration > 0:
             stop = min(1.0, cursor + duration)
-            segments.append(WaveformSegment(cursor, stop, (float(start), float(end - start))))
-            cursor = stop
+            if stop > cursor:
+                segments.append(WaveformSegment(cursor, stop, (float(start), float(end - start))))
+                cursor = stop
     return Waveform(period_s, unit, reference, tuple(segments))
 
 
