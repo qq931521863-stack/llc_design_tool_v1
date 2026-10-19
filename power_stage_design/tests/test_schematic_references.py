@@ -234,3 +234,99 @@ def test_static_qr_output_capacitor_reference_reaches_real_gui_and_html(tmp_path
     write_report(result, report)
     assert reference in report.read_text(encoding="utf-8")
     window.close()
+
+
+# Explicit branch ends for the final metadata-only cleanup. These directions
+# follow the existing signed arrays, including SEPIC/Cuk L2 and active-clamp Q2.
+_STATIC_BRANCH_REFERENCES = {
+    "T01": {"L1": ("SW to OUT", "SW minus OUT")},
+    "T02": {"L1": ("VIN to SW", "VIN minus SW")},
+    "T03": {"L1": ("SW to GND", "SW minus GND")},
+    "T04": {"Lleak": ("SEC to SEC_L", "SEC minus SEC_L")},
+    "T06": {"L2": ("GND to B", "GND minus B"),
+            "Ctransfer": ("A to B (into Ctransfer positive plate)", "A minus B")},
+    "T07": {"L2": ("B to OUT", "B minus OUT"),
+            "Ctransfer": ("B to A (into Ctransfer positive plate)", "B minus A")},
+    "T08": {"L2": ("OUT to B", "OUT minus B"),
+            "Ctransfer": ("A to B (into Ctransfer positive plate)", "A minus B")},
+    "T10": {"Dclamp1": ("N to VIN (anode to cathode)", "VIN minus N (cathode to anode)"),
+            "Dclamp2": ("GND to P (anode to cathode)", "P minus GND (cathode to anode)")},
+    "T12": {"Q2": ("N to CLAMP (source to drain; signed)", "CLAMP minus N (drain to source)"),
+            "Cclamp": ("CLAMP to VIN (into Cclamp positive plate)", "CLAMP minus VIN")},
+    "T19": {"Cseries": ("TOP to A (into Cseries positive plate)", "TOP minus A")},
+}
+
+
+@pytest.mark.parametrize("topology", [f"T{i:02}" for i in range(1, 20)])
+def test_all_real_presets_references_match_device_roles_and_named_branch_ends(topology):
+    pytest.importorskip("PySide6.QtWidgets")
+    from power_stage_design.gui import PRESETS
+    from power_stage_design.schematic import layout
+    result = calculate_stage(PRESETS[topology])
+    parts = {part.key: part for part in layout(topology)[0] if part.selectable}
+    assert set(result.waveforms) == set(parts)
+    for key, device in result.waveforms.items():
+        assert device.current_a.unit == "A" and device.voltage_v.unit == "V"
+        assert device.current_a.reference and device.voltage_v.reference
+        if key.startswith("L") and key != "Lm":
+            assert not any(word in device.current_a.reference.lower() for word in ("flyback", "rectifier", "anode", "capacitor"))
+        if key.startswith("Q"):
+            assert "capacitor" not in device.current_a.reference.lower()
+        if key.startswith("D"):
+            assert "inductor" not in device.current_a.reference.lower()
+    for key, expected in _STATIC_BRANCH_REFERENCES.get(topology, {}).items():
+        device, part = result.waveforms[key], parts[key]
+        assert (device.current_a.reference, device.voltage_v.reference) == expected
+        current_ends = (expected[0].split()[0], expected[0].split()[2])
+        voltage_ends = (expected[1].split()[0], expected[1].split()[2])
+        assert set(current_ends) == set(voltage_ends) == set(part.nets)
+        if key.startswith("C"):
+            positive_ends = part.nets[::-1] if part.reverse else part.nets
+            assert current_ends == voltage_ends == positive_ends
+    voltage = lambda key: _samples(result, key, "voltage_v")
+    current = lambda key: _samples(result, key, "current_a")
+    vin, vo = result.inputs.vin_v, result.inputs.vout_v
+    if topology in ("T01", "T02", "T03"):
+        np.testing.assert_allclose(voltage("L1"), vin-voltage("Q1")-(vo if topology == "T01" else 0), atol=2e-10)
+    if topology == "T04":
+        np.testing.assert_allclose(current("Lleak"), current("secondary"), atol=2e-12)
+        np.testing.assert_allclose(voltage("Lleak"), voltage("secondary")-voltage("Cout")+voltage("D1"), atol=2e-9)
+    if topology in ("T06", "T07", "T08"):
+        np.testing.assert_allclose(voltage("L2"), voltage("D1")-vo, atol=2e-10)
+        on = np.linspace(.000013, .999987, 503) < result.duty
+        np.testing.assert_allclose(current("Ctransfer"), np.where(on, -current("L2"), current("L1")), atol=2e-12)
+    if topology == "T10":
+        for diode, switch in (("Dclamp1", "Q2"), ("Dclamp2", "Q1")):
+            np.testing.assert_array_equal(current(diode), 0)
+            np.testing.assert_allclose(voltage(diode), vin-voltage(switch), atol=2e-10)
+    if topology == "T12":
+        np.testing.assert_allclose(current("Q2"), current("Cclamp"), atol=2e-12)
+        # The blocking-voltage model uses the DC clamp voltage, excluding the
+        # separately reconstructed first-order ripple, as its assumptions say.
+        clamp_mean = result.waveforms["Cclamp"].voltage_v.statistics()["mean"]
+        np.testing.assert_allclose(voltage("Q2"), vin+clamp_mean-voltage("Q1"), atol=2e-10)
+
+
+def test_all_real_preset_references_reach_gui_selectors_and_html(tmp_path):
+    from html import escape
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt = pytest.importorskip("PySide6.QtWidgets")
+    from power_stage_design.gui import PRESETS, PowerStageMainWindow
+    from power_stage_design.report import write_report
+    app = qt.QApplication.instance() or qt.QApplication([])
+    window = PowerStageMainWindow()
+    try:
+        for topology, inputs in PRESETS.items():
+            result = calculate_stage(inputs)
+            window._apply_stage_result(result)
+            text = write_report(result, tmp_path/f"{topology}.html").read_text(encoding="utf-8")
+            for key, device in result.waveforms.items():
+                index = window.component_combo.findData(key)
+                assert index >= 0
+                window.component_combo.setCurrentIndex(index)
+                app.processEvents()
+                for reference in (device.current_a.reference, device.voltage_v.reference):
+                    assert reference in window.reference_label.text(), (topology, key)
+                    assert escape(reference) in text, (topology, key)
+    finally:
+        window.close()

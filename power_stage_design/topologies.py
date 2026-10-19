@@ -200,7 +200,9 @@ def _single_inductor(inputs: DesignInputs, topology_id: str) -> StageResult:
         on_v, off_v, gain, continuous = vin, n * (vo + vf), n, False
     mode, durations, low, high = _switch_intervals(inputs, on_v, off_v, gain, continuous)
     duty, discharge, idle = durations
-    current = _wave(inputs, durations, ((low, high), (high, low), (0, 0)), "A", "inductor current; flyback referred to primary")
+    inductor_ports = {"T01": ("SW", "OUT"), "T02": ("VIN", "SW"), "T03": ("SW", "GND")}.get(topology_id)
+    current_reference = f"{inductor_ports[0]} to {inductor_ports[1]}" if inductor_ports else "inductor current; flyback referred to primary"
+    current = _wave(inputs, durations, ((low, high), (high, low), (0, 0)), "A", current_reference)
     switch = _wave(inputs, durations, ((low, high), (0, 0), (0, 0)), "A", "drain to source")
     diode = _wave(inputs, durations, ((0, 0), (gain * high, gain * low), (0, 0)), "A", "anode to cathode")
     if topology_id == "T01":
@@ -219,7 +221,8 @@ def _single_inductor(inputs: DesignInputs, topology_id: str) -> StageResult:
         output = diode
         input_current = switch
     capacitor = output.affine(offset=-inputs.iout_a, reference="into Cout positive plate")
-    inductor_voltage = _voltage(inputs, durations, (on_v, -off_v, 0), "passive sign; flyback primary-referred")
+    voltage_reference = f"{inductor_ports[0]} minus {inductor_ports[1]}" if inductor_ports else "passive sign; flyback primary-referred"
+    inductor_voltage = _voltage(inputs, durations, (on_v, -off_v, 0), voltage_reference)
     devices = {
         "Q1": DeviceWaveforms("Main switch", switch, _voltage(inputs, durations, qvoltage, "drain to source")),
         "D1": DeviceWaveforms("Rectifier / freewheel diode", diode, _voltage(inputs, durations, dvoltage, "cathode to anode")),
@@ -240,8 +243,10 @@ def _single_inductor(inputs: DesignInputs, topology_id: str) -> StageResult:
         devices["Q2"] = DeviceWaveforms("Lower primary switch", switch, q_wave)
         clamp_voltage = _voltage(inputs, durations, (vin, (vin - n*(vo+vf))/2, vin/2), "cathode to anode")
         zero = current.affine(scale=0)
-        devices["Dclamp1"] = DeviceWaveforms("Upper clamp diode (zero leakage model)", zero, clamp_voltage)
-        devices["Dclamp2"] = DeviceWaveforms("Lower clamp diode (zero leakage model)", zero, clamp_voltage)
+        devices["Dclamp1"] = DeviceWaveforms("Upper clamp diode (zero leakage model)", replace(zero, reference="N to VIN (anode to cathode)"),
+                                            replace(clamp_voltage, reference="VIN minus N (cathode to anode)"))
+        devices["Dclamp2"] = DeviceWaveforms("Lower clamp diode (zero leakage model)", replace(zero, reference="GND to P (anode to cathode)"),
+                                            replace(clamp_voltage, reference="P minus GND (cathode to anode)"))
     return _finish(inputs, topology_id, mode, duty, devices, input_current, current,
                    vf * diode.statistics()["mean"],
                    assumptions=("Asynchronous unidirectional conduction; DCM includes a solved zero-current interval.",)
@@ -341,13 +346,16 @@ def _two_inductor(inputs: DesignInputs, topology_id: str) -> StageResult:
     low2 = inputs.iout_a - 0.5*ripple2*(duty+discharge)
     high1, high2 = low1+ripple1, low2+ripple2
     one = _wave(inputs, durations, ((low1, high1), (high1, low1), (low1, low1)), "A", "input inductor energy-flow reference")
-    two = _wave(inputs, durations, ((low2, high2), (high2, low2), (low2, low2)), "A", "output energy-flow reference (Cuk: negative output toward switching node)")
+    second_ports = {"T06": ("GND", "B"), "T07": ("B", "OUT"), "T08": ("OUT", "B")}[topology_id]
+    two = _wave(inputs, durations, ((low2, high2), (high2, low2), (low2, low2)), "A", f"{second_ports[0]} to {second_ports[1]}")
     low, high = low1+low2, high1+high2
     q = _wave(inputs, durations, ((low, high), (0, 0), (0, 0)), "A", "drain to source")
     diode = _wave(inputs, durations, ((0, 0), (high, low), (0, 0)), "A", "anode to cathode")
-    transfer_current = _wave(inputs, durations, ((-low2, -high2), (high1, low1), (low1, low1)), "A", "into transfer-capacitor positive voltage reference")
+    transfer_ports = ("B", "A") if topology_id == "T07" else ("A", "B")
+    transfer_current = _wave(inputs, durations, ((-low2, -high2), (high1, low1), (low1, low1)), "A", f"{transfer_ports[0]} to {transfer_ports[1]} (into Ctransfer positive plate)")
     vc_dc = vin if topology_id == "T06" else vo if topology_id == "T07" else vin+vo
-    transfer_voltage = capacitor_voltage(transfer_current, inputs.transfer_capacitance_f, vc_dc)
+    transfer_voltage = capacitor_voltage(transfer_current, inputs.transfer_capacitance_f, vc_dc,
+                                         reference=f"{transfer_ports[0]} minus {transfer_ports[1]}")
     if transfer_voltage.statistics()["peak_to_peak"] > 0.1*vc_dc:
         raise ModelDomainError("Transfer-capacitor ripple exceeds 10%; constant-transfer-voltage model is outside its domain")
     output = diode if topology_id == "T06" else two
@@ -356,7 +364,7 @@ def _two_inductor(inputs: DesignInputs, topology_id: str) -> StageResult:
     vl = _voltage(inputs, durations, (vin, -vo-vf, 0), "passive sign in chosen current direction")
     devices = {
         "L1": DeviceWaveforms("First inductor (uncoupled)", one, vl),
-        "L2": DeviceWaveforms("Second inductor (uncoupled)", two, vl),
+        "L2": DeviceWaveforms("Second inductor (uncoupled)", two, replace(vl, reference=f"{second_ports[0]} minus {second_ports[1]}")),
         "Q1": DeviceWaveforms("Main switch", q, _voltage(inputs, durations, (0, vin+vo+vf, vin), "drain to source")),
         "D1": DeviceWaveforms("Rectifier diode", diode, _voltage(inputs, durations, (vin+vo, -vf, vo), "cathode to anode")),
         "Ctransfer": DeviceWaveforms("Energy-transfer capacitor", transfer_current, transfer_voltage),
@@ -465,11 +473,12 @@ def _forward(inputs: DesignInputs, topology_id: str) -> StageResult:
     diode_loss = vf*inputs.iout_a
     assumptions = ("inductance_h is output L; magnetizing_inductance_h is primary-referred Lm; n=Np/Ns.",)
     if active:
-        clamp = wave(lambda t,s: im(t,s) if s > duty else 0,"A","into clamp capacitor positive plate")
-        clamp_voltage = capacitor_voltage(clamp, inputs.transfer_capacitance_f, reset_v)
+        clamp = wave(lambda t,s: im(t,s) if s > duty else 0,"A","CLAMP to VIN (into Cclamp positive plate)")
+        clamp_voltage = capacitor_voltage(clamp, inputs.transfer_capacitance_f, reset_v, reference="CLAMP minus VIN")
         if clamp_voltage.statistics()["peak_to_peak"] > 0.1*max(reset_v, 1e-12):
             raise ModelDomainError("Clamp-capacitor ripple exceeds 10%; constant clamp-voltage model is outside its domain")
-        devices["Q2"] = DeviceWaveforms("Active-clamp switch", clamp, wave(lambda t,s: vin+reset_v if s < duty else 0,"V","auxiliary blocking-voltage reference"))
+        devices["Q2"] = DeviceWaveforms("Active-clamp switch", replace(clamp, reference="N to CLAMP (source to drain; signed)"),
+                                        wave(lambda t,s: vin+reset_v if s < duty else 0,"V","CLAMP minus N (drain to source)"))
         devices["Cclamp"] = DeviceWaveforms("Clamp capacitor", clamp, clamp_voltage)
         assumptions += ("Complementary ideal active-clamp operation; bipolar magnetizing current. Dead time, leakage resonance and ZVS are not solved.",)
     else:
@@ -623,8 +632,8 @@ def _series_capacitor_buck(inputs: DesignInputs) -> StageResult:
     wave = lambda fn,unit,ref: _event_wave(inputs,events,fn,unit,ref)
     ia,ib = wave(a,"A","phase A toward output"),wave(b,"A","phase B toward output")
     source = wave(lambda t,s:a(t,s) if a_on(s) else 0,"A","from input supply")
-    series_current = wave(lambda t,s:a(t,s) if a_on(s) else -b(t,s) if b_on(s) else 0,"A","series-capacitor left positive terminal")
-    series_voltage = capacitor_voltage(series_current,inputs.transfer_capacitance_f,vin/2)
+    series_current = wave(lambda t,s:a(t,s) if a_on(s) else -b(t,s) if b_on(s) else 0,"A","TOP to A (into Cseries positive plate)")
+    series_voltage = capacitor_voltage(series_current,inputs.transfer_capacitance_f,vin/2,reference="TOP minus A")
     if series_voltage.statistics()["peak_to_peak"] > .1*vin/2:
         raise ModelDomainError("Series-capacitor voltage ripple exceeds 10%; small-ripple approximation is outside its domain")
     cap = wave(lambda t,s:a(t,s)+b(t,s)-inputs.iout_a,"A","into output-capacitor positive plate")
@@ -1131,7 +1140,7 @@ def _fly_buck(inputs: DesignInputs, cancelled=None) -> StageResult:
         "Lm":DeviceWaveforms("Primary-referred magnetizing state",im,vlm),
         "primary":DeviceWaveforms("Actual coupled primary winding",replace(primary,reference="SW to PRIMARY_OUT (into primary dot; signed)"),replace(vlm,reference="SW minus PRIMARY_OUT")),
         "secondary":DeviceWaveforms("Actual coupled secondary winding",replace(secondary,reference="ISO to SEC (return to rectifier terminal)"),wave("vs","V","SEC minus ISO")),
-        "Lleak":DeviceWaveforms("Secondary-referred leakage inductance",secondary,wave("vlk","V","passive leakage-inductor sign")),
+        "Lleak":DeviceWaveforms("Secondary-referred leakage inductance",replace(secondary,reference="SEC to SEC_L"),wave("vlk","V","SEC minus SEC_L")),
         "Q1":DeviceWaveforms("Synchronous buck high-side switch",wave("iq1","A","drain to source; signed"),wave("vq1","V","drain to source")),
         "Q2":DeviceWaveforms("Synchronous buck low-side switch",wave("iq2","A","drain to source; signed"),wave("vq2","V","drain to source")),
         "D1":DeviceWaveforms("Isolated output diode",wave("id","A","anode to cathode"),wave("vd","V","cathode to anode")),
