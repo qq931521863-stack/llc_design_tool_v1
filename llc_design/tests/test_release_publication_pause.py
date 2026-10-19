@@ -80,4 +80,6 @@ def test_native_regression_preflight_does_not_replace_complete_test_gate():
     assert "test_worker_producer_lifetime.py" in block[early:complete]
     assert "test_schematic_rendering.py" in block[early:complete]
     assert "test_schematic_references.py" in block[early:complete]
+    assert "test_control_diagram_routes.py" in block[early:complete]
+    assert "test_type_compensator_schematic.py" in block[early:complete]
     assert "continue-on-error" not in block

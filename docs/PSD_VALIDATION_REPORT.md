@@ -1,5 +1,70 @@
 # Power Stage Designer validation report
 
+## Rendered-circuit audit and current source boundary (2026-10-19)
+
+A new audit of the actual Qt/SVG drawings found gaps that the earlier numerical
+and netlist checks could not detect. The findings are retained rather than being
+hidden by older VERIFIED labels:
+
+- LLC MOSFET body-diode graphics contained a continuous drain-to-source line
+  through the diode. The repaired symbol has separate leads and no bypass wire.
+- PSD selection backgrounds hid connected terminal wires; nonuniform SVG fitting
+  distorted symbols and click coordinates. Background order and shared
+  aspect-preserving paint/click mapping are corrected.
+- Several winding/capacitor waveforms inherited another device's polarity text.
+  The audit follows the **final calculated result**, including later aliases in
+  the dynamic PSFB solver, through selection, saved-project restoration and HTML.
+  Values, segment objects and CSV bytes are preserved where only references change.
+- Dynamic component labels crossed conductors or other glyphs. Independent image
+  replay found two additional cases after the first repair; both are corrected.
+- Shared PFC/LLC/DAB/PLL control drawings routed lines through unrelated blocks or
+  placed labels over signals. The repair adds explicit ports, routing lanes and
+  non-junction crossing marks, checked against each real consumer's signal source.
+- The separate Control Tools Type II/III drawing previously used only wires and
+  R/C labels, visually bypassing every component. Real IEC resistor/capacitor
+  symbols now implement R1 (Type II), R1 || (R3 + C3) (Type III), and feedback
+  C2 || (R2 + C1), with explicit inverting feedback and Vref. Pole/zero mode
+  states that R/C values are not uniquely determined.
+
+The renderer inventory covers 19 direct PSD topologies and three optional
+physical diagrams, LLC half/full bridge with separate/integrated magnetics,
+17 shared control-diagram variants, both Type II/III networks, the labeled
+functional sensing chain and transformer winding-stack illustration. A winding
+stack or functional chain is not a physical circuit/netlist. No separate PFC/DAB
+power-circuit page is invented as part of this review.
+
+The first six repairs have independent actual-render/click checks: 22 PSD drawings,
+408 selected-terminal regions, 872 PSD clicks and 1,424 LLC clicks. Actual T16
+CCM and **explicitly asserted DCM** cases cover 1280×720 and 1560×1100 selection,
+save/switch/restore, plotted data and HTML references. A former nominally
+"light-load" fixture was still CCM and is no longer counted as DCM evidence.
+Independent T15/T16/T17 DCM checks preserve numerical results and CSV bytes;
+maximum checked KVL residual is 3.56e-15 V. The later shared-control, compensator
+and complete final-reference candidates still require their independent final
+review and merged-source qualification at this checkpoint.
+
+### Completed worker-repair baseline; later drawing changes remain separate
+
+Clean source `d81b160fa8679a3fd00274c86f841e628fc43c8a` completed:
+
+- Full Linux/offscreen regression: **4233 passed, 2 opt-in skips, 2 historical
+  xfails**, zero failures/errors, 43 warnings, **3824.67 s**. Aggregate peak RSS
+  was **1,912,920 KiB**; all 769 tracked-file hashes stayed unchanged.
+- Separate real PFC switched-GUI long test: **1 passed**, zero failures/errors,
+  101 warnings, **950.01 s**, aggregate peak RSS **2,706,404 KiB**, the same 769
+  source hashes unchanged. Actual visible configuration/source/thermal identity,
+  stale modal export rejection and source switching were checked with the
+  shared-ngspice result (78,485 full-period samples).
+- Both runs recorded zero session-final top-level widgets, native roots,
+  auxiliary windows/menus and plot-owner categories. Remaining native wrapper
+  totals were 3001 and 565 respectively; these are not falsely reported as zero.
+
+This closes the earlier worker-ownership regression on that exact source. The
+subsequent artifact stage deliberately exited 75 before any build while the new
+schematic scope was being repaired. That planned hold is neither a product
+failure nor a wheel/frozen pass. The changed drawing source requires a new
+qualification; historical `a698dc5` wheel/Linux-frozen evidence stays historical.
+
 ## New-source checkpoint, retained-wrapper failure and numerical changes (2026-10-19)
 
 Source `a698dc533124e9c2d22342761cc2c56bf01a1f88` had unchanged tracked-file hashes

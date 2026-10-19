@@ -189,7 +189,9 @@ jobs:
             llc_design/tests/test_worker_submission.py \
             llc_design/tests/test_worker_producer_lifetime.py \
             llc_design/tests/test_schematic_rendering.py \
-            power_stage_design/tests/test_schematic_references.py
+            power_stage_design/tests/test_schematic_references.py \
+            llc_design/tests/test_control_diagram_routes.py \
+            power_control_tools/tests/test_type_compensator_schematic.py
       - name: Run tests
         run: python -m pytest
       - name: Build with PyInstaller

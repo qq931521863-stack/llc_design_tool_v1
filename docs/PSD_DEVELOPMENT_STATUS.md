@@ -1,5 +1,32 @@
 # Power Stage Designer development status
 
+## Actual circuit repairs and integration checkpoint (2026-10-19)
+
+The worker-ownership repair is qualified on clean `d81b160`: **4233 passed,
+2 opt-in skips, 2 historical xfails**, followed by **1 passed** in the real PFC
+long GUI run. All 769 source hashes remained unchanged during both. The planned
+artifact hold ran before any build; no new wheel/frozen qualification is claimed.
+
+The user's rendered-circuit feedback exposed additional real defects beyond the
+previous numerical/netlist acceptance. Repairs cover LLC body-diode lead wiring,
+PSD terminal visibility, final winding/capacitor V/I references, aspect-preserving
+click mapping, dynamic label placement, shared control signal routing and actual
+Type II/III R/C symbols. Independent actual-image/click/project/report review
+has checked the initial drawing/click corrections and caught further alias/label
+defects that are retained in the audit history. Final control/compensator/reference review and
+merged-source qualification are still pending at this checkpoint.
+
+The 1280×720 production PFC window preserves its size and uses the existing
+workspace scroll area for the larger Vienna page; standalone page minimum-size
+checks are not substituted for actual production-window reachability.
+
+Next: finish independent fixed-source reviews, integrate the bounded fixes,
+freeze and run the new source's full/long/installed/frozen gates, update exact
+source identities, then perform the authorized non-force main push and monitor
+actual native CI. Release/tag creation remains paused. Unsupported model domains,
+TI executable access and hardware/native-platform evidence remain separately
+identified in the feature matrix; this audit does not establish hardware safety.
+
 ## Requalification checkpoint and worker-ownership correction (2026-10-19)
 
 The integrated numerical/layout repair `a698dc533124e9c2d22342761cc2c56bf01a1f88`

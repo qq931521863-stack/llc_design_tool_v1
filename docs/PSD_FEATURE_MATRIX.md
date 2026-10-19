@@ -1,5 +1,25 @@
 # Power Stage Designer feature matrix
 
+## Actual drawing consumer audit (2026-10-19)
+
+The feature rows below describe bounded capabilities. Earlier numerical/netlist
+acceptance missed actual drawing defects: a shorting LLC body-diode stroke,
+selection backgrounds covering PSD terminals, incorrect inherited V/I reference
+text, distorted SVG/click transforms, dynamic labels crossing symbols, control
+routes crossing unrelated blocks, and all-wire Type II/III R/C drawings. These
+are real consumer defects and are being repaired and independently replayed.
+A topology marked implemented did not establish that every rendered symbol was
+correct. The new acceptance includes actual images, terminal/polarity review,
+selection, project restoration and reports.
+
+The clean worker-repair source `d81b160` passes its complete Linux suite
+(**4233 passed / 2 opt-in skips / 2 historical xfails**) and separate actual PFC
+long test (**1 passed, 950.01 s**), with unchanged source hashes and clean tracked
+GUI ownership categories at exit. Later drawing changes are not covered by that
+result. Shared-control, Type II/III and final-reference review, merged-source
+regression, current installed/frozen checks and native platform qualification
+remain separate gates. Formal publication remains paused.
+
 ## Current qualification boundary (2026-10-19)
 
 The event-resolved numerical repair and real Linux wheel/frozen consumers passed
