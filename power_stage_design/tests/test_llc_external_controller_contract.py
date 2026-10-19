@@ -203,7 +203,7 @@ def test_saved_exact_snapshot_detaches_from_live_editor_and_exports(host, monkey
     path = tmp_path / "external.json"
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a: (str(path), ""))
     _action(window, "保存工程 JSON")
-    document = json.loads(path.read_text())
+    document = json.loads(path.read_text(encoding="utf-8"))
     saved = document["control_session"]
     metadata = saved["external_controller"]
     native = decode_model(saved["inputs"])["digital_loop"]["controller_transfer_function"]
@@ -213,7 +213,7 @@ def test_saved_exact_snapshot_detaches_from_live_editor_and_exports(host, monkey
         saved.pop("external_controller")
         # Baseline v1 sessions stored only the editor label, not live metadata.
         saved["inputs"]["digital_loop"]["controller_source"] = "2P2Z"
-        path.write_text(json.dumps(document))
+        path.write_text(json.dumps(document), encoding="utf-8")
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a: (str(path), ""))
     _action(window, "加载 JSON")
     _workers(window)
@@ -249,10 +249,10 @@ def test_saved_exact_snapshot_detaches_from_live_editor_and_exports(host, monkey
     assert report["controller"]["b"] == list(exact.b)
     assert report["controller"]["sample_rate_hz"] == pytest.approx(exact.sample_rate_hz)
     assert report["controller"]["source"] == rebuilt.controller_source
-    assert "snapshot" in header.read_text() and metadata["sha256"] in header.read_text()
+    assert "snapshot" in header.read_text(encoding="utf-8") and metadata["sha256"] in header.read_text(encoding="utf-8")
     # Save/reopen once more: metadata and coefficient identity must remain stable.
     _action(window, "保存工程 JSON")
-    resaved = json.loads(path.read_text())["control_session"]
+    resaved = json.loads(path.read_text(encoding="utf-8"))["control_session"]
     assert resaved["external_controller"]["sha256"] == metadata["sha256"]
     if not legacy:
         assert resaved["external_controller"]["captured_at_utc"] == metadata["captured_at_utc"]
@@ -282,9 +282,9 @@ def test_invalid_saved_controller_metadata_rejected_atomically(host, monkeypatch
     path = tmp_path / "bad.json"
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a: (str(path), ""))
     _action(window, "保存工程 JSON")
-    document = json.loads(path.read_text())
+    document = json.loads(path.read_text(encoding="utf-8"))
     document["control_session"]["external_controller"][field] = value
-    path.write_text(json.dumps(document))
+    path.write_text(json.dumps(document), encoding="utf-8")
     errors = []
     monkeypatch.setattr(main_window, "show_operation_issue", lambda *a, **kw: errors.append(a))
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a: (str(path), ""))
