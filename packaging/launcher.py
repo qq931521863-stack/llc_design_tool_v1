@@ -171,7 +171,7 @@ def _waveform_fingerprint(result):
     return digest.hexdigest()
 
 
-def _exercise_advanced_power_stage(stage, directory, app):
+def _exercise_advanced_power_stage(stage, directory, app, priority_proof):
     import numpy as np
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
@@ -234,7 +234,164 @@ def _exercise_advanced_power_stage(stage, directory, app):
             "project_roundtrip": True, "recomputed_waveforms_identical": True,
             "report_consistency": True, "mode": result.mode, "provenance": result.provenance,
             "warnings": result.warnings}
+        if inputs.topology == "T05":
+            priority_proof["advanced_suggestion"] = _exercise_parameter_suggestion(
+                stage, directory, app, ripple=result.metrics["inductor_ripple_pp_a"], maximum_duty=.95)
     return evidence
+
+
+def _exercise_parameter_suggestion(stage, directory, app, *, ripple, maximum_duty):
+    """Use production preview/Apply/restore; preserve nested model parameters."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from power_stage_design.gui import PRESETS
+    from power_stage_design.models import DesignInputs
+    from power_stage_design.suggestions import validate_suggestion_record
+
+    source = stage.current_inputs()
+    _require(stage.result is not None and stage.result.inputs == source, "suggestion source is not solved")
+    stage.tabs.setCurrentWidget(stage.suggestion_tab)
+    stage.suggestion_ripple.setValue(ripple)
+    stage.suggestion_duty.setValue(maximum_duty)
+    stage.suggestion_magnetizing.setValue(0)
+    stage.suggestion_ratio.setChecked(False)
+    app.processEvents()
+    QTest.mouseClick(stage.suggest_button, Qt.MouseButton.LeftButton)
+    _wait_for_worker(lambda: not stage._suggestion_events)
+    proposal = stage.parameter_proposal
+    _require(proposal is not None, stage.suggestion_output.toPlainText())
+    _require(stage.current_inputs() == source and stage.result.inputs == source,
+             "preview silently applied parameter changes")
+    record = json.loads(json.dumps(proposal.record()))
+    _require(validate_suggestion_record(record, proposal.result) == record, "proposal provenance is invalid")
+    _require(set(proposal.changed_fields) <= {"inductance_h"}, "proposal changed untargeted inputs")
+    for field in ("two_switch_options", "qr_options", "psfb_options"):
+        _require(getattr(proposal.inputs, field) == getattr(source, field), "proposal lost nested model options")
+    QTest.mouseClick(stage.apply_suggestion_button, Qt.MouseButton.LeftButton)
+    _wait_for_worker(lambda: stage.result is not None or not stage._jobs)
+    _require(stage.result is not None and stage.current_inputs() == proposal.inputs == stage.result.inputs,
+             "Apply changed the checked proposal")
+    _require(stage.result is not proposal.result, "Apply skipped production recomputation")
+    fingerprint = _waveform_fingerprint(stage.result)
+    project = directory / f"{source.topology}-suggestion.json"
+    report = directory / f"{source.topology}-suggestion.html"
+    stage.save_to(project)
+    saved = json.loads(project.read_text(encoding="utf-8"))
+    _require(saved["parameter_suggestion"] == record and DesignInputs(**saved["inputs"]) == proposal.inputs,
+             "saved proposal lost inputs or provenance")
+    stage.set_inputs(PRESETS["T01"])
+    stage.open_from(project)
+    _wait_for_worker(lambda: stage.result is not None or not stage._jobs)
+    _require(stage.result is not None and stage.current_inputs() == proposal.inputs == stage.result.inputs,
+             "proposal restore changed inputs")
+    _require(stage._applied_suggestion == record and _waveform_fingerprint(stage.result) == fingerprint,
+             "proposal restore lost provenance or changed recalculated waveforms")
+    stage.report_to(report)
+    html = report.read_text(encoding="utf-8")
+    data = json.loads(unescape(html.split('<h2>可复现数据</h2><pre>', 1)[1].split('</pre>', 1)[0]))
+    _require(data["parameter_suggestion"] == record and data["inputs"] == saved["inputs"]
+             and data["design_id"] == stage.result.design_id and data["metrics"] == stage.result.metrics
+             and data["stress"] == stage.result.stress, "proposal report lost actual result or provenance")
+    stage.tabs.setCurrentIndex(0)
+    return {"inputs": asdict(stage.result.inputs), "design_id": stage.result.design_id,
+            "proposal": record, "waveform_sha256": fingerprint, "preview_did_not_apply": True,
+            "apply_recomputed": True, "nested_options_preserved": True,
+            "project_roundtrip": True, "recomputed_waveforms_identical": True, "report_consistency": True}
+
+
+def _exercise_priority_bridge(stage, directory, app):
+    from power_stage_design.models import DesignInputs
+
+    stage.set_inputs(DesignInputs("T17", 48, 5, .005, 100e3, 470e-6,
+        capacitance_f=1e-3, turns_ratio_np_ns=2, magnetizing_inductance_h=.01))
+    return _exercise_parameter_suggestion(stage, directory, app, ripple=.02, maximum_duty=.45)
+
+
+def _exercise_llc_priority_components(host, directory, app):
+    """Click and export new terminals from one genuine full-bridge source."""
+    from unittest.mock import patch
+
+    import numpy as np
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QFileDialog
+
+    from llc_design.core.config import waveform_request_identity
+    from llc_design.core.spec import PrimaryTopology
+
+    view = host.waveform_view
+    _require(host.spec.primary_topology == PrimaryTopology.FULL_BRIDGE, "T21 fixture is not full bridge")
+    host.tabs.setCurrentWidget(view)
+    app.processEvents()
+    QTest.mouseClick(view.fast_button, Qt.MouseButton.LeftButton)
+    _wait_for_worker(lambda: not host._active_workers)
+    bundle = view.bundle
+    _require(bundle is not None, "T21 current-input waveform was not calculated")
+    identity = bundle.metadata["request_identity"]
+    signals = {key: signal.values for key, signal in bundle.signals.items()}
+    np.testing.assert_array_equal(signals["v_bus"], np.full_like(signals["i_resonant"], bundle.metadata["vbus_v"]))
+    np.testing.assert_allclose(signals["v_output_cap_esr"], bundle.metadata["output_cap_esr_ohm"] * signals["i_output_cap"], atol=1e-10)
+    np.testing.assert_allclose(signals["v_series_resistance"], bundle.metadata["series_resistance_ohm"] * signals["i_resonant"], atol=1e-12)
+    bus_error = float(np.max(np.abs(signals["v_bus"] * signals["i_bus"] - signals["v_bridge"] * signals["i_resonant"])))
+    _require(bus_error <= 1e-10 and np.min(signals["i_bus"]) < 0, "T21 source power or reverse current is wrong")
+    digest = hashlib.sha256(np.asarray(bundle.time_s, dtype="<f8").tobytes())
+    for key, values in sorted(signals.items()):
+        _require(np.isfinite(values).all(), "T21 source has nonfinite values")
+        digest.update(key.encode())
+        digest.update(np.asarray(values, dtype="<f8").tobytes())
+    selected = {}
+    targets = {"coesr": ("v_output_cap_esr", "i_output_cap"),
+               "rseries": ("v_series_resistance", "i_resonant"), "bus": ("v_bus", "i_bus")}
+    for component, keys in targets.items():
+        host.tabs.setCurrentIndex(0)
+        app.processEvents()
+        block = host.topology_view.blocks[component]
+        point = host.topology_view.mapFromScene(block.sceneBoundingRect().center())
+        QTest.mouseClick(host.topology_view.viewport(), Qt.MouseButton.LeftButton, pos=point)
+        app.processEvents()
+        _require(host.tabs.currentWidget() is view and view.selected_component == component
+                 and view._selected_keys() == keys and view.bundle is bundle, "T21 component click selected another source")
+        for row, key in enumerate(keys):
+            curve, = view._plots[row].listDataItems()
+            np.testing.assert_array_equal(curve.xData, bundle.time_s * 1e6)
+            np.testing.assert_array_equal(curve.yData, signals[key])
+        _require(view.component_context[component]["source_identity"] == identity
+                 and waveform_request_identity(host._waveform_session()) == identity,
+                 "T21 component context changed electrical identity")
+        destination = directory / f"T21-{component}"
+        with patch.object(QFileDialog, "getExistingDirectory", return_value=str(destination)):
+            QTest.mouseClick(view.export_button, Qt.MouseButton.LeftButton)
+        exported = json.loads((destination / "waveform_metadata.json").read_text(encoding="utf-8"))
+        context = exported["context"]
+        _require(context["selected_component"] == component and context["selected_signals"] == list(keys)
+                 and context["component_evidence"][component]["source_identity"] == identity
+                 and exported["metadata"]["request_identity"] == identity, "T21 report selected different component or source")
+        markdown = (destination / "LLC_waveforms.md").read_text(encoding="utf-8")
+        _require(identity in markdown and "selected_component.png" in markdown
+                 and (destination / "selected_component.png").stat().st_size > 1000, "T21 selected-component report is incomplete")
+        selected[component] = {"signals": list(keys), "source_identity": identity,
+                               "max_curve_absolute_error": 0.0, "report_selection_exact": True}
+    project = directory / "T21-priority.json"
+    with patch.object(QFileDialog, "getSaveFileName", return_value=(str(project), "JSON")):
+        host.save_json()
+    saved = json.loads(project.read_text(encoding="utf-8"))
+    _require(saved["waveform_session"]["component"] == "bus", "T21 saved selection is wrong")
+    view.select_component("q1")
+    with patch.object(QFileDialog, "getOpenFileName", return_value=(str(project), "JSON")):
+        host.load_json()
+    _wait_for_worker(lambda: not host._active_workers)
+    _require(view.bundle is not None and view.bundle is not bundle and view.selected_component == "bus"
+             and view.bundle.metadata["request_identity"] == identity, "T21 restore did not recompute exact source and selection")
+    for key, values in signals.items():
+        np.testing.assert_array_equal(view.bundle.signals[key].values, values)
+    return {"topology": "T21", "primary_topology": "FULL_BRIDGE", "solver": "fast",
+            "source_identity": identity, "waveform_sha256": digest.hexdigest(),
+            "samples_per_signal": len(bundle.time_s), "components": selected,
+            "bus_power_max_absolute_error_w": bus_error, "bus_reverse_current_min_a": float(np.min(signals["i_bus"])),
+            "bus_voltage_ac_rms_v": bundle.signals["v_bus"].statistics.ac_rms,
+            "project_roundtrip": True, "recomputed_waveforms_identical": True,
+            "model_name": bundle.model_name, "warnings": list(bundle.warnings)}
 
 
 def _exercise_two_stage(host, directory):
@@ -353,10 +510,12 @@ def _run_packaged_self_test() -> int:
         guided.close()
         with tempfile.TemporaryDirectory(prefix="pdt-psd-self-test-") as directory:
             psd_proof = _exercise_power_stage(controller.power_stage_window, Path(directory))
-            advanced_proof = _exercise_advanced_power_stage(controller.power_stage_window, Path(directory), app)
+            priority_proof = {"full_bridge_suggestion": _exercise_priority_bridge(controller.power_stage_window, Path(directory), app)}
+            advanced_proof = _exercise_advanced_power_stage(controller.power_stage_window, Path(directory), app, priority_proof)
             controller.show_workspace("llc")
             app.processEvents()
             optimizer_proof = _exercise_two_stage(controller.llc_window, Path(directory))
+            priority_proof["llc_components"] = _exercise_llc_priority_components(controller.llc_window, Path(directory), app)
         workspace_names = ["llc", "pfc", "control", "fra", "dab", "power_stage"]
         for workspace, window in zip(workspace_names, windows, strict=True):
             controller.show_workspace(workspace)
@@ -371,6 +530,7 @@ def _run_packaged_self_test() -> int:
                  "frozen": bool(getattr(sys, "frozen", False)), "platform": sys.platform,
                  "workspaces": workspace_names, "guided_design": True, **psd_proof,
                  "power_stage_advanced": advanced_proof, "two_stage_optimization": optimizer_proof,
+                 "power_stage_priority": priority_proof,
                  "brand_taxonomy_sha256": hashlib.sha256(taxonomy.read_bytes()).hexdigest()}
     finally:
         for window in [selector, guided, *windows]:

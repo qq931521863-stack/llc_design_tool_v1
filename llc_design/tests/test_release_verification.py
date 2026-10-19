@@ -48,6 +48,44 @@ def _completion_proof():
             "report_consistency": True, "model_limit": "Nominal-point schema fixture; no physical evidence"}}
 
 
+def _priority_proof(advanced):
+    """Synthetic contract fixture only; no executable qualification is implied."""
+    from dataclasses import asdict, replace
+
+    from power_stage_design.models import DesignInputs
+
+    t17 = DesignInputs("T17", 48, 5, .005, 100e3, 470e-6,
+                      capacitance_f=1e-3, turns_ratio_np_ns=2, magnetizing_inductance_h=.01)
+    t05 = DesignInputs(**advanced["T05"]["inputs"])
+    result = {}
+    for name, source, maximum, ripple in (("full_bridge_suggestion", t17, .45, .02),
+                                          ("advanced_suggestion", t05, .95, 1.)):
+        duty = (5 / 24) * (math.sqrt(2) - 1) if source.topology == "T17" else .3
+        chosen = replace(source, inductance_h=19*duty/(200e3*.02)) if source.topology == "T17" else source
+        record = {"algorithm": "volt-second-targets-1", "source_inputs": asdict(source),
+                  "source_design_id": source.design_id, "result_design_id": chosen.design_id,
+                  "targets": {"ripple_pp_a": ripple, "max_duty": maximum, "secondary_ripple_pp_a": None,
+                              "magnetizing_ripple_pp_a": None, "size_turns_ratio": False, "reflected_voltage_v": None},
+                  "achieved": {"mode": "DCM" if source.topology == "T17" else "CCM", "duty": duty,
+                               "ripple_pp_a": ripple, "switching_frequency_hz": 100e3},
+                  "changed_fields": ["inductance_h"] if source.topology == "T17" else [],
+                  "assumptions": ["Synthetic schema fixture only"]}
+        result[name] = {"inputs": asdict(chosen), "design_id": chosen.design_id, "proposal": record,
+                        "waveform_sha256": "f" * 64, "preview_did_not_apply": True, "apply_recomputed": True,
+                        "nested_options_preserved": True, "project_roundtrip": True,
+                        "recomputed_waveforms_identical": True, "report_consistency": True}
+    components = {key: {"signals": signals, "source_identity": "1" * 64,
+                        "max_curve_absolute_error": 0., "report_selection_exact": True}
+                  for key, signals in {"coesr": ["v_output_cap_esr", "i_output_cap"],
+                      "rseries": ["v_series_resistance", "i_resonant"], "bus": ["v_bus", "i_bus"]}.items()}
+    result["llc_components"] = {"topology": "T21", "primary_topology": "FULL_BRIDGE", "solver": "fast",
+        "source_identity": "1" * 64, "waveform_sha256": "2" * 64, "samples_per_signal": 2048,
+        "components": components, "bus_power_max_absolute_error_w": 0., "bus_reverse_current_min_a": -1.,
+        "bus_voltage_ac_rms_v": 0., "project_roundtrip": True, "recomputed_waveforms_identical": True,
+        "model_name": "Schema fixture only", "warnings": ["Not real numerical evidence"]}
+    return result
+
+
 def _proof(**overrides):
     payload = {
         "proof_schema": 3, "success": True, "version": "9.4.1", "frozen": True, "platform": sys.platform,
@@ -71,6 +109,7 @@ def _proof(**overrides):
             "switch_voltage_v": voltage,
         }
     payload.update(_completion_proof())
+    payload["power_stage_priority"] = _priority_proof(payload["power_stage_advanced"])
     payload.update(overrides)
     return payload
 

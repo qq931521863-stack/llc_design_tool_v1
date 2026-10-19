@@ -69,6 +69,7 @@ def validate_report(report: dict, *, expected_version: str,
     if type(error) not in (int, float) or not math.isfinite(error) or not 0 <= error <= 1e-10:
         raise RuntimeError("packaged self-test report fails independent Buck VMC numerical check")
     _validate_completion_report(report)
+    _validate_priority_report(report)
 
 
 def _hex_digest(value, length=64):
@@ -154,6 +155,102 @@ def _validate_completion_report(report):
         raise RuntimeError("packaged self-test report has invalid TwoStage source identity") from exc
     if not consistent:
         raise RuntimeError("packaged self-test report has mismatched TwoStage source identity")
+
+
+def _priority_identity(inputs):
+    canonical = dict(inputs)
+    for name in ("two_switch_options", "qr_options", "psfb_options"):
+        if canonical.get(name) is None:
+            canonical.pop(name, None)
+    return hashlib.sha256(json.dumps({"model_version": "psd-piecewise-2", "inputs": canonical},
+                                    sort_keys=True, allow_nan=False).encode()).hexdigest()[:20]
+
+
+def _finite_number(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def _validate_priority_report(report):
+    priority = report.get("power_stage_priority")
+    if not isinstance(priority, dict) or set(priority) != {"full_bridge_suggestion", "advanced_suggestion", "llc_components"}:
+        raise RuntimeError("packaged self-test report lacks priority workflow evidence")
+    for name, topology, maximum in (("full_bridge_suggestion", "T17", .45), ("advanced_suggestion", "T05", .95)):
+        case = priority[name]
+        if (not isinstance(case, dict) or any(case.get(key) is not True for key in
+                ("preview_did_not_apply", "apply_recomputed", "nested_options_preserved", "project_roundtrip",
+                 "recomputed_waveforms_identical", "report_consistency"))
+                or not _hex_digest(case.get("waveform_sha256"))):
+            raise RuntimeError("packaged self-test report lacks priority suggestion consumers")
+        record, inputs = case.get("proposal"), case.get("inputs")
+        if not isinstance(record, dict) or not isinstance(inputs, dict):
+            raise RuntimeError("packaged self-test report lacks priority suggestion provenance")  # noqa: TRY004
+        source, targets, achieved = (record.get(key) for key in ("source_inputs", "targets", "achieved"))
+        if (record.get("algorithm") != "volt-second-targets-1" or not isinstance(source, dict)
+                or not isinstance(targets, dict) or not isinstance(achieved, dict)
+                or inputs.get("topology") != topology or source.get("topology") != topology
+                or targets.get("max_duty") != maximum or targets.get("size_turns_ratio") is not False
+                or any(targets.get(key) is not None for key in
+                       ("secondary_ripple_pp_a", "magnetizing_ripple_pp_a", "reflected_voltage_v"))
+                or not isinstance(record.get("changed_fields"), list)
+                or any(key != "inductance_h" for key in record["changed_fields"])
+                or len(set(record["changed_fields"])) != len(record["changed_fields"])
+                or {key: value for key, value in source.items() if key != "inductance_h"}
+                   != {key: value for key, value in inputs.items() if key != "inductance_h"}):
+            raise RuntimeError("packaged self-test report altered untargeted priority inputs")
+        try:
+            consistent = (record.get("source_design_id") == _priority_identity(source)
+                          and record.get("result_design_id") == case.get("design_id") == _priority_identity(inputs))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("packaged self-test report has invalid priority identity inputs") from exc
+        if not consistent:
+            raise RuntimeError("packaged self-test report has mismatched priority suggestion identities")
+        target, ripple, duty = targets.get("ripple_pp_a"), achieved.get("ripple_pp_a"), achieved.get("duty")
+        frequency = achieved.get("switching_frequency_hz")
+        if (not all(_finite_number(value) for value in (target, ripple, duty, frequency, inputs.get("inductance_h")))
+                or min(target, ripple, duty, frequency, inputs["inductance_h"]) <= 0 or duty > maximum + 2e-6
+                or not math.isclose(target, ripple, rel_tol=2e-6, abs_tol=1e-9)):
+            raise RuntimeError("packaged self-test report fails priority suggestion numerical targets")
+        if topology == "T17":
+            # Independent positive quadratic root for joint magnetic DCM charge;
+            # conventional output-only CCM duty cannot satisfy this light load.
+            expected_source = {"vin_v": 48, "vout_v": 5, "iout_a": .005, "fsw_hz": 100e3,
+                               "inductance_h": 470e-6, "turns_ratio_np_ns": 2, "magnetizing_inductance_h": .01}
+            expected_duty = (5 / 24) * (math.sqrt(2) - 1)
+            expected_l = 19 * expected_duty / (200e3 * .02)
+            if (any(source.get(key) != value for key, value in expected_source.items())
+                    or target != .02 or achieved.get("mode") != "DCM"
+                    or record["changed_fields"] != ["inductance_h"]
+                    or not math.isclose(frequency, 100e3, rel_tol=1e-12, abs_tol=1e-12)
+                    or not math.isclose(duty, expected_duty, rel_tol=1e-9, abs_tol=1e-12)
+                    or not math.isclose(inputs["inductance_h"], expected_l, rel_tol=1e-9, abs_tol=1e-12)):
+                raise RuntimeError("packaged self-test report fails light-load Full Bridge sizing")
+        elif (source != report["power_stage_advanced"]["T05"]["inputs"]
+              or source.get("two_switch_options") != inputs.get("two_switch_options")
+              or not isinstance(inputs.get("two_switch_options"), dict)):
+            raise RuntimeError("packaged self-test report lost nested optional-model proposal parameters")
+    llc = priority["llc_components"]
+    expected = {"coesr": ["v_output_cap_esr", "i_output_cap"],
+                "rseries": ["v_series_resistance", "i_resonant"], "bus": ["v_bus", "i_bus"]}
+    if (not isinstance(llc, dict) or llc.get("topology") != "T21" or llc.get("primary_topology") != "FULL_BRIDGE"
+            or llc.get("solver") != "fast" or not _hex_digest(llc.get("source_identity"))
+            or not _hex_digest(llc.get("waveform_sha256")) or type(llc.get("samples_per_signal")) is not int
+            or llc["samples_per_signal"] < 128 or not isinstance(llc.get("components"), dict)
+            or set(llc["components"]) != set(expected)
+            or any(llc.get(key) is not True for key in ("project_roundtrip", "recomputed_waveforms_identical"))
+            or not isinstance(llc.get("model_name"), str) or not llc["model_name"]
+            or not isinstance(llc.get("warnings"), list) or not all(isinstance(w, str) for w in llc["warnings"])):
+        raise RuntimeError("packaged self-test report lacks actual T21 terminal workflow evidence")
+    for component, keys in expected.items():
+        case = llc["components"][component]
+        if (not isinstance(case, dict) or case.get("signals") != keys or case.get("source_identity") != llc["source_identity"]
+                or not _finite_number(case.get("max_curve_absolute_error")) or case["max_curve_absolute_error"] != 0
+                or case.get("report_selection_exact") is not True):
+            raise RuntimeError("packaged self-test report has mixed-source T21 curves or report selection")
+    error, reverse, ac_rms = (llc.get(key) for key in
+                            ("bus_power_max_absolute_error_w", "bus_reverse_current_min_a", "bus_voltage_ac_rms_v"))
+    if (not all(_finite_number(value) for value in (error, reverse, ac_rms))
+            or not 0 <= error <= 1e-10 or reverse >= 0 or ac_rms != 0):
+        raise RuntimeError("packaged self-test report fails full-bridge DC-bus terminal invariants")
 
 
 def verify_bundle(
