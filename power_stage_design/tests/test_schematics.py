@@ -426,3 +426,52 @@ def test_selection_does_not_erase_actual_copper_at_component_ports(topology, key
                             if plain.pixelColor(px, py).lightness() < 150:
                                 assert selected.pixelColor(px, py).lightness() < 150, (topology, part.key, point)
     app.processEvents()
+
+
+@pytest.mark.parametrize("topology,keys", [
+    ("T05", {"Coss1"}), ("T11", {"Cnode", "Dbody"}), ("T18", {"Coss1"}),
+])
+def test_dynamic_labels_clear_real_rendered_wires_and_glyphs(topology, keys):
+    """Use Qt's actual SVG font/glyph rasterization, not guessed text widths."""
+    import copy
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt = pytest.importorskip("PySide6.QtWidgets")
+    from PySide6.QtCore import QByteArray, QRectF
+    from PySide6.QtGui import QImage, QPainter
+    from PySide6.QtSvg import QSvgRenderer
+    app = qt.QApplication.instance() or qt.QApplication([])
+    circuit = _circuit(topology, device_keys=keys)
+    root = ET.fromstring(svg_schematic(topology, device_keys=keys))
+
+    def alpha(svg):
+        image = QImage(3*circuit.width, 3*circuit.height, QImage.Format.Format_RGBA8888)
+        image.fill(0)
+        painter = QPainter(image)
+        QSvgRenderer(QByteArray(ET.tostring(svg))).render(
+            painter, QRectF(0, 0, image.width(), image.height()))
+        painter.end()
+        return np.frombuffer(image.constBits(), dtype=np.uint8).reshape(
+            image.height(), image.width(), 4)[:, :, 3].copy()
+
+    obstacles = copy.deepcopy(root)
+    for child in list(obstacles):
+        if child.tag.endswith("text") or child.tag.endswith("rect"):
+            obstacles.remove(child)
+    solid = alpha(obstacles)
+    labels = [child for child in root if child.tag.endswith("text")]
+    for label in labels:
+        only = ET.Element(root.tag, root.attrib)
+        only.append(copy.deepcopy(label))
+        pixels = alpha(only)
+        assert not np.any((pixels > 64) & (solid > 64)), (topology, label.text)
+
+    # Prove that the original positions collide with actual copper/glyphs.
+    if topology in ("T11", "T18"):
+        bad = copy.deepcopy(next(label for label in labels
+                                 if label.text == ("Cnode" if topology == "T11" else "VB probe")))
+        bad.attrib.update({"x": "193", "y": "209", "text-anchor": "end"} if topology == "T11"
+                          else {"x": "607", "y": "240", "text-anchor": "middle"})
+        only = ET.Element(root.tag, root.attrib)
+        only.append(bad)
+        assert np.any((alpha(only) > 64) & (solid > 64))
+    app.processEvents()

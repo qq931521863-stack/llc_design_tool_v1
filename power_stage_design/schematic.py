@@ -327,7 +327,8 @@ def _psfb_dynamic():
             c.wire("VIN",(x,55),(x,98));c.wire(node,(x,142),(x,205),(x,263));c.wire("GND",(x,307),(x,355))
         c.wire(node,(base,205),(base+155,205))
         probe_x=base+177
-        c.part("node_"+node,probe_x,205,"voltage_probe",(node,),label="V"+node+" probe",label_dy=35)
+        c.part("node_"+node,probe_x,205,"voltage_probe",(node,),label="V"+node+" probe",
+               label_dx=18 if node=="B" else 0,label_dy=60 if node=="B" else 35)
     c.part("Lleak",650,180,"inductor",("A","P"))
     c.wire("A",(335,205),(335,180),(628,180));c.wire("P",(672,180),(800,180),(800,200))
     c.winding("primary",800,230,("P","B"),label="Np",left=True)
@@ -414,6 +415,8 @@ def _circuit(topology_id: str, *, device_keys=None) -> _Circuit:
                                 if e.key == "Cnode_parameter" else e for e in circuit.elements]
             circuit.note = "QR node capacitance: channel and displacement currents are distinct; see selected model assumptions."
         if topology == "T11" and device_keys is not None and "Dbody" in device_keys:
+            circuit.elements = [replace(e, label_dx=22) if e.key in ("Cnode", "Cnode_parameter")
+                                else e for e in circuit.elements]
             circuit.part("Dbody",155,205,"diode",("N","GND"),vertical=True,reverse=True,label_dx=-20)
             circuit.wire("N",(215,175),(155,175),(155,183));circuit.wire("GND",(155,227),(155,235),(215,235))
             circuit.note = "Declared QR valley/delay/charge model; Dbody clamp and Cnode charge are separate physical branches."
