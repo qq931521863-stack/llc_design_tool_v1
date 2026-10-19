@@ -39,6 +39,30 @@ def _enter(widget, value, *, wait=True):
         QTest.qWait(80)
 
 
+def _wait_for_controller(host, *, error=False, timeout_ms=5000):
+    from PySide6.QtCore import QElapsedTimer
+    from PySide6.QtTest import QTest
+
+    editor = host.control_window
+    view = host.llc_window.digital_loop_view
+    elapsed = QElapsedTimer()
+    elapsed.start()
+    # Queued canvas draws can consume an entire fixed qWait before the overdue
+    # debounce timer is dispatched. Observe its real completion, never force it.
+    while editor.timer.isActive() and elapsed.elapsed() < timeout_ms:
+        QTest.qWait(10)
+    ready = not editor.timer.isActive() and (
+        editor.current_digital is None and "ERROR" in editor.status.text()
+        if error else editor.current_digital is not None and "ERROR" not in editor.status.text())
+    assert ready, (
+        f"Controller did not reach {'ERROR' if error else 'valid'} state: "
+        f"prewarp={editor.prewarp.value()}, text={editor.prewarp.spin.text()!r}, "
+        f"focus={editor.prewarp.spin.hasFocus()}, gain={editor.gain.value()}, "
+        f"timer_active={editor.timer.isActive()}, remaining_ms={editor.timer.remainingTime()}, "
+        f"generation={editor._design_generation}, status={editor.status.text()!r}, "
+        f"digital={editor.current_digital!r}, fingerprint={view._external_controller_metadata!r}")
+
+
 def _click(widget):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
@@ -135,9 +159,11 @@ def test_live_exact_period_locked_and_internal_period_restored(host):
     assert result.controller.sample_time_s == pytest.approx(31.125e-6)
 
 
-def test_live_pending_error_retires_result_and_late_worker_without_local_fallback(host):
-    from PySide6.QtTest import QTest
+@pytest.mark.parametrize("recovery_backlog", [False, True])
+def test_live_pending_error_retires_result_and_late_worker_without_local_fallback(host, recovery_backlog):
+    from PySide6.QtCore import QElapsedTimer, QTimer
 
+    from llc_design.control.design_session import controller_fingerprint
     from power_control_tools.models import DiscretizationMethod
     exact = _valid_source(host)
     window, view = _show_loop(host)
@@ -157,6 +183,7 @@ def test_live_pending_error_retires_result_and_late_worker_without_local_fallbac
     host.show_workspace("control")
     editor = host.control_window
     _enter(editor.gain, .003, wait=False)
+    assert editor.gain.value() == .003
     editor.timer.stop()
     assert editor.current_digital is None
     assert view._external_controller is None and window.external_control_design is None
@@ -169,21 +196,44 @@ def test_live_pending_error_retires_result_and_late_worker_without_local_fallbac
     old.signals.finished.emit()
     assert view.result is None and not view.run_button.isEnabled()
     editor.method.setCurrentIndex(editor.method.findData(DiscretizationMethod.PREWARP_TUSTIN))
-    _enter(editor.prewarp, 30000)
-    QTest.qWait(80)
+    _enter(editor.prewarp, 30000, wait=False)
+    assert editor.prewarp.value() == 30000
+    assert editor.timer.isActive() and editor.current_digital is None
+    _wait_for_controller(host, error=True)
     assert editor.current_digital is None and "ERROR" in editor.status.text()
     assert "ERROR" in view.external_controller_status.text()
     assert view._external_controller is None and view.external_controller_check.isChecked()
     assert not view.run_button.isEnabled() and not view.codegen_button.isEnabled()
-    _enter(editor.prewarp, 1000)
+    _enter(editor.prewarp, 1000, wait=False)
+    assert editor.prewarp.value() == 1000
+    assert editor.timer.isActive() and editor.current_digital is None
+    assert view._external_controller is None and window.external_control_design is None
+    assert not view.run_button.isEnabled() and not view.codegen_button.isEnabled()
+    redraws = []
+    if recovery_backlog:
+        def redraw_backlog():
+            # Real queued GUI work exceeds the former 80 ms assumption without
+            # replacing input, publication, or the production debounce timer.
+            elapsed = QElapsedTimer()
+            elapsed.start()
+            while elapsed.elapsed() < 120:
+                editor.bode_canvas.draw()
+                redraws.append(True)
+        QTimer.singleShot(0, redraw_backlog)
+    _wait_for_controller(host)
+    assert bool(redraws) == recovery_backlog
     fresh = editor.current_digital
     assert fresh is not None and fresh != exact
-    assert view._external_controller == fresh and view.run_button.isEnabled()
+    assert view._external_controller is fresh and window.external_control_design is fresh
+    assert view.run_button.isEnabled()
     assert view.result is None
     window, view = _show_loop(host)
     _click(view.run_button)
     pending.pop().run()
     np.testing.assert_array_equal(view.result.controller.numerator, fresh.b)
+    np.testing.assert_array_equal(view.result.controller.denominator, fresh.a)
+    assert view.result.controller.sample_time_s == 1 / fresh.sample_rate_hz
+    assert controller_fingerprint(view.result.controller) == view._external_controller_metadata["sha256"]
 
 
 @pytest.mark.parametrize("legacy", [False, True])
