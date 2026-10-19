@@ -249,7 +249,7 @@ __all__ = ["DEFAULT_WEIGHTS", "TwoStageLLCOptimizer", "TwoStageOptimizationResul
 
 
 SESSION_SCHEMA = "power-design-toolkit/llc-two-stage"
-SESSION_MODEL_REVISION = "llc-two-stage-td-loss-v1"
+SESSION_MODEL_REVISION = "llc-two-stage-event-resolved-td-loss-v2"
 
 
 def validate_two_stage_request(payload: dict) -> dict:

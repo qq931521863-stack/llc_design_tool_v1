@@ -407,13 +407,32 @@ def _exercise_two_stage(host, directory):
     _require(any("Two-Stage" in host.tabs.tabText(i) for i in range(host.tabs.count())), "TwoStage tab is missing")
     host.tabs.setCurrentWidget(view)
     spec = host._spec_from_widgets()
-    config = OptimizationConfig((5.5,), (spec.q_full_load,), (spec.resonant_frequency_hz,),
-        (spec.primary_turns,), (spec.secondary_turns,), (spec.primary_device,),
+    # The old Ln=5.5/Np=30 example is physically outside the unchanged 20%
+    # FHA/TD gate. A coarse RK4 orbit used to understate its magnetizing peak.
+    rejected_config = OptimizationConfig((5.5,), (spec.q_full_load,), (spec.resonant_frequency_hz,),
+        (30,), (4,), (spec.primary_device,),
         (spec.sr_parallel_devices_per_position,))
-    view.config_text.setPlainText(json.dumps(asdict(config)))
+    view.config_text.setPlainText(json.dumps(asdict(rejected_config)))
     view.maximum_candidates.setValue(1)
     view.top_n.setValue(1)
     _require(view.verification_scope.currentData() == "nominal", "unexpected TwoStage verification scope")
+    view.run_button.click()
+    _wait_for_worker(lambda: not host._active_workers)
+    _require(view.result is not None and len(view.result.verified) == 1, view.status.text())
+    rejected = view.result.verified[0]
+    _require(rejected.rejected and rejected.fha_td_validity.value == "FAIL"
+             and rejected.reject_reason == "FHA↔TD MODEL_VALIDITY FAIL"
+             and view.selected_candidate() is None and not view.apply_button.isEnabled()
+             and not view.report_button.isEnabled() and host._spec_from_widgets() == spec,
+             "TwoStage accepted the independently invalid coarse-grid example")
+    rejected_proof = {"ln_ratio": 5.5, "primary_turns": 30, "secondary_turns": 4,
+        "fha_td_validity": rejected.fha_td_validity.value, "reject_reason": rejected.reject_reason,
+        "diagnostics": list(rejected.diagnostics), "apply_disabled": True, "project_unchanged": True}
+    # An independently integrated full-bridge case has ~13% Im deviation,
+    # leaving margin to the same 20% gate; no model threshold is waived.
+    config = OptimizationConfig((4.5,), (spec.q_full_load,), (spec.resonant_frequency_hz,),
+        (32,), (4,), (spec.primary_device,), (spec.sr_parallel_devices_per_position,))
+    view.config_text.setPlainText(json.dumps(asdict(config)))
     view.run_button.click()
     _wait_for_worker(lambda: not host._active_workers)
     _require(view.result is not None, view.status.text())
@@ -426,7 +445,8 @@ def _exercise_two_stage(host, directory):
     _require(verified_points == 1 and "仅名义" in view.table.item(0, 0).text(), "nominal scope is overstated")
     _require(host._spec_from_widgets() == spec, "selecting a candidate silently changed the project")
     view.apply_button.click()
-    _require(host.spec == host._spec_from_widgets() == candidate.spec and host.spec.ln_ratio == 5.5
+    _require(host.spec == host._spec_from_widgets() == candidate.spec and host.spec.ln_ratio == 4.5
+             and host.spec.primary_turns == 32 and host.spec.secondary_turns == 4
              and host.system_analysis is candidate.analysis, "Apply changed exact inputs or TD analysis")
     project, report = directory / "two-stage.json", directory / "two-stage.zip"
     # Redirect file destinations only; production methods, workers and solvers run unchanged.
@@ -448,12 +468,14 @@ def _exercise_two_stage(host, directory):
                  and provenance["selected_candidate"] == saved["candidates"][0], "TwoStage report selected another candidate")
     with patch.object(QFileDialog, "getOpenFileName", return_value=(str(project), "JSON")):
         host.load_json()
-    _require(host.spec.ln_ratio == 5.5 and view.result is None and not view.apply_button.isEnabled()
+    _require(host.spec.ln_ratio == 4.5 and host.spec.primary_turns == 32
+             and view.result is None and not view.apply_button.isEnabled()
              and not view.report_button.isEnabled() and "历史" in view.status.text(), "restored history authorizes stale Apply/report")
     return {"real_stage_a_and_b": True, "verification_scope": "nominal", "verified_td_points": verified_points,
         "fha_td_validity": candidate.fha_td_validity.value, "waveform_sha256": digest,
         "loss_source": nominal.semiconductor_source, "total_loss_w": candidate.total_loss_w,
         "selected_candidate": saved["candidates"][0], "applied_ln_ratio": host.spec.ln_ratio,
+        "applied_primary_turns": host.spec.primary_turns, "invalid_example": rejected_proof,
         "apply_exact": True, "project_roundtrip": True, "restored_history_requires_rerun": True,
         "report_consistency": True,
         "model_limit": "Nominal-point ideal TD losses only; remaining operating points and commutation retain FHA assumptions; no hardware qualification"}

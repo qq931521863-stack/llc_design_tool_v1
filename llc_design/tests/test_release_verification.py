@@ -36,14 +36,19 @@ def _completion_proof():
             "samples_per_branch": 800, "max_curve_absolute_error": 0.0,
             "project_roundtrip": True, "recomputed_waveforms_identical": True, "report_consistency": True,
             "mode": "CCM", "provenance": {"fixture": "schema only"}}
-    candidate_spec = {"fields": {"ln_ratio": 5.5}}
+    candidate_spec = {"fields": {"ln_ratio": 4.5, "primary_turns": 32, "secondary_turns": 4}}
     candidate = {"candidate_id": hashlib.sha256(json.dumps(candidate_spec, sort_keys=True).encode()).hexdigest(),
         "spec": candidate_spec, "rejected": False, "fha_td_validity": "WARN", "total_loss_w": 10.,
         "sources": [{"components": {"semiconductor_current": "TIME_DOMAIN_WAVEFORM"}, "waveform_sha256": "e" * 64}]}
     return {"power_stage_advanced": advanced,
         "two_stage_optimization": {"real_stage_a_and_b": True, "verification_scope": "nominal", "verified_td_points": 1,
             "fha_td_validity": "WARN", "waveform_sha256": "e" * 64, "loss_source": "TIME_DOMAIN_WAVEFORM",
-            "total_loss_w": 10., "selected_candidate": candidate, "applied_ln_ratio": 5.5,
+            "total_loss_w": 10., "selected_candidate": candidate, "applied_ln_ratio": 4.5,
+            "applied_primary_turns": 32,
+            "invalid_example": {"ln_ratio": 5.5, "primary_turns": 30, "secondary_turns": 4,
+                "fha_td_validity": "FAIL", "reject_reason": "FHA↔TD MODEL_VALIDITY FAIL",
+                "diagnostics": ["synthetic schema fixture; no physical evidence"],
+                "apply_disabled": True, "project_unchanged": True},
             "apply_exact": True, "project_roundtrip": True, "restored_history_requires_rerun": True,
             "report_consistency": True, "model_limit": "Nominal-point schema fixture; no physical evidence"}}
 

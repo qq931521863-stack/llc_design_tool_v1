@@ -70,7 +70,7 @@ def _exercise_desktop(width, height, output):
     assert screen.geometry().size().toTuple() == (width, height)
     assert screen.logicalDotsPerInch() == 96
     spec = LLCDesignSpec(primary_topology=PrimaryTopology.FULL_BRIDGE,
-        ln_ratio=5.5, vbus_hold_end_v=320., bus_capacitance_f=.0033)
+        ln_ratio=4.5, primary_turns=32, vbus_hold_end_v=320., bus_capacitance_f=.0033)
     window = module.LLCMainWindow(spec)
     window.show()
     QTest.qWait(50)

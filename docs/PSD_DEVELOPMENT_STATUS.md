@@ -1,5 +1,31 @@
 # Power Stage Designer development status
 
+## Native qualification corrections in progress (2026-10-19)
+
+The dependency-corrected main `c19e208466d51e09ab657c2c612d2dd6fa2857cb`
+passed Linux CI (4153 passed, one skipped, two historical xfails), but the first
+actual macOS test run failed: 16 failed, 4096 passed, 42 skipped, two xfails.
+No macOS frozen executable was produced. This invalidates treating the older
+Linux-only result as complete platform qualification. The red logs remain retained.
+
+Repairs now address fresh physical residual checks for stagnated PSD roots, a
+scale-relative PSFB BCM inverse boundary, native-font/frame LLC layouts, and a
+real switched-LLC integration error. The old fixed-grid RK4 map could report a
+tiny periodic residual while missing the continuous circuit orbit. Event-split
+adaptive Radau integration and independently resolved magnetizing-current extrema
+replace that map without changing the physical model or 20% FHA/TD rejection gate.
+An independently integrated Ln=5.5/Np=30 full-bridge case is correctly FAIL at
+20.92046%; it remains a real GUI/CLI/frozen negative test. The positive path uses
+independently checked Ln=4.5/Np=32/Ns=4, retains WARN and nominal-only TD scope,
+and exercises Apply, save/reopen, loss and report identity. Old optimization
+sessions are explicitly marked with a changed numerical-model revision.
+
+The numerical repair has separate DOP853 circuit/periodic/energy/flux/charge
+checks and actual full/half-bridge consumer acceptance. Full qualification of
+the integrated repair source, installed wheel and frozen application is still
+pending. Older green sections below describe their exact historical source;
+they do not qualify this changed application. Release/tag creation remains paused.
+
 ## Main push and native-CI correction (2026-10-19)
 
 Main was updated non-force to `21f5df4e7256c67d78add8cac16f3e5ea898977b`.

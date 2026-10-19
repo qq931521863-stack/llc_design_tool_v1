@@ -1,5 +1,22 @@
 # Power Stage Designer feature matrix
 
+## Native requalification notice (2026-10-19)
+
+The bounded feature domains below remain the implementation contract. Their
+older Linux pass counts do not establish current native qualification: actual
+macOS CI at `c19e208` failed 16 tests, including a real switched-LLC integration
+accuracy issue. The event-resolved repair changes application code, so the
+integrated source requires a fresh complete regression and frozen checks.
+T20/T21 and A03 now use event-split adaptive switched integration and continuous
+Im extrema for validity, with explicitly sampled waveform/passive statistics.
+The old Ln=5.5/Np=30 positive example is independently proven invalid and is
+retained as a rejection test; a separately verified positive case exercises
+real GUI/CLI Apply, save/reopen and reports. No 20% validity threshold, mandatory
+native test or publication guard is weakened. Independent full/half-bridge
+consumer evidence passes on the numerical repair; complete integrated and
+native qualification is pending. See the latest validation section for the
+red-to-green evidence and remaining platform gates.
+
 ## Latest application qualification and supported scope (2026-10-19)
 
 Application source `4f9f5b4513a62fa9c5effb1b4cad5beacf36daac` completed the

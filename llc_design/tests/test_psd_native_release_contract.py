@@ -57,6 +57,25 @@ def test_duplicate_design_identities_are_rejected():
         _validate(proof)
 
 
+@pytest.mark.parametrize("field,value", [
+    ("fha_td_validity", "WARN"), ("ln_ratio", 4.5), ("primary_turns", 32),
+    ("secondary_turns", 5), ("apply_disabled", False), ("project_unchanged", False),
+    ("reject_reason", "timeout"), ("diagnostics", []),
+])
+def test_frozen_proof_requires_actual_invalid_model_rejection(field, value):
+    proof = release._proof()
+    proof["two_stage_optimization"]["invalid_example"][field] = value
+    with pytest.raises(RuntimeError, match="report"):
+        _validate(proof)
+
+
+def test_frozen_proof_rejects_old_underresolved_positive_example():
+    proof = release._proof()
+    proof["two_stage_optimization"]["applied_ln_ratio"] = 5.5
+    with pytest.raises(RuntimeError, match="report"):
+        _validate(proof)
+
+
 def test_archive_gate_rejects_legacy_five_workspace_proof(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="report"):
         release._archive_gate(tmp_path, monkeypatch, proof_overrides={

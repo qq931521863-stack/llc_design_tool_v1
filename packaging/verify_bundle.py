@@ -134,11 +134,20 @@ def _validate_completion_report(report):
             or two_stage.get("loss_source") != "TIME_DOMAIN_WAVEFORM"
             or two_stage.get("fha_td_validity") not in ("PASS", "WARN")
             or not _hex_digest(two_stage.get("waveform_sha256"))
-            or type(two_stage.get("applied_ln_ratio")) not in (int, float) or two_stage["applied_ln_ratio"] != 5.5
+            or type(two_stage.get("applied_ln_ratio")) not in (int, float) or two_stage["applied_ln_ratio"] != 4.5
+            or type(two_stage.get("applied_primary_turns")) is not int or two_stage["applied_primary_turns"] != 32
             or any(two_stage.get(key) is not True for key in ("real_stage_a_and_b", "apply_exact",
                    "project_roundtrip", "restored_history_requires_rerun", "report_consistency"))
             or not isinstance(two_stage.get("model_limit"), str) or "Nominal-point" not in two_stage["model_limit"]):
         raise RuntimeError("packaged self-test report lacks genuine bounded TwoStage workflow evidence")
+    rejected = two_stage.get("invalid_example")
+    if (not isinstance(rejected, dict) or rejected.get("ln_ratio") != 5.5
+            or rejected.get("primary_turns") != 30 or rejected.get("secondary_turns") != 4
+            or rejected.get("fha_td_validity") != "FAIL"
+            or rejected.get("reject_reason") != "FHA↔TD MODEL_VALIDITY FAIL"
+            or rejected.get("apply_disabled") is not True or rejected.get("project_unchanged") is not True
+            or not isinstance(rejected.get("diagnostics"), list) or not rejected["diagnostics"]):
+        raise RuntimeError("packaged self-test report lacks rejected inaccurate-example evidence")
     loss = two_stage.get("total_loss_w")
     candidate = two_stage.get("selected_candidate")
     if (type(loss) not in (int, float) or not math.isfinite(loss) or loss <= 0
@@ -151,7 +160,9 @@ def _validate_completion_report(report):
         identity = hashlib.sha256(json.dumps(candidate["spec"], sort_keys=True, allow_nan=False).encode()).hexdigest()
         td_sources = [point for point in candidate["sources"]
                       if point["components"]["semiconductor_current"] == "TIME_DOMAIN_WAVEFORM"]
-        consistent = (candidate["spec"]["fields"]["ln_ratio"] == 5.5
+        consistent = (candidate["spec"]["fields"]["ln_ratio"] == 4.5
+                      and candidate["spec"]["fields"]["primary_turns"] == 32
+                      and candidate["spec"]["fields"]["secondary_turns"] == 4
                       and identity == candidate["candidate_id"] and len(td_sources) == 1
                       and td_sources[0]["waveform_sha256"] == two_stage["waveform_sha256"])
     except (KeyError, TypeError, ValueError) as exc:

@@ -1,5 +1,59 @@
 # Power Stage Designer validation report
 
+## Actual native failures and independently checked numerical repair (2026-10-19)
+
+[CI run 39227806648](https://github.com/yangshuai2022-star/power-design-toolkit/actions/runs/39227806648)
+at `c19e208466d51e09ab657c2c612d2dd6fa2857cb` passed Linux with **4153 passed,
+1 skipped, 2 historical xfails in 2809.89 s**. macOS failed with **16 failed,
+4096 passed, 42 skipped, 2 historical xfails in 2675.33 s**; its freeze steps
+were skipped. A successful Linux run does not supersede these native failures.
+
+The failures separate into five stagnated independent PSD roots, two PSFB BCM
+inverse-boundary cases, two desktop layout cases, five consumers of an invalid
+TwoStage example, and two switched-LLC convergence cases. Repairs retain the
+original physical acceptance bounds:
+
+- PSD roots require freshly recomputed charge/state residuals plus admissible
+  intervals, diode conditions and power balance. Cached optimizer residuals or
+  its success flag alone cannot accept a result. The PSFB inverse branch uses
+  relative roundoff tolerance without an absolute-amp floor. Independent
+  perturbation/scaling and deliberately bad-root cases cover both changes.
+- The LLC solver now splits every bridge event, integrates the stiff smoothed
+  rectifier with adaptive Radau and freshly checks the physical periodic defect.
+  The previous 512-grid map reported 1.82e-12 while independent DOP853 reintegration
+  found a 0.005685 normalized defect. This was an integration-accuracy bug, not
+  a harmless platform-specific status difference.
+- Continuous derivative-zero Im extrema now drive the FHA/TD Im-peak validity
+  metric. Uniform plotted/stored samples and their statistics remain labeled
+  as samples. The original Ln=5.5/Np=30/Ns=4 full-bridge example has continuous
+  Im=7.52881290784 A and a **20.92046% FAIL**, consistently at 128/256/512 samples;
+  the 20% gate is unchanged. Real GUI/CLI and frozen checks retain this rejection
+  and cannot Apply/export it as an accepted candidate.
+- Separate DOP853 equations, unrestricted periodic-root checks, KVL/KCL and
+  integrated energy/volt-second/charge balances validate the revised orbit.
+  On numerical commit `58ba89b4e5f053c408bd328849f5d44d8116f0eb`, real TwoStage
+  full-bridge Np32 and half-bridge Np16 (Ln=4.5, Ns=4, hold-up=320 V,
+  Cbus=0.0033 F) both retain WARN. Six metrics agree with the independent
+  references within 0.00836% relative difference; Im differs by 0.0000144%.
+  TD loss/report waveform SHA agrees, and only one of seven workpoints is TD.
+- For the original negative example, sampled Im/B peak underestimation is
+  0.77660%/0.18188%/0.18188%/0.03544% at 128/256/512/1024 points; sampled
+  capacitor-loss quadrature errors were separately measured. These case-specific
+  figures are not a universal passive-loss accuracy guarantee. Higher sampling
+  remains necessary where the requested waveform/loss accuracy requires it.
+- Native-size GUI fixes stack dock actions, wrap the transformer subtitle and
+  bound long diagnostics with scrolling. The unchanged three desktop workflows
+  and atomic-load/ownership set pass 57 checks on `f0772047ca0da86ff15d68bd0e9d0d03bb65cb07`.
+  Reverting each constraint reproduces overflow. At forced 12 pt/1280x720 all
+  waveform portions are scroll-reachable, though one full plot exceeds the
+  viewport height; native display qualification is still separate.
+
+The first local compatibility preflight stopped solely because that new venv
+lacked setuptools/wheel. Its red log is retained; installing the same explicit
+build prerequisites as CI fixes the environment without changing a test.
+The integrated-source full regression and native frozen proofs remain pending.
+Previous qualifications below remain historical, not proof for the new solver.
+
 ## Pushed-source CI dependency correction (2026-10-19)
 
 The first actual main workflow at `21f5df4e7256c67d78add8cac16f3e5ea898977b`

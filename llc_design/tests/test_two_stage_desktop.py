@@ -260,8 +260,9 @@ def test_report_discards_late_output_on_input_edit(window, tmp_path, monkeypatch
 def test_real_nominal_solver_button_apply_save_report_and_restore(tmp_path, monkeypatch):
     """Unsubstituted physical Stage A/B, actual worker signals and GUI actions.
 
-    Ln=5.5 is WARN at nominal under the standard FHA/TD thresholds; the critical
-    full-load/light-load scope is not inferred from this one-point evidence.
+    The original Ln=5.5/Np=30 case must be rejected by the unchanged 20% gate.
+    Independent event-split integration puts Ln=4.5/Np=32 inside that gate.
+    Critical/light-load scope is not inferred from this one-point evidence.
     """
     import time
     widgets = pytest.importorskip("PySide6.QtWidgets")
@@ -271,8 +272,7 @@ def test_real_nominal_solver_button_apply_save_report_and_restore(tmp_path, monk
     global _APP
     app = _APP = widgets.QApplication.instance() or widgets.QApplication([])
     monkeypatch.setattr(main.LLCMainWindow, "_auto_check_update", lambda self: None)
-    # Explicit 320 V hold-up endpoint and 3.3 mF bus capacitor support
-    # Ln=5.5's attainable gain; no failed constraint is waived.
+    # Explicit hold-up inputs; neither envelope nor model gates are waived.
     host = main.LLCMainWindow(LLCDesignSpec(vbus_hold_end_v=320., bus_capacitance_f=0.0033))
     view = host.two_stage_optimization_view
     view.config_text.setPlainText(json.dumps(asdict(config(host.spec, (5.5,)))))
@@ -291,6 +291,16 @@ def test_real_nominal_solver_button_apply_save_report_and_restore(tmp_path, monk
         assert not errors
     try:
         view.run_button.click(); wait()
+        assert view.result is not None and len(view.result.verified) == 1
+        rejected = view.result.verified[0]
+        assert rejected.rejected and rejected.fha_td_validity == model.ModelValidity.FAIL
+        assert rejected.reject_reason == "FHA↔TD MODEL_VALIDITY FAIL"
+        assert view.selected_candidate() is None
+        assert not view.apply_button.isEnabled() and not view.report_button.isEnabled()
+        assert host.spec.ln_ratio == 5.0 and host.spec.primary_turns == 30
+        positive = replace(config(host.spec, (4.5,)), primary_turn_values=(32,))
+        view.config_text.setPlainText(json.dumps(asdict(positive)))
+        view.run_button.click(); wait()
         assert view.result is not None
         candidate = view.selected_candidate()
         assert candidate is not None, [(c.reject_reason, c.diagnostics) for c in view.result.verified]
@@ -300,7 +310,8 @@ def test_real_nominal_solver_button_apply_save_report_and_restore(tmp_path, monk
         assert sum(p.semiconductor_source == "TIME_DOMAIN_WAVEFORM" for p in candidate.analysis.operating_points) == 1
         assert "仅名义" in view.table.item(0, 0).text()
         view.apply_button.click()
-        assert host.spec.ln_ratio == 5.5 and host.system_analysis is candidate.analysis
+        assert host.spec.ln_ratio == 4.5 and host.spec.primary_turns == 32
+        assert host.system_analysis is candidate.analysis
         host.save_json()
         saved = load_project(project, include_optimization=True)[-1]
         assert saved["request"]["verification_scope"] == "nominal"
@@ -312,7 +323,7 @@ def test_real_nominal_solver_button_apply_save_report_and_restore(tmp_path, monk
             provenance = json.loads(archive.read("optimization_provenance.json"))
             assert provenance["request"]["verification_scope"] == "nominal"
         host.load_json()
-        assert host.spec.ln_ratio == 5.5 and view.result is None
+        assert host.spec.ln_ratio == 4.5 and host.spec.primary_turns == 32 and view.result is None
         assert not view.apply_button.isEnabled() and not view.report_button.isEnabled()
     finally:
         host.close()
@@ -330,7 +341,7 @@ def test_historical_replay_retains_exact_base_and_nondefault_solver_settings(win
     view.table.selectRow(1); host.apply_two_stage_candidate()
     session = capture_two_stage_session(host)
     session["request"]["time_domain"]["samples_per_cycle"] = 512
-    session["model_revision"] = "older-model-revision"
+    session["model_revision"] = "llc-two-stage-td-loss-v1"
     restore_two_stage_session(host, session)
     assert "模型版本已改变" in view.status.text()
     assert not view.apply_button.isEnabled()
@@ -472,7 +483,8 @@ def test_real_cli_two_stage_nominal_report_uses_actual_solver(tmp_path):
     from llc_design.__main__ import cli
     from llc_design.core.config import save_spec
     source = tmp_path / "nominal-source.json"
-    save_spec(LLCDesignSpec(ln_ratio=5.5, vbus_hold_end_v=320., bus_capacitance_f=.0033), source)
+    save_spec(LLCDesignSpec(ln_ratio=4.5, primary_turns=32,
+        vbus_hold_end_v=320., bus_capacitance_f=.0033), source)
     output = tmp_path / "cli-result"
     result = CliRunner().invoke(cli, ["optimize", "--config", str(source), "--profile", "current",
         "--two-stage", "--verification-scope", "nominal", "--max-candidates", "1", "--top-n", "1",
@@ -490,6 +502,27 @@ def test_real_cli_two_stage_nominal_report_uses_actual_solver(tmp_path):
     assert (output / "selected_candidate" / "optimization_provenance.json").exists()
     table = pd.read_csv(output / "two_stage_candidates.csv")
     assert table.iloc[0]["td_scope_worst_loss_w"] == pytest.approx(td[0]["total_loss_w"])
+    assert not (output / "best_design").exists()
+
+
+def test_real_cli_rejects_original_underresolved_example(tmp_path):
+    from click.testing import CliRunner
+    from llc_design.__main__ import cli
+    from llc_design.core.config import save_spec
+    source = tmp_path / "invalid-model-source.json"
+    save_spec(LLCDesignSpec(ln_ratio=5.5, primary_turns=30,
+        vbus_hold_end_v=320., bus_capacitance_f=.0033), source)
+    output = tmp_path / "rejected-cli-result"
+    result = CliRunner().invoke(cli, ["optimize", "--config", str(source), "--profile", "current",
+        "--two-stage", "--verification-scope", "nominal", "--max-candidates", "1", "--top-n", "1",
+        "--candidate-rank", "1", "--output", str(output)])
+    assert result.exit_code != 0 and "No verified candidate" in result.output
+    evidence = json.loads((output / "two_stage_verification.json").read_text(encoding="utf-8"))
+    assert evidence["selected_candidate_id"] is None and len(evidence["candidates"]) == 1
+    rejected = evidence["candidates"][0]
+    assert rejected["rejected"] and rejected["fha_td_validity"] == "FAIL"
+    assert rejected["reject_reason"] == "FHA↔TD MODEL_VALIDITY FAIL"
+    assert not (output / "selected_candidate").exists()
     assert not (output / "best_design").exists()
 
 
