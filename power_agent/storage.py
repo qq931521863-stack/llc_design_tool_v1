@@ -23,6 +23,9 @@ SCHEMA = "power-design-toolkit/agent-design-v1"
 MAX_BYTES = 8_000_000
 _PACKAGES = ("llc_design", "power_agent", "webapp", "power_control_tools", "power_codegen",
              "power_sim", "engineering_data", "power_stage_design", "pfc_design", "dab_design", "backend")
+_DATA_DIRECTORIES = (Path("engineering_data"), Path("llc_design/data"), Path("pfc_design/data"))
+_BASELINE_DATA = Path("llc_design/examples/baseline_400V_53V_3kW.json")
+_NON_RUNTIME_DIRECTORIES = {"tests", "__pycache__", "output", "cache", "artifacts", "build", "dist"}
 
 
 def json_value(value: Any) -> Any:
@@ -55,14 +58,28 @@ def digest(value: Any) -> str:
 
 
 def runtime_identity() -> dict:
+    """Hash production modules and maintained data, in source or an installed wheel.
+
+    Test trees, hidden caches and generated-output directories are not runtime
+    inputs. JSON is input data only in the catalog directories (plus the LLC
+    validation baseline); project snapshots/reports elsewhere are outputs.
+    Re-enumerate on every check so additions and deletions also invalidate.
+    """
     root = Path(__file__).resolve().parent.parent
     hashes = {"source_sha256": hashlib.sha256(), "data_sha256": hashlib.sha256()}
     for package in _PACKAGES:
         for path in sorted((root / package).rglob("*")):
             if path.suffix not in (".py", ".json") or not path.is_file():
                 continue
+            relative = path.relative_to(root)
+            if any(part.startswith(".") or part in _NON_RUNTIME_DIRECTORIES
+                   for part in relative.parts[:-1]):
+                continue
+            if (path.suffix == ".json" and relative != _BASELINE_DATA
+                    and not any(relative.is_relative_to(directory) for directory in _DATA_DIRECTORIES)):
+                continue
             name = "data_sha256" if path.suffix == ".json" else "source_sha256"
-            hashes[name].update(str(path.relative_to(root)).encode() + b"\0")
+            hashes[name].update(str(relative).encode() + b"\0")
             hashes[name].update(hashlib.sha256(path.read_bytes()).digest())
     versions = {}
     for package in ("numpy", "scipy", "pandas", "pydantic", "mcp"):
