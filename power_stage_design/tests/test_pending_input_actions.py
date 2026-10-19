@@ -8,12 +8,13 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
-from PySide6.QtCore import QCoreApplication, QEvent, QLocale, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QLocale, Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -56,9 +57,64 @@ def click(window, label):
 
 def settle(window, seconds=20):
     deadline = time.monotonic() + seconds
-    while (window._jobs or window._timer.isActive() or window._loop_timer.isActive()) and time.monotonic() < deadline:
-        QTest.qWait(10)
+    loop = QEventLoop()
+    timer = QTimer()
+    timer.setSingleShot(True)
+    timer.timeout.connect(loop.quit)
+    # QTest.qWait repeatedly holds the binding's GIL during its sleep. Let the
+    # real Qt event loop schedule Python workers and their queued completion.
+    try:
+        while (window._jobs or window._timer.isActive() or window._loop_timer.isActive()) and time.monotonic() < deadline:
+            timer.start(10)
+            loop.exec()
+    finally:
+        timer.stop()
     assert not window._jobs and not window._timer.isActive() and not window._loop_timer.isActive()
+
+
+def test_settle_processes_queued_completion_and_both_timers():
+    app = QApplication.instance() or QApplication([])
+    window = SimpleNamespace(_jobs={"pending": object()}, _timer=QTimer(), _loop_timer=QTimer())
+    completed = []
+
+    def complete():
+        completed.append(window._jobs.pop("pending"))
+
+    window._timer.setSingleShot(True)
+    window._loop_timer.setSingleShot(True)
+    window._timer.timeout.connect(complete)
+    window._timer.start(10)
+    window._loop_timer.start(20)
+    try:
+        settle(window)
+        assert len(completed) == 1
+        assert not window._jobs and not window._timer.isActive() and not window._loop_timer.isActive()
+        app.processEvents()
+        assert len(completed) == 1
+    finally:
+        window._timer.stop()
+        window._loop_timer.stop()
+
+
+@pytest.mark.parametrize("pending_kind", ["job", "stage_timer", "loop_timer"])
+def test_settle_rejects_never_complete_work_at_original_deadline(pending_kind):
+    app = QApplication.instance() or QApplication([])
+    window = SimpleNamespace(_jobs={}, _timer=QTimer(), _loop_timer=QTimer())
+    if pending_kind == "job":
+        window._jobs["pending"] = object()
+    else:
+        timer = window._timer if pending_kind == "stage_timer" else window._loop_timer
+        timer.start(10)
+    started = time.monotonic()
+    try:
+        with pytest.raises(AssertionError):
+            settle(window, seconds=.03)
+        assert time.monotonic() - started >= .03
+        assert window._jobs or window._timer.isActive() or window._loop_timer.isActive()
+        app.processEvents()
+    finally:
+        window._timer.stop()
+        window._loop_timer.stop()
 
 
 def test_recalculate_commits_pending_keyboard_input(desktop):
@@ -118,6 +174,7 @@ def test_real_file_dialog_chooser_activates_first_window(tmp_path):
     script = """
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QFileDialog
 from power_stage_design.tests.test_pending_input_actions import choose_file
