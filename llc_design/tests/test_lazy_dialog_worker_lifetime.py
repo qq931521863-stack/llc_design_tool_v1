@@ -311,7 +311,7 @@ def test_pfc_owner_disposal_drains_owned_job_and_preserves_unrelated_global_job(
     unrelated = FunctionWorker(unrelated_calculation)
     unrelated.setAutoDelete(True)
     global_pool = QThreadPool.globalInstance()
-    global_pool.start(unrelated)
+    unrelated.start(global_pool)
     try:
         assert owned_started.wait(5) and unrelated_started.wait(5)
         assert not pfc_window.close()

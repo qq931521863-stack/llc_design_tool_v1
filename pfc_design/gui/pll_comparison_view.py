@@ -157,7 +157,7 @@ class PLLComparisonView(QWidget):
         worker.signals.finished.connect(lambda: self._finished(worker))
         self.run_button.setEnabled(False)
         self.status.setText("正在计算三种 PLL…")
-        QThreadPool.globalInstance().start(worker)
+        worker.start(QThreadPool.globalInstance())
 
     def _finished(self, worker):
         if self._worker is not worker:

@@ -281,7 +281,7 @@ def test_final_owner_disposal_preserves_unrelated_global_job(desktop_qapp, produ
 
     unrelated = FunctionWorker(unrelated_calculation)
     pool = QThreadPool.globalInstance()
-    pool.start(unrelated)
+    unrelated.start(pool)
     try:
         assert started.wait(5)
         dispose_widgets([producer.owner])

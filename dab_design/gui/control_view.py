@@ -193,7 +193,7 @@ class DABControlView(QWidget):
         worker.signals.error.connect(lambda error: self.status.setText("分析失败：" + error) if current() else None)
         worker.signals.finished.connect(lambda: self._finished(worker))
         self.status.setText("正在计算…")
-        QThreadPool.globalInstance().start(worker)
+        worker.start(QThreadPool.globalInstance())
 
     def _finished(self, worker):
         if self._worker is not worker:

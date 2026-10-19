@@ -358,7 +358,7 @@ class PowerStageMainWindow(QMainWindow):
             worker.signals.error.connect(self._background_error)
             worker.signals.finished.connect(lambda:self._release_job(key,event))
             self.status.setText("正在求解周期工作点…修改输入或关闭窗口会取消旧计算。")
-            self._pool.start(worker);return
+            worker.start(self._pool);return
         try:
             result=calculate_stage(inputs)
         except (ValueError,TypeError,ArithmeticError) as exc:
@@ -548,7 +548,7 @@ class PowerStageMainWindow(QMainWindow):
         worker.signals.error.connect(lambda message,token=token:self._parameter_proposal_error(token,message) if self._job_current(key,worker) else None)
         worker.signals.finished.connect(lambda:self._release_job(key,event))
         self.suggestion_output.setPlainText("正在计算并验算实际纹波、占空比和有效域…输入改变或取消后将丢弃旧建议。")
-        self._pool.start(worker)
+        worker.start(self._pool)
 
     def _parameter_proposal_error(self,token,message):
         if not self._closing and token==self._suggestion_generation:
@@ -767,7 +767,7 @@ class PowerStageMainWindow(QMainWindow):
         worker.signals.error.connect(self._synthesis_error)
         worker.signals.finished.connect(lambda gen=generation,event=cancel:self._release_job(gen,event))
         self.loop_status.setText("正在搜索并验算实际元件…可继续修改输入或取消。")
-        self._pool.start(worker)
+        worker.start(self._pool)
 
     def _job_current(self,key,worker):
         return isValid(self) and not self._closing and self._jobs.get(key) is worker
@@ -871,7 +871,7 @@ class PowerStageMainWindow(QMainWindow):
         worker.signals.result.connect(lambda payload:self._on_corners(payload) if self._job_current(job_key,worker) else None)
         worker.signals.error.connect(self._background_error)
         worker.signals.finished.connect(lambda:self._release_job(job_key,event))
-        self.corner_status.setText("正在计算所列工况…");self._pool.start(worker)
+        self.corner_status.setText("正在计算所列工况…");worker.start(self._pool)
 
     def _on_corners(self,payload):
         token,result,error=payload
@@ -1006,7 +1006,7 @@ class PowerStageMainWindow(QMainWindow):
         worker.signals.error.connect(lambda message,token=token:self._project_save_error(token,message) if self._job_current(key,worker) else None)
         worker.signals.finished.connect(lambda:self._release_job(key,event))
         self.status.setText("正在校验保存快照…输入改变后旧快照不会写入文件。")
-        self._pool.start(worker)
+        worker.start(self._pool)
 
     def _project_save_error(self,token,message):
         if not self._closing and token==(self._generation,self._loop_generation,self._sweep_generation):
@@ -1045,7 +1045,7 @@ class PowerStageMainWindow(QMainWindow):
         worker.signals.result.connect(lambda payload:self._on_project_opened(payload) if self._job_current(key,worker) else None);worker.signals.error.connect(self._background_error)
         worker.signals.finished.connect(lambda:self._release_job(key,event))
         self.status.setText("正在校验并重算项目；校验成功后替换当前设计。")
-        self._pool.start(worker)
+        worker.start(self._pool)
 
     def _on_project_opened(self,payload):
         token,value,error=payload

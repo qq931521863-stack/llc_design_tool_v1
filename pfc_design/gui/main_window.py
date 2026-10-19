@@ -326,7 +326,7 @@ class PFCMainWindow(QMainWindow):
         worker.signals.error.connect(
             lambda error: self._worker_error(error) if current() else None)
         worker.signals.finished.connect(lambda: self._worker_finished(worker, request_id))
-        self.thread_pool.start(worker)
+        worker.start(self.thread_pool)
 
     def _worker_finished(self, worker, request_id):
         if worker not in self._active_workers:

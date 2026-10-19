@@ -677,7 +677,7 @@ class ToolBoxWidget(QWidget):
             self._workers.append(worker)
             worker.signals.result.connect(lambda payload: self._async_ready(payload) if self._worker_current(worker) else None)
             worker.signals.finished.connect(lambda: self._release_worker(worker))
-            self._pool.start(worker)
+            worker.start(self._pool)
             return None
         try:
             return self._apply_result(compute())
@@ -997,7 +997,7 @@ class ToolBoxWidget(QWidget):
         self._workers.append(worker)
         worker.signals.result.connect(lambda payload: self._restore_ready(payload) if self._worker_current(worker) else None)
         worker.signals.finished.connect(lambda: self._release_worker(worker))
-        self._pool.start(worker)
+        worker.start(self._pool)
 
     def _restore_ready(self, payload):
         generation, prepared, computed, error = payload

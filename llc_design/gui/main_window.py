@@ -1190,7 +1190,7 @@ class LLCMainWindow(QMainWindow):
             worker.signals.finished.disconnect()
             worker.signals.deleteLater()
         worker.signals.finished.connect(finished)
-        self.thread_pool.start(worker)
+        worker.start(self.thread_pool)
 
     def _worker_error(self, error: str) -> None:
         self._append_log(error)

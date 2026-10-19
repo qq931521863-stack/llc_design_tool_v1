@@ -422,7 +422,7 @@ def test_owned_disposal_does_not_wait_for_unrelated_global_pool_work(tmp_path):
         unrelated.setCentralWidget(unrelated_plot)
         unrelated_plot.plot([0, 1], [2, 3])
         worker = FunctionWorker(unrelated_calculation)
-        QThreadPool.globalInstance().start(worker)
+        worker.start(QThreadPool.globalInstance())
         assert started.wait(5)
         owner = llc_module.LLCMainWindow()
         graphics = owner.waveform_view.graphics

@@ -205,7 +205,7 @@ class ThreePhaseDQView(QWidget):
         worker.signals.result.connect(lambda result: self.set_result(result) if current() else None)
         worker.signals.error.connect(lambda error: self._error(error) if current() else None)
         worker.signals.finished.connect(lambda: self._finished(worker))
-        QThreadPool.globalInstance().start(worker)
+        worker.start(QThreadPool.globalInstance())
 
     def _finished(self, worker):
         if self._worker is not worker:
