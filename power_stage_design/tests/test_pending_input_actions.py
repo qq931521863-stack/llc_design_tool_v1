@@ -155,7 +155,7 @@ assert Path(path) == Path(sys.argv[1]), (path, sys.argv[1])
 """
     completed = subprocess.run(
         [sys.executable, "-c", script, str(tmp_path / "pending.json")],
-        capture_output=True, text=True, timeout=20, check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20, check=False,
         env={**os.environ, "XDG_CONFIG_HOME": str(tmp_path), "XDG_CACHE_HOME": str(tmp_path)},
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr

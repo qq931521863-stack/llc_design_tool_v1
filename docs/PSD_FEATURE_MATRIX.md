@@ -1,5 +1,24 @@
 # Power Stage Designer feature matrix
 
+## Latest software qualification boundary (2026-10-19)
+
+The bounded capabilities below now have completed local qualification on clean
+`6138f0f` (identical application/tree to remote `02c2ca3`): 4512 full-suite passes,
+two separately passing opt-in long consumers, independent LLC/magnetics checks,
+actual installed-wheel and Linux frozen schema-4 runtime proofs. The installed
+wheel passes 268 focused desktop/renderer/export and 76 MCP tests; these overlap
+the full-suite scope and are not an aggregate. All 793 source hashes stayed fixed.
+
+The same-tree GitHub run still failed one real-dialog save test. Two independent
+product-free Qt reproductions show that unfocused automated filename keystrokes
+left directory rows selected; Accept navigated rather than saving. Current input
+identity was already correct. Its state-driven real-focus/button test correction passes 97 focused checks,
+including a cold-start red-to-green regression; native Windows/macOS qualification
+remains pending. The original CI had no focus telemetry, so this reproduced
+mechanism is not a retrospective proof of its precise unrecorded widget state. This
+qualification does not expand any T/X/L/C/A physical domain, establish TI executable
+equivalence, supply missing measured data, or authorize a release.
+
 ## Runtime identity and qualification update (2026-10-19)
 
 The preserved LLC/MCP workflow exposed a full-suite ordering defect: a generated

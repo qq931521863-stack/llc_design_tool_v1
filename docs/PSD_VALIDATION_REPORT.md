@@ -1,5 +1,57 @@
 # Power Stage Designer validation report
 
+## Completed Linux application qualification and retained CI red (2026-10-19)
+
+Clean local source `6138f0fd36f07539f78ed208ca4cdee5ce2f136d` has the identical
+793-file tree as remote `02c2ca3af21115292b6b8185815a4cd63c63f2db`
+(`d16ac697133ef76a99f6ae255f255a0a4ff6bc48`). Its complete local suite passes
+**4512 tests, with 2 opt-in skips and 2 historical expected failures**, zero errors,
+in 4059.551 s. All tracked hashes stayed unchanged; final GUI/native plot ownership
+counts were zero. Aggregate RSS peaked at 1,892,100 KiB. Both skipped long consumers
+were then run separately on that same source: real PFC **1 passed / 848.201 s** and
+finite-Coss PSFB **1 passed / 533.346 s**, again with unchanged hashes and clean
+final GUI ownership. Independent actual LLC and all five integrated-magnetics
+consumer scripts also pass on this exact source.
+
+The isolated, non-editable installed wheel passes the actual production schema-4
+self-test, **268 installed drawing/desktop/numerical/export tests**, all **76 MCP
+tests**, and both public built-in LLC validation APIs. All six software baseline
+checks pass while hardware verification stays false/UNKNOWN. All 626 wheel source
+files match the archive; 62 imported application module origins are inside that
+wheel installation. The actual PyInstaller Linux executable passes the same
+schema-4 runtime gates and source/resource collection checks outside the checkout.
+The real default seventh-order harmonic-balance result, cancel and timeout paths
+finish with zero active workers/threads; the invalid TwoStage example remains
+rejected without altering the project. These selections overlap and are not added
+to the full-suite total.
+
+- Wheel SHA-256: `395fd92bffaa54837be6c77dae026f86a1737f7e26ec73d8f72319157340d936`
+- Linux executable SHA-256: `9ee918c6e839f64557875a811b7ac8dd0cf2262cb584ff237929d93bf6d5bae6`
+- Linux runtime proof SHA-256: `0dd6263831899e876d3525969ecb128d416727e09d240547a4fbcca38c4482c0`
+
+The separate GitHub run [39289989355](https://github.com/yangshuai2022-star/power-design-toolkit/actions/runs/39289989355)
+remains a **failed** run: 1 failed, 4512 passed, 1 skipped and 2 expected failures.
+Its only failure was the first real file-dialog Save Project test: the 24 V current
+result was correct, but no project was written. Two independent, product-free Qt
+reproductions demonstrate a sufficient automation failure mechanism: key events were sent to a filename
+editor without focus; QFileDialog retained selected parent directories, so Accept
+navigated instead of saving, and the watchdog canceled the dialog. Real focused
+Save-button paths write the exact requested file; cancellation and failed writes
+retain their explicit guards. This red result is not erased by the local passes.
+The original CI did not capture focus or selected-file telemetry, so its exact
+unrecorded widget state cannot be proved retrospectively. The test-only correction
+now waits for window activation, clicks the filename field, asserts focus and the
+exact selected file, and clicks the actual Save button. Acceptance/rejection and
+watchdog outcomes are explicit; no filesystem/dialog mock, retry, enlarged watchdog
+or weakened output assertion was introduced. A new fresh-process cold-start test
+is red with the old driver and green with the corrected driver. All **97** pending-
+input/modal-ownership checks pass locally. Independent acceptance adds 15 state
+scenarios and six real save/open/HTML/CSV dialog roundtrips, including changed-input
+identity and failed-write/cancel counterexamples; the integrated test file passes
+27 checks. Subprocess diagnostics use explicit UTF-8 decoding without changing
+exit-code assertions. The new native CI result is still pending.
+Windows/macOS frozen packages remain unqualified; publication remains paused.
+
 ## Preserved MCP workflow: runtime-cache identity repair (2026-10-19)
 
 The concurrent `54486b6` LLC/MCP workflow was preserved, including its two README

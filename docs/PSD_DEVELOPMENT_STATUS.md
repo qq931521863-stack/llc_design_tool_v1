@@ -1,5 +1,27 @@
 # Power Stage Designer development status
 
+## Latest completed local qualification (2026-10-19)
+
+Source `6138f0fd36f07539f78ed208ca4cdee5ce2f136d`, identical tree to main
+`02c2ca3af21115292b6b8185815a4cd63c63f2db`, completed all seven local stages:
+independent actual LLC consumers, five integrated-magnetics checks, full regression
+(**4512 passed / 2 opt-in skips / 2 historical xfails**), the two separately passing
+long PFC and PSFB consumers, isolated installed-wheel/actual Linux frozen runtime,
+and final artifact provenance. All 793 tracked hashes stayed unchanged.
+The installed wheel additionally passes 268 desktop/renderer/export checks and
+76 MCP tests. Hardware UNKNOWN and physical model limitations remain intact.
+
+The same-tree GitHub run retained one failed first-dialog save test, with 4512
+passes. Independent product-free Qt probes reproduce unfocused automated keyboard
+input selecting directories rather than the requested file. The actual 24 V result
+was already correct; normal focused save, reopen, cancellation, changed-input
+rejection and visible failed-write paths were separately checked. A test-only
+state-driven real-dialog correction passes 97 focused checks; no application source is
+changed to conceal this failure. Only the test file and qualification documentation change; exact application-file
+identity is checked before reusing the completed source/artifact evidence. The full
+run remains attributed to 6138f0f, not relabeled as a new full run. Windows/macOS native packages and the new CI result remain
+open; release/tag publication is still paused.
+
 ## Preserved MCP workflow: runtime-cache identity repair (2026-10-19)
 
 The concurrent `54486b6` LLC/MCP workflow was preserved, including its two README
