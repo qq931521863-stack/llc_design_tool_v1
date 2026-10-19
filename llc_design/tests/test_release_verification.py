@@ -135,9 +135,61 @@ def _magnetic_proof():
             "Lpfc_min_uH": 197.955, "engineering_cautions": ["Schema-only fixture: 不作为真实求解器正确性基准"]}}
 
 
+def _integrated_proof():
+    """Synthetic schema-only data; no solver/GUI/artifact acceptance is implied."""
+    import hashlib
+    spec = {"magnetics_mode": "INTEGRATED", "integrated_inductance_source": "INDUCTANCE_MATRIX",
+        "integrated_characterized_core": "PQ50_REF", "transformer_winding_layout": "P/2-S-P/2",
+        "integrated_measurement_note": "Synthetic two-leakage artifact QA model; NOT a hardware measurement",
+        "primary_turns": 30, "secondary_turns": 4, "integrated_characterized_primary_turns": 30,
+        "integrated_characterized_secondary_turns": 4, "integrated_lp_h": 303.5e-6,
+        "integrated_ls_h": 303.5e-6/7.5**2, "integrated_mutual_h": 300e-6/7.5,
+        "integrated_interwinding_gap_m": .0010325249820337418, "vbus_nom_v": 400., "pout_w": 3000.}
+    identity = hashlib.sha256(json.dumps(spec, sort_keys=True, allow_nan=False).encode()).hexdigest()
+    gap, primary, secondary = .0010325249820337418, .002022599587389726, .00543557306504609
+    regions = []
+    for kind, thickness, mlt, start, end in (
+        ("primary", primary, .116, 0, 14), ("interlayer insulation", .00005, .116, 14, 14),
+        ("primary", primary, .116, 14, 15), ("P-S insulation", gap, .11, 15, 15),
+        ("secondary", secondary, .104, 15, -15), ("P-S insulation", gap, .11, -15, -15),
+        ("primary", primary, .116, -15, -1), ("interlayer insulation", .00005, .116, -1, -1),
+        ("primary", primary, .116, -1, 0)):
+        regions.append({"kind": kind, "thickness_m": thickness, "mean_turn_length_m": mlt,
+            "mmf_start_a_turn": start, "mmf_end_a_turn": end,
+            "inductance_h": 4*math.pi*1e-7*mlt*thickness/.032*(start**2+start*end+end**2)/3})
+    return {"fixture": "schema-only; never physical or executable qualification",
+        "scope": "Synthetic characterization; FHA GUI/report QA, not hardware or full-envelope qualification",
+        "modules": {"llc_design.core.integrated_magnetics": "/schema-only/core/integrated_magnetics.py",
+                    "llc_design.magnetics.leakage_geometry": "/schema-only/magnetics/leakage_geometry.py"},
+        "golden": {"lr_h": 36e-6, "lm_h": 64e-6, "effective_turns_ratio": 1.6, "physical_magnetizing_h": 80e-6,
+                   "primary_leakage_h": 20e-6, "secondary_leakage_h": 5e-6, "physical_current_a": 1.4, "flux_density_t": .056},
+        "geometry_counterexample": {"reachable": False, "required_interwinding_gap_m": .0014,
+            "required_radial_build_m": .0048, "available_window_height_m": .003,
+            "balanced_geometry_h": 2.178170906488923e-6},
+        "spec": spec, "spec_identity": identity, "core": "PQ50_REF",
+        "electrical": {"lr_h": 6.9596375617793165e-6, "lm_h": .0002965403624382207,
+            "effective_turns_ratio": 7.413509060955519, "physical_turns_ratio": 7.5,
+            "physical_magnetizing_h": .0003, "primary_leakage_h": 3.5e-6, "secondary_leakage_h": 3.5e-6/7.5**2},
+        "geometry": {"reachable": True, "status": "MODEL_REACHABLE_REQUIRES_CHARACTERIZATION",
+            "balanced_geometry_h": 7e-6, "characterized_balanced_h": 7e-6,
+            "configured_interwinding_gap_m": gap, "required_interwinding_gap_m": gap,
+            "radial_build_m": .015691021378672478, "required_radial_build_m": .015691021378672478,
+            "available_window_height_m": .017, "minimum_insulation_m": .0002, "relative_error": 0.,
+            "geometry_apr_lr_lower_h": 300e-6*7e-6/(300e-6+7e-6), "geometry_apr_lr_upper_h": 7e-6,
+            "regions": regions, "notes": ["schema-only; one-dimensional geometry does not certify hardware"]},
+        "external_resonant_inductor_present": False, "external_resonant_inductor_loss_w": 0.,
+        "solved_points": 4, "nominal_frequency_hz": 127759.39831780495, "nominal_loss_w": 60.,
+        "loss_source": "FHA_OPERATING_POINT", "is_hardware_validated": False, "all_conditions_feasible": False,
+        "feasible": False, "feasibility_reasons": ["Schema-only fixture retains unsolved envelope points"],
+        "warnings": ["Schema-only fixture, not hardware qualification"], "gui_run_design": True,
+        "project_roundtrip": True, "recomputed_analysis_identical": True, "stale_consumers_cleared": True,
+        "report_consistency": True, "consumers": {key: identity for key in
+            ("summary_spec_identity", "loss_spec_identity", "report_spec_identity")}}
+
+
 def _proof(**overrides):
     payload = {
-        "proof_schema": 3, "success": True, "version": "9.4.1", "frozen": True, "platform": sys.platform,
+        "proof_schema": 4, "success": True, "version": "9.4.1", "frozen": True, "platform": sys.platform,
         "workspaces": ["llc", "pfc", "control", "fra", "dab", "power_stage"],
         "guided_design": True, "power_stage_designer": True, "brand_taxonomy_sha256": "a" * 64,
         "power_stage_launcher_entry": True, "power_stage_toolbox_filter": True,
@@ -160,6 +212,7 @@ def _proof(**overrides):
     payload.update(_completion_proof())
     payload["power_stage_priority"] = _priority_proof(payload["power_stage_advanced"])
     payload["magnetic_catalog"] = _magnetic_proof()
+    payload["integrated_magnetics"] = _integrated_proof()
     payload.update(overrides)
     return payload
 

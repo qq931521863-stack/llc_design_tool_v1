@@ -22,7 +22,7 @@ def validate_report(report: dict, *, expected_version: str,
                     expected_magnetic_sha256: dict[str, str] | None = None) -> None:
     """One proof contract shared by native verification and release publication."""
     required = {
-        "proof_schema": 3, "success": True, "frozen": True, "version": expected_version,
+        "proof_schema": 4, "success": True, "frozen": True, "version": expected_version,
         "platform": expected_platform,
         "workspaces": ["llc", "pfc", "control", "fra", "dab", "power_stage"],
         "guided_design": True, "power_stage_designer": True,
@@ -72,6 +72,7 @@ def validate_report(report: dict, *, expected_version: str,
     _validate_completion_report(report)
     _validate_priority_report(report)
     _validate_magnetic_report(report, expected_magnetic_sha256)
+    _validate_integrated_report(report)
 
 
 def _hex_digest(value, length=64):
@@ -387,6 +388,112 @@ def _validate_magnetic_report(report, expected_magnetic_sha256=None):
             raise ValueError("Companion example lacks original-arithmetic-only qualification")
     except (KeyError, TypeError, ValueError, AttributeError, StopIteration) as exc:
         raise RuntimeError(f"packaged self-test report has invalid magnetic evidence: {exc}") from exc
+
+
+def _validate_integrated_report(report):
+    """Schema 4 adds mandatory integrated evidence; schema 3 is obsolete.
+
+    Deliberately independent constants/arithmetic, never the solver under test.
+    This validates evidence emitted by the artifact, not hardware qualification.
+    """
+    def near(actual, expected, tolerance=1e-10):
+        return _finite_number(actual) and math.isclose(actual, expected, rel_tol=tolerance, abs_tol=1e-15)
+
+    try:
+        case = report["integrated_magnetics"]
+        if (not isinstance(case, dict) or case["is_hardware_validated"] is not False
+                or case["scope"] != "Synthetic characterization; FHA GUI/report QA, not hardware or full-envelope qualification"
+                or any(case[key] is not True for key in ("gui_run_design", "project_roundtrip",
+                    "recomputed_analysis_identical", "stale_consumers_cleared", "report_consistency"))):
+            raise ValueError("Missing real integrated consumers or qualification boundary")
+        modules = case["modules"]
+        if (not isinstance(modules, dict) or set(modules) != {"llc_design.core.integrated_magnetics", "llc_design.magnetics.leakage_geometry"}
+                or any(not isinstance(path, str) or not path for path in modules.values())):
+            raise ValueError("Integrated modules were not imported")
+        golden = {"lr_h": 36e-6, "lm_h": 64e-6, "effective_turns_ratio": 1.6,
+            "physical_magnetizing_h": 80e-6, "primary_leakage_h": 20e-6,
+            "secondary_leakage_h": 5e-6, "physical_current_a": 1.4, "flux_density_t": .056}
+        if set(case["golden"]) != set(golden) or any(not near(case["golden"][k], v, 1e-12) for k, v in golden.items()):
+            raise ValueError("Independent APR/physical golden vector failed")
+        counter = case["geometry_counterexample"]
+        if (counter["reachable"] is not False or any(not near(counter[k], v, 1e-5) for k, v in {
+                "required_interwinding_gap_m": .0014, "required_radial_build_m": .0048,
+                "available_window_height_m": .003, "balanced_geometry_h": 2.178170906488923e-6}.items())
+                or counter["required_radial_build_m"] <= counter["available_window_height_m"]):
+            raise ValueError("Independent geometry counterexample was accepted")
+        spec = case["spec"]
+        text_fields = {"magnetics_mode": "INTEGRATED", "integrated_inductance_source": "INDUCTANCE_MATRIX",
+            "integrated_characterized_core": "PQ50_REF", "transformer_winding_layout": "P/2-S-P/2",
+            "integrated_measurement_note": "Synthetic two-leakage artifact QA model; NOT a hardware measurement"}
+        numeric_fields = {"primary_turns": 30, "secondary_turns": 4, "integrated_characterized_primary_turns": 30,
+            "integrated_characterized_secondary_turns": 4, "integrated_lp_h": 303.5e-6,
+            "integrated_ls_h": 303.5e-6/7.5**2, "integrated_mutual_h": 300e-6/7.5,
+            "integrated_interwinding_gap_m": .0010325249820337418, "vbus_nom_v": 400., "pout_w": 3000.}
+        if (not isinstance(spec, dict) or any(spec.get(k) != v for k, v in text_fields.items())
+                or any(not near(spec.get(k), v, 1e-12) for k, v in numeric_fields.items())):
+            raise ValueError("Synthetic integrated spec/characterization changed")
+        identity = hashlib.sha256(json.dumps(spec, sort_keys=True, allow_nan=False).encode()).hexdigest()
+        if (case["spec_identity"] != identity or case["consumers"] != {
+                "summary_spec_identity": identity, "loss_spec_identity": identity, "report_spec_identity": identity}):
+            raise ValueError("Integrated spec and GUI/report consumer identities disagree")
+        lp, ls, mutual = spec["integrated_lp_h"], spec["integrated_ls_h"], spec["integrated_mutual_h"]
+        electrical = {"lr_h": lp-mutual**2/ls, "lm_h": mutual**2/ls,
+            "effective_turns_ratio": mutual/ls, "physical_turns_ratio": 7.5,
+            "physical_magnetizing_h": 300e-6, "primary_leakage_h": 3.5e-6,
+            "secondary_leakage_h": 3.5e-6/7.5**2}
+        if (set(case["electrical"]) != set(electrical)
+                or any(not near(case["electrical"][k], v, 1e-11) for k, v in electrical.items())
+                or case["core"] != "PQ50_REF" or case["external_resonant_inductor_present"] is not False
+                or not near(case["external_resonant_inductor_loss_w"], 0)):
+            raise ValueError("Integrated electrical model or shared magnetic body changed")
+        geometry = case["geometry"]
+        if (geometry["reachable"] is not True or geometry["status"] != "MODEL_REACHABLE_REQUIRES_CHARACTERIZATION"
+                or any(not near(geometry[k], v) for k, v in {
+                    "balanced_geometry_h": 7e-6, "characterized_balanced_h": 7e-6,
+                    "configured_interwinding_gap_m": .0010325249820337418,
+                    "required_interwinding_gap_m": .0010325249820337418,
+                    "required_radial_build_m": .015691021378672478,
+                    "available_window_height_m": .017}.items())
+                or not _finite_number(geometry["relative_error"]) or not 0 <= geometry["relative_error"] <= 1e-10
+                or not _finite_number(geometry["minimum_insulation_m"]) or geometry["minimum_insulation_m"] <= 0
+                or geometry["required_interwinding_gap_m"] < geometry["minimum_insulation_m"]
+                or geometry["required_radial_build_m"] > geometry["available_window_height_m"]):
+            raise ValueError("Integrated geometry threshold/qualification failed")
+        regions = geometry["regions"]
+        if (not isinstance(regions, (list, tuple)) or not regions
+                or sum(row["kind"] == "P-S insulation" for row in regions) != 2
+                or any(not _finite_number(row[k]) or row[k] < 0 for row in regions
+                       for k in ("thickness_m", "inductance_h", "mean_turn_length_m"))
+                or not near(sum(row["inductance_h"] for row in regions), 7e-6)
+                or not near(sum(row["thickness_m"] for row in regions), geometry["radial_build_m"])
+                or not near(geometry["radial_build_m"], geometry["required_radial_build_m"])
+                or not near(geometry["geometry_apr_lr_lower_h"], 300e-6*7e-6/(300e-6+7e-6))
+                or not near(geometry["geometry_apr_lr_upper_h"], 7e-6)
+                or not isinstance(geometry["notes"], (list, tuple)) or not geometry["notes"]):
+            raise ValueError("Integrated conductor/insulation energy evidence is incomplete")
+        mmf = 0.
+        for row in regions:
+            start, end = row["mmf_start_a_turn"], row["mmf_end_a_turn"]
+            if (not _finite_number(start) or not _finite_number(end) or not near(start, mmf)
+                    or not near(row["inductance_h"], 4*math.pi*1e-7*row["mean_turn_length_m"]
+                        *row["thickness_m"]/.032*(start*start+start*end+end*end)/3)):
+                raise ValueError("Integrated field-energy region violates independent MMF integration")
+            mmf = end
+        if not near(mmf, 0):
+            raise ValueError("Integrated balanced MMF does not close")
+        if (type(case["solved_points"]) is not int or case["solved_points"] != 4
+                or case["loss_source"] != "FHA_OPERATING_POINT"
+                or not near(case["nominal_frequency_hz"], 127759.39831780495, 1e-8)
+                or not _finite_number(case["nominal_loss_w"]) or case["nominal_loss_w"] <= 0
+                or case["all_conditions_feasible"] is not False or case["feasible"] is not False
+                or not isinstance(case["feasibility_reasons"], list) or not case["feasibility_reasons"]
+                or not all(isinstance(x, str) and x for x in case["feasibility_reasons"])
+                or not isinstance(case["warnings"], list)
+                or not all(isinstance(x, str) for x in case["warnings"])
+                or not any("not hardware qualification" in x for x in case["warnings"])):
+            raise ValueError("FHA solve coverage or caveats were misrepresented")
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise RuntimeError(f"packaged self-test report has invalid integrated magnetic evidence: {exc}") from exc
 
 
 def verify_bundle(

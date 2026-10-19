@@ -666,6 +666,156 @@ def _exercise_magnetic_catalog(host, directory, app):
                          "engineering_cautions": replay["engineering_cautions"]}}
 
 
+def _exercise_integrated_magnetics(host, directory, app):
+    """Exercise real matrix/geometry, FHA GUI, save/restore and report consumers.
+
+    All characterization constants are synthetic software fixtures. Geometry
+    reachability and solved FHA points are not hardware or envelope approval.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    import numpy as np
+    from PySide6.QtWidgets import QFileDialog
+
+    from llc_design.core import integrated_magnetics
+    from llc_design.core.config import load_spec, waveform_spec_identity
+    from llc_design.core.spec import LLCDesignSpec, MagneticsMode
+    from llc_design.magnetics import leakage_geometry
+    from llc_design.report.export import (
+        export_calculation_book,
+        integrated_magnetic_record,
+    )
+
+    modules = {module.__name__: str(Path(module.__file__).resolve())
+               for module in (integrated_magnetics, leakage_geometry)}
+    if getattr(sys, "frozen", False):
+        bundle_root = Path(sys._MEIPASS).resolve()
+        _require(all(Path(path).is_relative_to(bundle_root) for path in modules.values()),
+                 "integrated magnetic modules were imported outside the frozen bundle")
+    golden = integrated_magnetics.IntegratedMagnetics(100e-6, 25e-6, 40e-6, 2.)
+    golden_values = {"lr_h": golden.lr_h, "lm_h": golden.lm_h,
+        "effective_turns_ratio": golden.effective_turns_ratio,
+        "physical_magnetizing_h": golden.physical_magnetizing_h,
+        "primary_leakage_h": golden.primary_leakage_h, "secondary_leakage_h": golden.secondary_leakage_h,
+        "physical_current_a": golden.physical_magnetizing_current(3., 1.),
+        "flux_density_t": golden.flux_density(3., 1., 20, 100e-6)}
+    np.testing.assert_allclose(list(golden_values.values()),
+        [36e-6, 64e-6, 1.6, 80e-6, 20e-6, 5e-6, 1.4, .056], rtol=1e-12, atol=1e-15)
+    mu, sigma, ratio = 300e-6, 3.5e-6, 7.5
+    spec = LLCDesignSpec(magnetics_mode=MagneticsMode.INTEGRATED,
+        integrated_characterized_primary_turns=30, integrated_characterized_secondary_turns=4,
+        integrated_characterized_core="PQ50_REF", integrated_lp_h=mu+sigma,
+        integrated_ls_h=(mu+sigma)/ratio**2, integrated_mutual_h=mu/ratio,
+        integrated_interwinding_gap_m=.0010325249820337418,
+        integrated_measurement_note="Synthetic two-leakage artifact QA model; NOT a hardware measurement")
+    # A fixed independent winding-field counterexample: even exact electrical
+    # agreement must fail a 3 mm window when the build needs 4.8 mm.
+    target = 2.178170906488923e-6
+    counter_spec = spec.clone(primary_turns=20, secondary_turns=10,
+        integrated_characterized_primary_turns=20, integrated_characterized_secondary_turns=10,
+        integrated_lp_h=80e-6+target/2, integrated_ls_h=(80e-6+target/2)/4,
+        integrated_mutual_h=40e-6, integrated_interwinding_gap_m=.0014)
+    counter_design = SimpleNamespace(primary_turns=20, secondary_turns=10,
+        primary_turns_per_layer=10, secondary_turns_per_layer=10,
+        primary_wire=SimpleNamespace(equivalent_outer_diameter_m=.0005),
+        secondary_wire=SimpleNamespace(equivalent_outer_diameter_m=.001),
+        core=SimpleNamespace(window_width_m=.02, window_height_mm=3.,
+                             mlt_primary_mm=100., mlt_secondary_mm=100.))
+    counter = leakage_geometry.screen_integrated_leakage(counter_spec, counter_design)
+    np.testing.assert_allclose([counter.required_interwinding_gap_m, counter.required_radial_build_m,
+                               counter.balanced_geometry_h], [.0014, .0048, target], rtol=1e-5, atol=1e-15)
+    _require(not counter.reachable and counter.required_radial_build_m > counter.available_window_height_m,
+             "integrated geometry accepted a winding wider than its window")
+
+    host.spec = spec
+    host._load_spec_to_widgets(spec)
+    host.waveform_view.solver = "fast"
+    host.waveform_view.select_component("transformer")
+    app.processEvents()
+    _require(host._spec_from_widgets() == spec, "integrated GUI changed exact characterization")
+    host.run_design()
+    _wait_for_worker(lambda: not host._active_workers)
+    first = host.system_analysis
+    _require(first is not None and first.spec == spec and first.resonant_inductor is None,
+             "integrated GUI did not solve the shared transformer")
+    project = directory / "integrated-llc.json"
+    with patch.object(QFileDialog, "getSaveFileName", return_value=(str(project), "JSON")):
+        host.save_json()
+    _require(load_spec(project) == spec, "integrated project changed characterization")
+    # Changing the mode must invalidate consumers before a real load/recompute.
+    host.magnetics_mode_combo.setCurrentIndex(host.magnetics_mode_combo.findData(MagneticsMode.SEPARATE))
+    _require(host.system_analysis is None and host.loss_summary_view._analysis is None,
+             "integrated GUI retained stale shared-magnetic consumers")
+    with patch.object(QFileDialog, "getOpenFileName", return_value=(str(project), "JSON")):
+        host.load_json()
+    _wait_for_worker(lambda: not host._active_workers)
+    _require(host.spec == host._spec_from_widgets() == spec,
+             "integrated project restore changed exact characterization")
+    host.run_design()
+    _wait_for_worker(lambda: not host._active_workers)
+    analysis = host.system_analysis
+    _require(analysis is not None and analysis is not first and analysis == first,
+             "integrated restore did not recompute identical FHA analysis")
+    _require(host.loss_summary_view._analysis is analysis and host.loss_summary_view.point.currentData() is analysis.nominal,
+             "integrated loss-summary consumer has a different analysis")
+    _require("无独立磁芯" in host.summary_text.toPlainText(), "integrated GUI omitted shared-magnetic status")
+    _require(analysis.resonant_inductor is None and all(p.resonant_inductor.total_w == 0 for p in analysis.operating_points),
+             "integrated analysis double-counted an external Lr")
+    model = integrated_magnetics.from_spec(analysis.spec)
+    electrical = {"lr_h": analysis.tank.lr_h, "lm_h": analysis.tank.lm_h,
+        "effective_turns_ratio": analysis.spec.electrical_turns_ratio,
+        "physical_turns_ratio": analysis.spec.turns_ratio, "physical_magnetizing_h": model.physical_magnetizing_h,
+        "primary_leakage_h": model.primary_leakage_h, "secondary_leakage_h": model.secondary_leakage_h}
+    np.testing.assert_allclose(list(electrical.values()),
+        [6.9596375617793165e-6, .0002965403624382207, 7.413509060955519,
+         7.5, .0003, 3.5e-6, 3.5e-6/7.5**2], rtol=1e-11, atol=1e-15)
+    geometry = analysis.transformer.integrated_leakage
+    _require(analysis.transformer.core.part_number == "PQ50_REF" and geometry.reachable,
+             "integrated reference core/geometry changed")
+    np.testing.assert_allclose([geometry.balanced_geometry_h, geometry.characterized_balanced_h,
+        geometry.required_interwinding_gap_m, geometry.required_radial_build_m, geometry.available_window_height_m],
+        [7e-6, 7e-6, .0010325249820337418, .015691021378672478, .017], rtol=1e-10, atol=1e-15)
+    report_paths = export_calculation_book(analysis, directory / "integrated-report")
+    exported = json.loads(report_paths["result_json"].read_text(encoding="utf-8"))
+    record = integrated_magnetic_record(spec)
+    identity = waveform_spec_identity(spec)
+    _require(exported["spec"] == json.loads(json.dumps(asdict(spec)))
+             and exported["integrated_magnetics"] == record and exported["resonant_inductor"] is None
+             and exported["tank"] == asdict(analysis.tank)
+             and exported["transformer"]["integrated_leakage"] == json.loads(json.dumps(asdict(geometry)))
+             and exported["analysis"]["nominal"]["total_loss_w"] == analysis.nominal.total_loss_w
+             and not (report_paths["result_json"].parent / "resonant_inductor_core_candidates.csv").exists(),
+             "integrated report mixed source identity or added an external Lr")
+    markdown = report_paths["report"].read_text(encoding="utf-8")
+    _require(spec.integrated_measurement_note in markdown and geometry.status in markdown,
+             "integrated report lost characterization or geometry caveats")
+    for row in exported["operating_points"]:
+        _require(row["external_resonant_inductor_present"] is False
+                 and row["resonant_inductor_core_w"] == row["resonant_inductor_copper_w"] == 0,
+                 "integrated report contains separate Lr losses")
+    return {"scope": "Synthetic characterization; FHA GUI/report QA, not hardware or full-envelope qualification",
+        "modules": modules, "golden": golden_values,
+        "geometry_counterexample": {"reachable": counter.reachable,
+            "required_interwinding_gap_m": counter.required_interwinding_gap_m,
+            "required_radial_build_m": counter.required_radial_build_m,
+            "available_window_height_m": counter.available_window_height_m,
+            "balanced_geometry_h": counter.balanced_geometry_h},
+        "spec": json.loads(json.dumps(asdict(spec))), "spec_identity": identity,
+        "electrical": electrical, "geometry": asdict(geometry), "core": analysis.transformer.core.part_number,
+        "external_resonant_inductor_present": analysis.resonant_inductor is not None,
+        "external_resonant_inductor_loss_w": analysis.nominal.resonant_inductor.total_w,
+        "solved_points": len(analysis.operating_points), "nominal_frequency_hz": float(analysis.nominal.operating_point.switching_frequency_hz),
+        "nominal_loss_w": float(analysis.nominal.total_loss_w), "loss_source": analysis.nominal.semiconductor_source,
+        "is_hardware_validated": False, "all_conditions_feasible": analysis.feasible,
+        "feasible": analysis.feasible, "feasibility_reasons": list(analysis.feasibility_reasons),
+        "warnings": list(analysis.warnings), "gui_run_design": True, "project_roundtrip": True,
+        "recomputed_analysis_identical": True, "stale_consumers_cleared": True,
+        "consumers": {"summary_spec_identity": identity, "loss_spec_identity": waveform_spec_identity(host.loss_summary_view._analysis.spec),
+                      "report_spec_identity": hashlib.sha256(json.dumps(exported["spec"], sort_keys=True, allow_nan=False).encode()).hexdigest()},
+        "report_consistency": True}
+
+
 def _run_packaged_self_test() -> int:
     """Exercise all workspaces and emit evidence only after successful cleanup."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -722,6 +872,7 @@ def _run_packaged_self_test() -> int:
             app.processEvents()
             optimizer_proof = _exercise_two_stage(controller.llc_window, Path(directory))
             priority_proof["llc_components"] = _exercise_llc_priority_components(controller.llc_window, Path(directory), app)
+            integrated_proof = _exercise_integrated_magnetics(controller.llc_window, Path(directory), app)
             controller.show_workspace("pfc")
             app.processEvents()
             magnetic_proof = _exercise_magnetic_catalog(controller.pfc_window, Path(directory), app)
@@ -735,11 +886,12 @@ def _run_packaged_self_test() -> int:
         # This path is inside the frozen bundle, not relative to source/CWD.
         taxonomy = Path(part_validation.__file__).resolve().parents[1] / "engineering_data/brand_taxonomy.json"
         part_validation.load_brand_taxonomy()
-        proof = {"proof_schema": 3, "success": True, "version": __version__,
+        proof = {"proof_schema": 4, "success": True, "version": __version__,
                  "frozen": bool(getattr(sys, "frozen", False)), "platform": sys.platform,
                  "workspaces": workspace_names, "guided_design": True, **psd_proof,
                  "power_stage_advanced": advanced_proof, "two_stage_optimization": optimizer_proof,
                  "power_stage_priority": priority_proof, "magnetic_catalog": magnetic_proof,
+                 "integrated_magnetics": integrated_proof,
                  "brand_taxonomy_sha256": hashlib.sha256(taxonomy.read_bytes()).hexdigest()}
     finally:
         # Exercise the same final ownership boundary as normal application
