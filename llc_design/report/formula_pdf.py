@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -132,7 +132,7 @@ def build_formula_steps(analysis: SystemAnalysis) -> dict[str, list[FormulaStep]
             ),
         ])
 
-    return {
+    sections = {
         "Resonant tank synthesis": tank_steps,
         "Nominal operating point": [
             FormulaStep(
@@ -351,6 +351,147 @@ def build_formula_steps(analysis: SystemAnalysis) -> dict[str, list[FormulaStep]
             ),
         ],
     }
+    if _has_td_inputs(point):
+        return _td_formula_steps(analysis, sections)
+    return sections
+
+
+def _has_td_inputs(point) -> bool:
+    return any(source.startswith("TIME_DOMAIN") for source in point.component_sources().values())
+
+
+def _input(value: float | None) -> str:
+    return "NOT_AVAILABLE" if value is None or not math.isfinite(value) else f"{value:.6g}"
+
+
+def _td_formula_steps(analysis, sections):
+    """Replace only affected substitutions; never reuse FHA inputs for TD W.
+
+    Result objects retain the actual device/capacitor scalars. New analyses
+    additionally retain an immutable iGSE/FFT input summary; older objects
+    explicitly lack that evidence rather than reverse-fitting their losses.
+    """
+    s, p, tank = analysis.spec, analysis.nominal, analysis.tank
+    op = p.operating_point
+    primary, sr = p.primary, p.synchronous_rectifier
+    db = DeviceDatabase()
+    pd, sd = db.get_primary(s.primary_device), db.get_sr(s.sr_device)
+    trace = getattr(p, "td_formula_inputs", None)
+    semiconductor_td = p.semiconductor_source.startswith("TIME_DOMAIN")
+    capacitor_td = p.capacitor_source.startswith("TIME_DOMAIN")
+    magnetic_td = p.magnetic_source.startswith("TIME_DOMAIN")
+    fs = _input(p.semiconductor_frequency_hz)
+    pfs = _input(p.passive_frequency_hz)
+    # Device RMS/peak fields were populated by the actual loss consumer, not
+    # inferred backwards from P/R, and remain available in historical objects.
+    ir = primary.device_rms_current_a * math.sqrt(2) * s.primary_parallel_devices
+    isec = sr.device_rms_current_a * math.sqrt(2) * s.sr_parallel_devices_per_position
+    ispk = sr.device_peak_current_a * s.sr_parallel_devices_per_position
+    overrides = {}
+
+    def edit(name, *, formula=None, substitution=None, method=None, result=None):
+        original = next(step for group in sections.values() for step in group if step.name == name)
+        changes = {key: value for key, value in dict(formula=formula, substitution=substitution,
+                    method=method, result=result).items() if value is not None}
+        overrides[name] = replace(original, **changes)
+
+    # Operating-point gain, phase and commutation do not become TD estimates
+    # merely because the loss ledger was upgraded.
+    for step in sections["Nominal operating point"]:
+        edit(step.name, method="FHA reference retained, not a TD waveform measurement. " + step.method)
+    for name in ("ZVS charge margin", "ZVS energy margin"):
+        edit(name, method="FHA commutation current and charge/energy approximation retained; not TD ZVS verification.")
+    for name in ("Transformer equivalent air gap", "Resonant-inductor equivalent air gap"):
+        edit(name, method="Original FHA hardware synthesis/geometry retained; TD losses do not redesign the winding or gap.")
+    edit("DC-link required capacitance", method="Original efficiency-assumption sizing retained; not recomputed from TD loss.")
+
+    if semiconductor_td:
+        current_note = ("TIME_DOMAIN_WAVEFORM: final complete cycle, RMS=sqrt(mean(i[k]^2)). "
+                        "Rds and branch-sharing model remain engineering approximations.")
+        edit("Primary conduction loss", substitution=f"Pcond := {ir:.6g}^2 * {s.bridge_series_devices} * ({pd.rds_at(s.primary_junction_temperature_c):.6g}/{s.primary_parallel_devices}); Tj={s.primary_junction_temperature_c:g} degC",
+             method=current_note)
+        edit("Primary gate-drive loss", substitution=f"Pgate := {s.bridge_device_count} * {s.primary_parallel_devices} * {pd.qg_c:.6g} * {pd.gate_voltage_v:.6g} * {fs}",
+             method="TD event frequency; datasheet Qg and assumed gate voltage.")
+        edit("Primary turn-off loss", substitution=f"Ioff := {op.commutation_current_a:.6g}*{s.primary_turnoff_current_factor:.6g}/{s.primary_parallel_devices}; Eoff := {pd.eoff_ref_j:.6g}*({op.vbus_v:g}/{pd.eoff_ref_v:g})*(Ioff/{pd.eoff_ref_i:g}); Poff := {s.bridge_device_count}*{s.primary_parallel_devices}*Eoff*{fs}",
+             method="FHA commutation current retained; actual TD frequency. Scaled Eoff proxy, not sampled switching-energy integration.")
+        edit("Residual Coss loss after incomplete ZVS", substitution=f"r := {primary.zvs_residual_fraction:.6g}; Eoss := 0.5*{pd.coss_er_f:.6g}*{op.vbus_v:.6g}^2; Pcoss := {s.bridge_device_count}*{s.primary_parallel_devices}*Eoss*{fs}*r",
+             method="FHA ZVS residual fraction retained; TD event frequency. Residual-Coss turn-on counted once.")
+        qreq = 2 * s.primary_parallel_devices * max(pd.qoss_c, pd.coss_er_f * op.vbus_v)
+        charge = qreq / max(op.commutation_current_a, 1e-9)
+        diode = max(s.primary_deadtime_s - charge, 0)
+        edit("Primary dead-time diode loss", substitution=f"Qreq={qreq:.6g} C; tcharge={charge:.6g} s; tdiode={diode:.6g} s; Pdiode := {2*s.bridge_series_devices}*{pd.body_diode_vf_v:g}*{op.commutation_current_a:.6g}*{diode:.6g}*{fs}",
+             method="FHA commutation current/charge-time proxy retained; TD event frequency, not measured diode current.")
+        edit("SR conduction loss", substitution=f"Psr,cond := {isec:.6g}^2 * 2*{sd.rds_at(s.sr_junction_temperature_c):.6g}/{s.sr_parallel_devices_per_position}; Tj={s.sr_junction_temperature_c:g} degC", method=current_note)
+        window = max(s.sr_deadtime_s + s.sr_turnoff_advance_s, 0)
+        edit("SR dead-time diode loss", substitution=f"Pdiode := 4*{sd.body_diode_vf_v:g}*0.5*{ispk:.6g}*(2*pi*{fs})*{window:.6g}^2*{fs}",
+             method="TD sampled secondary peak and frequency; sinusoidal near-zero slope/timing-window approximation retained, not actual branch integral.")
+        edit("SR turn-off loss", substitution=f"Ioff := {ispk:.6g}*sin(min(2*pi*{fs}*{s.sr_turnoff_advance_s:.6g},pi/2))/{s.sr_parallel_devices_per_position}; Eoff := {sd.eoff_ref_j:.6g}*({s.vout_v:g}/{sd.eoff_ref_v:g})*(Ioff/{sd.eoff_ref_i:g}); Poff := 4*{s.sr_parallel_devices_per_position}*Eoff*{fs}",
+             method="TD sampled secondary peak and frequency; sinusoidal turn-off advance and datasheet Eoff scaling remain proxies.")
+        edit("SR output-capacitance loss", substitution=f"Eoss := 0.5*{sd.coss_er_f:.6g}*{sr.voltage_stress_v:.6g}^2; Pcoss := 4*{s.sr_parallel_devices_per_position}*Eoss*{fs}*{s.sr_coss_dissipation_factor:.6g}", method="TD event frequency; constant Coss and voltage-overshoot estimate retained.")
+        edit("SR gate-drive loss", substitution=f"Pgate := 4*{s.sr_parallel_devices_per_position}*{sd.qg_c:.6g}*{sd.gate_voltage_v:.6g}*{fs}", method="TD event frequency; datasheet Qg and assumed gate voltage.")
+
+    if capacitor_td:
+        cr, co = p.resonant_capacitor, p.output_capacitor
+        edit("Resonant-capacitor voltage",
+             formula="Vcr,ac,rms := sqrt(mean((vcr[k]-mean(vcr))^2)); Vcr,pk := max(abs(vcr[k]+Vbridge,dc))",
+             substitution=f"TD retained statistics: Vcr,ac,rms={cr.voltage_rms_v:.6g} V; mean(vcr+Vbridge,dc)={cr.voltage_dc_bias_v:.6g} V; max(abs(vcr+Vbridge,dc))={cr.voltage_peak_v:.6g} V; fs={pfs} Hz",
+             method="Actual TD Cr voltage samples, not Ir*Xc. Physical half-bridge Vbus/2 bias added exactly once; full bridge bias is zero.")
+        edit("Resonant-capacitor ESR loss", substitution=f"Pcr := {cr.current_rms_a:.6g}^2 * {s.resonant_cap_esr_ohm:.6g}", method="TIME_DOMAIN_WAVEFORM_CONSTANT_ESR: RMS from accepted i_resonant samples, constant ESR approximation.")
+        edit("Output-capacitor ripple",
+             formula="DeltaVc := ptp(v_output_cap_internal[k]); DeltaVesr := ptp(ESR*i_output_cap[k]); DeltaVo := ptp(v_output[k]); Pcap := mean(i_output_cap[k]^2)*ESR",
+             substitution=f"DeltaVc={co.capacitive_ripple_vpp:.6g} V; DeltaVesr={co.esr_ripple_vpp:.6g} V; DeltaVo={co.total_ripple_vpp:.6g} V; Icap,rms={co.capacitor_current_rms_a:.6g} A; Pcap := {co.capacitor_current_rms_a:.6g}^2*{s.output_cap_esr_ohm:.6g}; fs={pfs} Hz",
+             method="Actual TD internal and terminal voltage states. ptp=max-min; total is not the sum of independent maxima. No rectified-sine/4096-sample reconstruction.")
+
+    extra = []
+    if magnetic_td:
+        if trace is None:
+            flux_sub = "TD magnetizing input summary NOT_AVAILABLE in this historical analysis; no FHA substitution or inverse fit is used."
+        else:
+            flux_sub = f"Bpk,Amin := {tank.lm_h:.6g}*{trace.magnetizing_peak_a:.6g}/({s.primary_turns}*{analysis.transformer.core.amin_m2:.6g}); Bdc,Ae := {tank.lm_h:.6g}*{trace.magnetizing_mean_a:.6g}/({s.primary_turns}*{analysis.transformer.core.ae_m2:.6g})"
+        edit("Transformer peak flux density", formula="B[k] := Lm*i_magnetizing[k]/(Np*Ae); Bpk,Amin := max(abs(B[k]))*Ae/Amin", substitution=flux_sub,
+             method="TD magnetizing state retains DC offset; sampled Faraday/volt-second cross-check applied by consumer. Physical remanence and nonlinear saturation remain unmodeled.",
+             result=f"Bpk,Amin = {_value(p.transformer.b_peak_min_area_t, 'T')}; Bdc,Ae = {_value(p.transformer.b_dc_t, 'T')}; limit = {_value(s.transformer_max_b_t, 'T')}")
+        irpk = trace.resonant_peak_a if trace is not None else primary.device_peak_current_a * s.primary_parallel_devices
+        edit("Resonant-inductor peak flux density", formula="B[k] := Lr*i_resonant[k]/(N*Ae); Bpk,Ae := max(abs(B[k])); Bpk,Amin := Bpk,Ae*Ae/Amin",
+             substitution=f"Bpk := {analysis.resonant_inductor.inductance_h:.6g}*{irpk:.6g}/({analysis.resonant_inductor.turns}*{analysis.resonant_inductor.core.ae_m2:.6g})",
+             method="TD sampled resonant peak, not the retained FHA peak; original hardware geometry retained.",
+             result=f"Bpk,Ae = {_value(p.resonant_inductor.b_peak_t, 'T')}; Bpk,Amin = {_value(p.resonant_inductor.b_peak_min_area_t, 'T')}; limit,Amin = {_value(s.resonant_inductor_max_b_t, 'T')}")
+        core_sub = []
+        for label, inputs in (("xfmr", trace.transformer if trace else None), ("Lr", trace.inductor if trace else None)):
+            if inputs is None:
+                core_sub.append(f"{label}: TD dB/dt quadrature inputs NOT_AVAILABLE; recorded loss is retained, not reverse-fitted.")
+                continue
+            core_sub.append(f"{label}: T={inputs.temperature_c:.6g} degC; k={inputs.k:.6g}; alpha={inputs.alpha:.6g}; beta={inputs.beta:.6g}; ki={inputs.ki:.6g}; mean(abs(dB/dt)^alpha)={inputs.mean_abs_dbdt_alpha:.6g}; DeltaB={inputs.delta_b_t:.6g} T; Pcore := {inputs.correction:.6g}*{inputs.ki:.6g}*{inputs.mean_abs_dbdt_alpha:.6g}*{inputs.delta_b_t:.6g}^({inputs.beta:.6g}-{inputs.alpha:.6g})*{inputs.volume_m3:.6g}")
+        edit("Magnetic core loss by iGSE",
+             formula="dBdt[k] := (B[(k+1) mod N]-B[k])/dt; Pcore := Kcorr*ki*mean(abs(dBdt)^alpha)*ptp(B)^(beta-alpha)*Ve",
+             substitution="\n".join(core_sub), method="Same accepted final TD cycle and final thermal-iteration temperature as each loss. ki := k/((2*pi)^(alpha-1)*2^(beta-alpha)*integral_0^2pi(abs(cos(theta))^alpha dtheta)). No DC-bias loss correction.")
+        copper = p.detailed_magnetics_breakdown()
+        winding_sub = []
+        for label, keys in (("primary", ("dc", "skin", "proximity", "bundle", "termination")),
+                            ("secondary", ("dc", "skin", "proximity", "bundle", "termination")),
+                            ("Lr", ("dc", "skin", "proximity", "gap_fringing", "bundle", "termination"))):
+            prefix = "resonant_inductor" if label == "Lr" else "transformer_" + label
+            winding_sub.append(label + " W: " + "; ".join(f"{key}={copper[prefix+'_'+key+'_w']:.6g}" for key in keys))
+        winding_sub.append(f"fs={pfs} Hz; xfmr T={p.transformer.estimated_hotspot_c:.6g} degC; Lr T={p.resonant_inductor.estimated_hotspot_c:.6g} degC")
+        edit("Litz winding loss by harmonic layer MMF", substitution="\n".join(winding_sub),
+             method=f"Actual TD current FFT, orders 0..{s.litz_max_harmonic}; stack P/2-S-P/2. Primary current = i_resonant, secondary INTO dot = -i_transformer_secondary. DC Joule term uses full sampled RMS; AC increments above cutoff are unmodeled. Scalar/phasor summary is not a standalone replacement for the layer-MMF solver.")
+        if trace is None:
+            phasor_sub = "TD harmonic phasors NOT_AVAILABLE in this historical analysis."
+        else:
+            phasor_sub = "\n".join(f"h={h}: Ip=({pr:.6g},{pi:.6g}) A; Is_into_dot=({sr:.6g},{si:.6g}) A"
+                for h, ((pr, pi), (sr, si)) in enumerate(zip(trace.primary_rms_phasors_a, trace.secondary_rms_phasors_a)))
+        extra.append(FormulaStep("TD winding harmonic inputs", "Ih := RMS-normalized FFT(i[k]); DC bin is the mean; phasors shown as (real,imaginary)",
+            phasor_sub, f"AC cutoff = {s.litz_max_harmonic}; Lr uses the same Ip waveform", "Summary from the same accepted cycle, preserving relative phase; no fitted sine wave."))
+        edit("Magnetic thermal fixed-point iteration", formula="Tpred := clamp(Tamb+Ploss(T)*Rth,Tamb,220 degC); Tnext := 0.55*T+0.45*Tpred",
+             substitution=f"Tamb={s.ambient_temperature_c:g}; initial T=max({s.winding_temperature_c:g},Tamb); Rth,xfmr={s.transformer_rth_k_per_w:g}; Rth,Lr={s.resonant_inductor_rth_k_per_w:g}; tolerance={s.magnetic_thermal_tolerance_c:g} degC; max iterations={s.magnetic_thermal_max_iterations}",
+             method="Re-evaluate actual TD iGSE/layer-MMF losses at each temperature; reported loss is evaluated again at the final temperature. Iteration cap is not proof of thermal convergence.")
+
+    source = FormulaStep("Nominal loss input provenance", "Each loss bucket keeps its own source; FHA frequency/phase/commutation are separate from TD loss inputs.",
+        f"semiconductor={p.semiconductor_source}; fs={fs} Hz\nmagnetic={p.magnetic_source}; capacitor={p.capacitor_source}; fs={pfs} Hz\ncommutation={p.commutation_source}\nwaveform SHA256={p.loss_waveform_sha256 or 'NOT_AVAILABLE'}",
+        (f"Final cycle N={trace.sample_count}; dt={trace.sample_step_s:.9g} s; fs={trace.frequency_hz:.9g} Hz" if trace else "TD quadrature summary NOT_AVAILABLE; retained scalar loss inputs remain labeled."),
+        "Only the selected points were upgraded. Source is numerical provenance, not a model-validity grade or hardware approval.")
+    updated = {group: [overrides.get(step.name, step) for step in steps] for group, steps in sections.items()}
+    return {"Nominal loss sources": [source], **updated, "TD harmonic audit": extra} if extra else {"Nominal loss sources": [source], **updated}
 
 
 class _FormulaPdf(FPDF):
@@ -430,6 +571,7 @@ def build_formula_pdf(analysis: SystemAnalysis, output_path: str | Path) -> Path
     pdf.set_text_color(30, 40, 54)
     pdf.set_font("Helvetica", "", 10)
     spec = analysis.spec
+    has_td = any(_has_td_inputs(point) for point in analysis.operating_points)
     summary = [
         ("Toolkit", f"Power Design Toolkit V{__version__}"),
         ("Generated", datetime.now(timezone.utc).date().isoformat()),
@@ -443,6 +585,10 @@ def build_formula_pdf(analysis: SystemAnalysis, output_path: str | Path) -> Path
         pdf.cell(38, 7, label)
         pdf.set_font("Helvetica", "", 9)
         pdf.multi_cell(0, 7, value, new_x="LMARGIN", new_y="NEXT")
+    if has_td:
+        pdf.multi_cell(0, 5, "Mixed-source loss worksheet: TD coverage is stated per operating point. "
+                       "The feasibility decision and commutation/ZVS screens retain FHA assumptions.",
+                       new_x="LMARGIN", new_y="NEXT")
 
     pdf.ln(3)
     pdf.set_fill_color(255, 246, 220)
@@ -472,18 +618,23 @@ def build_formula_pdf(analysis: SystemAnalysis, output_path: str | Path) -> Path
     pdf.set_text_color(30, 43, 60)
     pdf.set_font("Helvetica", "B", 7)
     widths = (27, 20, 24, 22, 23, 23, 25)
-    headers = ("Point", "Load", "fs/kHz", "Ir,rms/A", "Phase/deg", "Loss/W", "Efficiency")
+    headers = (("Point", "Load", "fs loss/kHz", "Ir loss/A", "Phase FHA", "Loss/W", "Efficiency")
+               if has_td else ("Point", "Load", "fs/kHz", "Ir,rms/A", "Phase/deg", "Loss/W", "Efficiency"))
     for width, header in zip(widths, headers):
         pdf.cell(width, 6, header, border=1, align="C")
     pdf.ln()
     pdf.set_font("Helvetica", "", 7)
     for item in analysis.operating_points:
         item_op = item.operating_point
+        is_td = item.semiconductor_source.startswith("TIME_DOMAIN")
+        loss_fs = item.semiconductor_frequency_hz if is_td else item_op.switching_frequency_hz
+        loss_ir = (item.primary.device_rms_current_a * math.sqrt(2) * spec.primary_parallel_devices
+                   if is_td else item_op.resonant_current_rms_a)
         values = (
             item.label,
             f"{item_op.load_fraction*100:.0f}%",
-            f"{item_op.switching_frequency_hz/1e3:.3f}",
-            f"{item_op.resonant_current_rms_a:.3f}",
+            f"{loss_fs/1e3:.3f}" if loss_fs is not None and math.isfinite(loss_fs) else "UNKNOWN",
+            f"{loss_ir:.3f}",
             f"{item_op.input_phase_deg:.2f}",
             f"{item.total_loss_w:.3f}",
             f"{item.efficiency*100:.3f}%",
@@ -491,6 +642,20 @@ def build_formula_pdf(analysis: SystemAnalysis, output_path: str | Path) -> Path
         for width, value in zip(widths, values):
             pdf.cell(width, 6, value, border=1, align="C")
         pdf.ln()
+
+    if has_td:
+        pdf.ln(3)
+        for item in analysis.operating_points:
+            semi_fs = (item.semiconductor_frequency_hz if item.semiconductor_source.startswith("TIME_DOMAIN")
+                       else item.operating_point.switching_frequency_hz)
+            passive_fs = (item.passive_frequency_hz if item.magnetic_source.startswith("TIME_DOMAIN")
+                          or item.capacitor_source.startswith("TIME_DOMAIN") else item.operating_point.switching_frequency_hz)
+            pdf.multi_cell(0, 4, f"{item.label}: semiconductor={item.semiconductor_source}; "
+                f"magnetic={item.magnetic_source}; capacitor={item.capacitor_source}; "
+                f"commutation={item.commutation_source}. FHA fs={item.operating_point.switching_frequency_hz:.9g} Hz; "
+                f"loss fs={_input(semi_fs)} Hz; passive fs={_input(passive_fs)} Hz. "
+                f"Waveform SHA256={item.loss_waveform_sha256 or ('NOT_AVAILABLE' if _has_td_inputs(item) else 'NOT_APPLICABLE (FHA)')}",
+                new_x="LMARGIN", new_y="NEXT")
 
     pdf.ln(5)
     pdf.section("Loss ledger at nominal point")
@@ -501,6 +666,8 @@ def build_formula_pdf(analysis: SystemAnalysis, output_path: str | Path) -> Path
         pdf.cell(28, 5, f"{float(value):.6g} W", align="R", new_x="LMARGIN", new_y="NEXT")
 
     pdf.ln(5)
+    if has_td and pdf.will_page_break(32):
+        pdf.add_page()
     pdf.section("Feasibility decision trace")
     pdf.set_text_color(30, 43, 60)
     pdf.set_font("Helvetica", "", 8)
@@ -514,6 +681,11 @@ def build_formula_pdf(analysis: SystemAnalysis, output_path: str | Path) -> Path
         new_x="LMARGIN",
         new_y="NEXT",
     )
+    if has_td:
+        pdf.multi_cell(0, 5, "This decision is the retained FHA hardware/synthesis screen. "
+            "TD loss updates do not establish a new full-envelope feasibility or ZVS result. "
+            "Nominal-only TD coverage must not be read as all-points TD verification.",
+            new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "B", 8)
     pdf.cell(0, 5, f"Decision: {'PASS' if analysis.feasible else 'FAIL'}", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 7)
@@ -532,11 +704,20 @@ def build_formula_pdf(analysis: SystemAnalysis, output_path: str | Path) -> Path
     pdf.multi_cell(
         0,
         5,
+        ("The formula chain uses the same SystemAnalysis object as the GUI. TD loss inputs and immutable "
+        "quadrature/FFT summaries come from the accepted final complete waveform cycle, identified by SHA256. "
+        "TD current/frequency, capacitor voltage/current states, magnetic flux derivatives and winding "
+        "harmonics are not replaced by FHA substitutions. Event-energy, timing, material, thermal, "
+        "constant-ESR and winding-geometry models remain approximations. FHA gain/phase, commutation/ZVS, "
+        "hardware synthesis and hold-up sizing retain their explicitly labeled original inputs. "
+        "Source listings show every non-upgraded point; partial coverage does not verify the full envelope. "
+        "Historical objects without a TD quadrature summary are marked NOT_AVAILABLE, never reverse-fitted."
+        if has_td else
         "The formula chain above is recomputed from the same SystemAnalysis object used by the GUI. "
         "Frequency is a numerical root of the FHA complex-impedance gain equation. Output-capacitor "
         "ripple is a sampled integration of one rectified-current lobe. Magnetic loss uses reconstructed "
         "waveforms, temperature iteration, iGSE and detailed winding-loss models; their reported loss "
-        "components are included in the loss ledger rather than replaced by a closed-form shortcut.",
+        "components are included in the loss ledger rather than replaced by a closed-form shortcut."),
         new_x="LMARGIN",
         new_y="NEXT",
     )

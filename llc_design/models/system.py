@@ -38,6 +38,82 @@ from ..core.waveform import OutputRippleResult
 
 
 @dataclass(frozen=True)
+class CoreLossFormulaInputs:
+    """Scalar iGSE quadrature inputs from the exact accepted final TD cycle."""
+    temperature_c: float
+    k: float
+    ki: float
+    alpha: float
+    beta: float
+    correction: float
+    volume_m3: float
+    delta_b_t: float
+    mean_abs_dbdt_alpha: float
+
+
+@dataclass(frozen=True)
+class TimeDomainFormulaInputs:
+    """Small immutable audit summary, not a second waveform or loss model.
+
+    Phasors are (real, imaginary) RMS pairs, orders 0..cutoff. Secondary
+    current is signed INTO the winding dot, as consumed by the layer-MMF API.
+    Project sessions persist request/candidate provenance, not this summary.
+    """
+    sample_count: int
+    sample_step_s: float
+    frequency_hz: float
+    resonant_rms_a: float
+    resonant_peak_a: float
+    secondary_rms_a: float
+    secondary_peak_a: float
+    magnetizing_peak_a: float
+    magnetizing_mean_a: float
+    transformer: CoreLossFormulaInputs
+    inductor: CoreLossFormulaInputs
+    primary_rms_phasors_a: tuple[tuple[float, float], ...]
+    secondary_rms_phasors_a: tuple[tuple[float, float], ...]
+
+
+def _td_formula_inputs(analysis, waveform, transformer, inductor):
+    from ..dynamics.periodic_samples import periodic_samples, transformer_flux
+    from ..magnetics.spectrum import rms_phasors
+
+    samples = periodic_samples(waveform, {"i_resonant": "A", "i_magnetizing": "A",
+        "i_transformer_secondary": "A", "v_transformer_primary": "V"}, True)
+    ir, im, isec = (samples.signals[key] for key in
+                   ("i_resonant", "i_magnetizing", "i_transformer_secondary"))
+    count = len(samples.time_s)
+    # Match CoreMaterial.igse_density_w_m3's wrapped endpoint-exclusive grid.
+    period = samples.time_s[-1] - samples.time_s[0] + float(np.median(np.diff(samples.time_s)))
+    dt = period / count
+
+    def core_inputs(core, flux, temperature):
+        from scipy.special import gamma
+        c = core.material_spec.coefficients_at(temperature)
+        integral = 2 * math.sqrt(math.pi) * gamma((c.alpha + 1) / 2) / gamma((c.alpha + 2) / 2)
+        ki = c.k / ((2 * math.pi)**(c.alpha - 1) * 2**(c.beta - c.alpha) * integral)
+        rate = float(np.mean(np.abs((np.roll(flux, -1) - flux) / dt)**c.alpha))
+        return CoreLossFormulaInputs(temperature, c.k, float(ki), c.alpha, c.beta,
+            core.material_spec.core_loss_correction, core.ve_m3, float(np.ptp(flux)), rate)
+
+    def phasors(values):
+        return tuple((float(p.real), float(p.imag))
+                     for p in rms_phasors(values, analysis.spec.litz_max_harmonic))
+
+    bt = transformer_flux(samples, analysis.transformer.primary_turns,
+                          analysis.transformer.core.ae_m2, analysis.tank.lm_h)
+    bi = analysis.resonant_inductor.inductance_h * ir / (
+        analysis.resonant_inductor.turns * analysis.resonant_inductor.core.ae_m2)
+    return TimeDomainFormulaInputs(count, dt, samples.frequency_hz,
+        float(np.sqrt(np.mean(ir**2))), float(np.max(np.abs(ir))),
+        float(np.sqrt(np.mean(isec**2))), float(np.max(np.abs(isec))),
+        float(np.max(np.abs(im))), float(np.mean(im)),
+        core_inputs(analysis.transformer.core, bt, transformer.estimated_hotspot_c),
+        core_inputs(analysis.resonant_inductor.core, bi, inductor.estimated_hotspot_c),
+        phasors(ir), phasors(-isec))
+
+
+@dataclass(frozen=True)
 class OperatingPointLoss:
     operating_point: LLCOperatingPoint
     primary: PrimaryBridgeLoss
@@ -56,6 +132,7 @@ class OperatingPointLoss:
     passive_frequency_hz: float | None = None
     commutation_source: str = "FHA_OPERATING_POINT_APPROXIMATION"
     loss_waveform_sha256: str | None = None
+    td_formula_inputs: TimeDomainFormulaInputs | None = None
 
     @property
     def label(self) -> str:
@@ -279,6 +356,7 @@ class LLCSystemAnalyzer:
                 capacitor_source="TIME_DOMAIN_WAVEFORM_CONSTANT_ESR",
                 passive_frequency_hz=result.waveform.switching_frequency_hz,
                 loss_waveform_sha256=identity.hexdigest(),
+                td_formula_inputs=_td_formula_inputs(analysis, result.waveform, transformer, inductor),
                 total_loss_w=total, efficiency=pout / (pout + total),
                 semiconductor_source="TIME_DOMAIN_WAVEFORM",
                 semiconductor_frequency_hz=result.waveform.switching_frequency_hz,

@@ -10,9 +10,8 @@ Work is continuing on explicit T05 floating-node dynamics, QR valley/data option
 and PSFB finite-Coss commutation; each remains opt-in with explicit source parameters.
 T05/QR/T18 now have independent circuit acceptance and actual desktop persistence/report tests.
 Concrete audit findings include calculator-session model identity, everyday Chinese
-result presentation and the precise documented Type-I network setup. A03 is now
-PARTIAL pending final independent review: its newly implemented desktop and explicit
-CLI consumers now run actual TD candidates, Apply, save/restore and report. The
+result presentation and the precise documented Type-I network setup. A03 now has independent acceptance of its actual desktop/CLI candidates, Apply,
+save/restore, reports and same-source formula PDF. The
 report/corner temperature mismatch is repaired and independently verified. A05
 real C99/FRA/LLC/PFC export boundaries are independently accepted after the fixes.
 
@@ -90,7 +89,7 @@ remain in the source tree.
   candidate consumers were absent, and LLC/Control Tools could announce successful
   C99 generation despite actual float32 verification failure. Those are being
   implemented with actual consumers; A05 has independent red/green acceptance,
-  while A03 final independent report/CLI review remains in progress. Source-engine
+  and A03 final independent report/CLI review has passed. Source-engine
   tests alone are insufficient.
 - Completed focused repairs: same-temperature nominal/corner reports, exact
   integrator-branch action/help, and toolbox model identity/Chinese presentation.
@@ -99,10 +98,13 @@ remain in the source tree.
   snapshots, real connected diagrams, complete branch selection, persistence/report
   and independent physical acceptance. QR initially missed valid finite-Ron points;
   the retained independent red/green evidence documents both repaired defects.
-- The current remaining confirmed consumer defect is LLC formula-PDF source
-  mixing: old FHA substitutions with TD-updated loss results. Exact waveform
-  input summaries and per-item source-aware formulas are being implemented.
-  CLI repeat-output mixing is repaired by requiring a new TwoStage directory.
+- LLC formula-PDF source mixing is repaired and independently checked against
+  actual raw TD arrays. Exact immutable waveform-input summaries and per-item
+  source-aware formulas preserve retained FHA approximations explicitly. CLI
+  repeat-output mixing is repaired by requiring a new TwoStage directory.
+- No concrete implementation defect remains open in the completed independent
+  audit cuts. A fresh full regression/RSS and strengthened actual production
+  frozen/wheel qualification are next; this is not yet an aggregate pass claim.
 - After these paths stabilize: freeze sources, rerun affected modules, then full
   regression/RSS and installed/frozen application checks. Linux evidence cannot
   establish unrun Windows/macOS or hardware/TI executable equivalence.

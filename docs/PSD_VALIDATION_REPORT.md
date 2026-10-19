@@ -386,3 +386,29 @@ QR ideal-Ron channel/Cnode statistics now carry a per-branch warning that ideal
 charge impulses are excluded, rather than leaving that limitation only in the
 model-wide warning list. A selected-device I²R overlay is explicitly fixed-waveform
 screening and does not imply an electrical rerun after changing the device.
+
+## A03 formula-consumer closure (2026-10-19)
+
+The mixed-source PDF defect is now repaired through a small immutable formula-input
+summary computed from the same accepted final-period waveform. It retains actual
+sample count/step/frequency, RMS/peak/mean values, signed RMS FFT phasors, iGSE
+flux-derivative moments, coefficients and final modeled temperatures. This is an
+input audit summary, not a second loss model or cached project authority. Existing
+historical analyses without the summary explicitly say NOT_AVAILABLE rather than
+reconstructing inputs from a result or substituting FHA values.
+
+Actual TD fs=99632.2080779 Hz is separated from the retained FHA reference
+99657.6636603 Hz. Primary 12.132669 W, SR 11.497172 W and Cr 0.396492 W now use
+matching numerical substitutions. Independent review recomputed 24 displayed
+expressions and compared RMS/FFT/flux inputs to raw exported TD CSV; all agreed
+within printed rounding, with FFT discrepancy ≤1.8e-15. The actual PDF text and
+rendered pages were checked, including per-point mixed TD/FHA provenance and
+remaining FHA commutation/ZVS assumptions. The 90-test formula/passive/TwoStage
+regression passed in 47.40 s; a final layout-only adjustment then passed 22 formula
+tests in 4.80 s. These are focused counts, not the pending full regression total.
+
+A03 bounded software consumption is independently accepted. Nominal-only evidence
+does not establish successful convergence/validity at all critical points; actual
+critical-point rejection remains a valid, explicitly retained result. No failed
+or unknown point is removed to make a candidate pass. Vendor/material/thermal,
+commutation approximations and physical operating limits remain visible.
