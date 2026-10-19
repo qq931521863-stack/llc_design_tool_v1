@@ -16,9 +16,12 @@ The clean worker-repair source `d81b160` passes its complete Linux suite
 (**4233 passed / 2 opt-in skips / 2 historical xfails**) and separate actual PFC
 long test (**1 passed, 950.01 s**), with unchanged source hashes and clean tracked
 GUI ownership categories at exit. Later drawing changes are not covered by that
-result. Shared-control, Type II/III and final-reference review, merged-source
-regression, current installed/frozen checks and native platform qualification
-remain separate gates. Formal publication remains paused.
+result. All fixed drawing/control/Type II/III/reference candidates now pass independent
+actual-consumer review. The merged drawing source preserves reviewed file bytes
+and passes separate 59-test control/window and 45-test complete-reference runs.
+New uncommitted-input and external-H(z) period/consumer-identity defects are being
+repaired in the next bounded batch. Final aggregate regression, current
+installed/frozen checks and native platform qualification remain separate gates. Formal publication remains paused.
 
 ## Current qualification boundary (2026-10-19)
 

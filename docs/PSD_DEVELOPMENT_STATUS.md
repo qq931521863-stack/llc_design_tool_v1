@@ -13,17 +13,25 @@ PSD terminal visibility, final winding/capacitor V/I references, aspect-preservi
 click mapping, dynamic label placement, shared control signal routing and actual
 Type II/III R/C symbols. Independent actual-image/click/project/report review
 has checked the initial drawing/click corrections and caught further alias/label
-defects that are retained in the audit history. Final control/compensator/reference review and
-merged-source qualification are still pending at this checkpoint.
+defects that are retained in the audit history. Fixed-source control/compensator/final-reference independent review is complete.
+The merged drawing checkpoint is `ebcd1fc6826e144c113cfa730eed50d1ad99a8a8`, with
+identical reviewed product files, a separate 59-test integrated control/window
+pass and a 45-test complete-reference pass. These focused runs do not replace
+full or installed/native qualification.
 
 The 1280×720 production PFC window preserves its size and uses the existing
 workspace scroll area for the larger Vienna page; standalone page minimum-size
 checks are not substituted for actual production-window reachability.
 
-Next: finish independent fixed-source reviews, integrate the bounded fixes,
-freeze and run the new source's full/long/installed/frozen gates, update exact
-source identities, then perform the authorized non-force main push and monitor
-actual native CI. Release/tag creation remains paused. Unsupported model domains,
+The next bounded real-user audit found uncommitted PSD numeric input being read
+as its previous value by toolbar actions, and a visible external-H(z) period
+that differs from the actual LLC consumer/ADC/export period. Separate isolated
+repairs are in progress; exact coefficients and legitimate saved snapshots must
+retain their contracts. Other submitted-input paths in the five-path audit pass.
+
+Next: close these input/identity defects with independent actual-action replay,
+then freeze once for full/long/installed/frozen qualification, update exact source
+identities, perform the authorized non-force main push and monitor native CI. Release/tag creation remains paused. Unsupported model domains,
 TI executable access and hardware/native-platform evidence remain separately
 identified in the feature matrix; this audit does not establish hardware safety.
 

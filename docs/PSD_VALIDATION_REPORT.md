@@ -39,9 +39,40 @@ CCM and **explicitly asserted DCM** cases cover 1280×720 and 1560×1100 selecti
 save/switch/restore, plotted data and HTML references. A former nominally
 "light-load" fixture was still CCM and is no longer counted as DCM evidence.
 Independent T15/T16/T17 DCM checks preserve numerical results and CSV bytes;
-maximum checked KVL residual is 3.56e-15 V. The later shared-control, compensator
-and complete final-reference candidates still require their independent final
-review and merged-source qualification at this checkpoint.
+maximum checked KVL residual is 3.56e-15 V. Independent review is now complete
+for the fixed drawing candidates, including all 17 control variants (476 actual
+clicks), all 26 final dynamic-PSFB device references (52 clicks plus save/reopen/
+plots/HTML), and the 10 affected static presets (15 branch clicks). Static and
+dynamic reference-only changes preserve non-reference numerical results and CSV
+bytes. The Type II/III review used 12 rendered size/mode cases and eight real
+main-window states; independent visible-network impedance agrees with the model
+within 9.8e-16 relative error. Production PFC 1280×720 scrolling, zoom, selection
+and real fullscreen were independently replayed with 52 clicks.
+
+Integration `ebcd1fc6826e144c113cfa730eed50d1ad99a8a8` preserves the exact reviewed
+product-file bytes. Integrated control/compensator/window/publication contracts
+passed **59 tests in 9.06 s** before the final reference-only commit; the complete
+merged reference suite then passed **45 tests in 68.97 s**. These are separate
+focused runs, not an aggregate or native-package pass.
+
+### Next bounded consumer audit: uncommitted inputs and external H(z)
+
+A five-path real GUI audit passed the submitted-input Buck, optional-physics T05,
+X01, X02 and X07 input/calculate/select/save/reopen/report chains, but found an
+uncommitted-editor defect. Typing Vin=24 over 12 without Enter/Tab and clicking
+"Recalculate" leaves the visible 24 while calculating at 12. Native save/export
+file dialogs commit the edit after revision capture and silently abandon output;
+an empty intermediate editor can be silently restored to the old value before
+saving or suggesting. A retained 15-action matrix covers valid, zero and empty
+input. This needs an explicit input-commit/validation boundary before actions.
+
+A separate actual launcher→Control Tools→LLC audit found that an editable external
+H(z) control-period field can show 30 µs while the active controller, ADC and C99
+still use 25 µs. Exact b/a coefficients must not be silently rediscretized to
+hide the mismatch. Shared live-source invalidation versus explicitly retained
+controller snapshots is being checked separately. These new consumer defects
+are tracked in a separate repair batch; they are not included in the completed
+drawing acceptance or hidden by prior pass counts.
 
 ### Completed worker-repair baseline; later drawing changes remain separate
 
