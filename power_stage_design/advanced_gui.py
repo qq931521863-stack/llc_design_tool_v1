@@ -47,6 +47,7 @@ class AdvancedModelWidget(QWidget):
         for key,label,scale in self.t05_fields:
             widget=self._number(getattr(T05Options(),key)*scale)
             widget.valueChanged.connect(lambda _v,key=key:self._edited('t05.'+key))
+            widget.lineEdit().textEdited.connect(lambda _text,key=key:self._text_edited('t05.'+key))
             self.t05_widgets[key]=widget;self.t05_form.addRow(label,widget)
         self.t05_iterations=QSpinBox();self.t05_iterations.setRange(1,200);self.t05_iterations.setValue(40)
         self.t05_iterations.valueChanged.connect(self._changed);self.t05_form.addRow('最大周期搜索迭代',self.t05_iterations)
@@ -71,6 +72,7 @@ class AdvancedModelWidget(QWidget):
         for key,label,scale in self.qr_fields:
             w=self._number((getattr(QROptions(),key) or (.1 if key=='on_resistance_ohm' else 0))*scale)
             w.valueChanged.connect(lambda _v,key=key:self._edited('qr.'+key));self.qr_widgets[key]=w;form.addRow(label,w)
+            w.lineEdit().textEdited.connect(lambda _text,key=key:self._text_edited('qr.'+key))
         self.qr_capacitance=QComboBox()
         for label,key in [('常数 Cnode（左侧谐振电容）','constant'),('电荷曲线 Q(V)','charge'),('微分电容曲线 C(V)','differential')]:self.qr_capacitance.addItem(label,key)
         self.qr_capacitance.currentIndexChanged.connect(self._changed);form.addRow('节点电容模型',self.qr_capacitance)
@@ -92,6 +94,7 @@ class AdvancedModelWidget(QWidget):
             ('zvs_voltage_tolerance_v','模型 ZVS 剩余电压上限 / V',1,1.)]
         for key,label,scale,default in self.psfb_fields:
             w=self._number(default*scale);w.valueChanged.connect(lambda _v,key=key:self._edited('psfb.'+key))
+            w.lineEdit().textEdited.connect(lambda _text,key=key:self._text_edited('psfb.'+key))
             self.psfb_widgets[key]=w;form.addRow(label,w)
         self.psfb_iterations=QSpinBox();self.psfb_iterations.setRange(10,500);self.psfb_iterations.setValue(80)
         self.psfb_iterations.valueChanged.connect(self._changed);form.addRow('周期搜索最大评估次数',self.psfb_iterations)
@@ -108,6 +111,11 @@ class AdvancedModelWidget(QWidget):
     def _edited(self,key):
         if not self._loading:self._exact.pop(key,None)
         self._changed()
+
+    def _text_edited(self,key):
+        # Retyping the rounded display may not emit valueChanged. An explicit
+        # user edit relinquishes the restored precision, exactly once.
+        if not self._loading and key in self._exact:self._edited(key)
 
     def _changed(self,*_):
         if not self._loading:self.changed.emit()
