@@ -37,7 +37,13 @@ def install_ttpl_device_loss_stage(pfc_window) -> TTPLDeviceLossView:
             identity, loss = result.request.core.core_data, result.total_loss_w
             if result.request.source_snapshot:
                 identity += "; user-declared reference model"
-        view.set_inductor_self_loss(loss, model_identity=identity)
+        req = result.request
+        operating_point = (
+            f"Vin={req.input_rms_v:g} V RMS; Vbus={req.bus_voltage_v:g} V; "
+            f"Po={req.output_power_w:g} W; fs={req.switching_frequency_hz / 1000:g} kHz; "
+            f"η={req.efficiency:g} (independent magnetic calculation point)"
+        )
+        view.set_inductor_self_loss(loss, model_identity=identity, operating_point=operating_point)
     editor.design_completed.connect(magnetic_result_ready)
     editor.design_invalidated.connect(lambda: view.set_inductor_self_loss(None))
 

@@ -212,12 +212,51 @@ def test_real_pfc_host_receives_actual_core_identity_and_clears_stale_loss(app):
     assert devices._inductor_self_loss_w == editor.last_result.total_loss_w
     assert "CS400060" in devices._inductor_model_identity
     assert "user-declared" in devices._inductor_model_identity
+    # Changing control inputs intentionally invalidates the prior device
+    # comparison; revisit the real device stage to refresh its sizing view.
+    host.control_lab_view.tabs.setCurrentWidget(devices)
+    for value in ("Vin=230 V RMS", "Po=1000 W", "fs=120 kHz", "η=0.97"):
+        assert value in devices._inductor_operating_point
+        assert value in devices.rollup_text.toPlainText()
     editor.source_selector.search.setText("CM035060")
     assert devices._inductor_self_loss_w is None
     assert devices._inductor_model_identity is None
+    assert devices._inductor_operating_point is None
     assert editor.last_result is None
     assert not control.inductor_result_view.figure.axes
     assert host.result is None
+    host.close(); host.deleteLater(); QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete); app.processEvents()
+
+
+@pytest.mark.parametrize("size", [(1366, 768), (1280, 720)])
+def test_real_pfc_small_window_preserves_scrollable_magnetic_actions(app, size):
+    from pfc_design.gui.main_window import PFCMainWindow
+    host = PFCMainWindow()
+    control = host.control_lab_view.control_lab
+    editor = control.inductor_editor
+    editor.material_path.setCurrentIndex(editor.material_path.findData("source_catalog"))
+    host.subtabs.setCurrentWidget(host.control_lab_view)
+    host.control_lab_view.tabs.setCurrentWidget(control)
+    control.input_tabs.setCurrentWidget(editor)
+    host.resize(*size); host.show(); app.processEvents()
+    assert (host.width(), host.height()) == size
+    inner = editor.parent()
+    while not isinstance(inner, qt.QScrollArea):
+        inner = inner.parent()
+    assert host.workspace_scroll.verticalScrollBar().maximum() > 0
+    assert host.workspace_scroll.horizontalScrollBar().maximum() > 0
+    for button in (editor.material_path, editor.source_selector.search, editor.source_selector.reference_button,
+                   editor.run_button, editor.save_magnetic_button, editor.open_magnetic_button,
+                   editor.report_magnetic_button):
+        inner.ensureWidgetVisible(button, 5, 5)
+        host.workspace_scroll.ensureWidgetVisible(button, 5, 5); app.processEvents()
+        for viewport in (inner.viewport(), host.workspace_scroll.viewport()):
+            assert viewport.rect().contains(button.mapTo(viewport, button.rect().center()))
+    # Existing workspace identity/navigation remains unchanged inside the scroll area.
+    for workspace in (host.control_lab_view, host.vienna_view, host.three_phase_view):
+        host.subtabs.setCurrentWidget(workspace)
+        assert host.subtabs.currentWidget() is workspace
+    assert any(bar.isVisible() for bar in host.findChildren(qt.QToolBar) if bar.parent() is host)
     host.close(); host.deleteLater(); QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete); app.processEvents()
 
 

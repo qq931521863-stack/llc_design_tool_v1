@@ -23,6 +23,7 @@ class PFCDeviceLossRollup:
     thd_percent: float | None = None
     capacitor_ripple: PFCCapacitorRipple | None = None
     inductor_model_identity: str | None = None
+    inductor_operating_point: str | None = None
 
     def hf_buckets(self) -> dict[str, float]:
         return {
@@ -115,6 +116,8 @@ class PFCDeviceLossRollup:
         if self.inductor_self_loss_w is not None:
             if self.inductor_model_identity:
                 lines.append(f"Inductor model: {self.inductor_model_identity}")
+            if self.inductor_operating_point:
+                lines.append(f"Inductor operating point: {self.inductor_operating_point}")
             lines.extend([
                 f"{'Inductor-self (component)':<32} {self.inductor_self_loss_w:12.5f}",
                 "Note: inductor-self loss is NOT added into semiconductor system total.",

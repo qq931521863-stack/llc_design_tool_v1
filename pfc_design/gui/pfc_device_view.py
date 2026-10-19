@@ -490,6 +490,7 @@ class TTPLDeviceLossView(QWidget):
         self._last_comparison = None
         self._inductor_self_loss_w: float | None = None
         self._inductor_model_identity: str | None = None
+        self._inductor_operating_point: str | None = None
         if self.design is not None:
             self.refresh()
 
@@ -534,9 +535,10 @@ class TTPLDeviceLossView(QWidget):
         self.database.refresh()
         self.refresh()
 
-    def set_inductor_self_loss(self, loss_w: float | None, *, model_identity: str | None = None) -> None:
+    def set_inductor_self_loss(self, loss_w: float | None, *, model_identity: str | None = None, operating_point: str | None = None) -> None:
         self._inductor_self_loss_w = None if loss_w is None else float(loss_w)
         self._inductor_model_identity = model_identity if loss_w is not None else None
+        self._inductor_operating_point = operating_point if loss_w is not None else None
         self._update_rollup()
 
     def refresh(self, *_args) -> None:
@@ -666,6 +668,7 @@ class TTPLDeviceLossView(QWidget):
             slow=slow,
             inductor_self_loss_w=self._inductor_self_loss_w,
             inductor_model_identity=self._inductor_model_identity,
+            inductor_operating_point=self._inductor_operating_point,
             waveform_source=comparison.waveform_source,
             capacitor_current_rms_a=comparison.capacitor_current_rms_a,
             capacitor_ripple=comparison.capacitor_ripple,

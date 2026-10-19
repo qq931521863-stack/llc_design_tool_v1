@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QScrollArea,
     QSizePolicy,
     QStatusBar,
     QTabWidget,
@@ -105,7 +106,14 @@ class PFCMainWindow(QMainWindow):
         self.subtabs.addTab(self.vienna_view, "Three-Phase Vienna PFC")
         self.three_phase_view = ThreePhaseDQView()
         self.subtabs.addTab(self.three_phase_view, "Three-Phase Two-Level dq / PLL")
-        self.setCentralWidget(self.subtabs)
+        # Some existing engineering pages have wide tables and tall plots.
+        # Keep their real layout and navigation intact, but make the full
+        # workspace scrollable instead of forcing a desktop-sized main window.
+        self.workspace_scroll = QScrollArea(self)
+        self.workspace_scroll.setObjectName("pfc_workspace_scroll")
+        self.workspace_scroll.setWidgetResizable(True)
+        self.workspace_scroll.setWidget(self.subtabs)
+        self.setCentralWidget(self.workspace_scroll)
 
         self._build_toolbar()
         self._build_statusbar()
