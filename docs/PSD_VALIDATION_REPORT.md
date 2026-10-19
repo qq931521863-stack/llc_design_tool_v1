@@ -1,5 +1,22 @@
 # Power Stage Designer validation report
 
+## Current aggregate rerun boundary (2026-10-19)
+
+The first combined-source run at `2738299` stopped with **376 passed and one
+failed test**; the remaining 4028 collected tests were not executed. The retained
+failure was an outdated expectation that immediate report export must raise while
+the debounce timer is active. Independent replay confirmed the new explicit-action
+contract recomputes valid current input: the HTML contains 13.25 V and its new
+identity, excludes the old identity, and all four loop responses exactly match the
+new plant. Invalid Vout=20 V still rejects export and preserves an existing file.
+The test now checks those actual data/loop identities and invalid-input protections;
+no application code or numerical threshold changed. **39 focused tests pass** after
+that test correction. This does not turn the interrupted aggregate into a pass;
+a fresh complete run remains required. Actual LLC independent consumers and the
+five original integrated-magnetics scripts already pass on the unchanged application
+bytes. Publication remains paused.
+
+
 ## Rendered-circuit audit and current source boundary (2026-10-19)
 
 A new audit of the actual Qt/SVG drawings found gaps that the earlier numerical

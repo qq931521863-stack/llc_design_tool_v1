@@ -1,5 +1,11 @@
 # Power Stage Designer feature matrix
 
+The current aggregate run is **not yet passed**: `2738299` stopped at 376 passes
+and one outdated immediate-export assertion. Independent actual HTML/loop replay
+verified current input and invalid-input protection; the test-only correction has
+39 focused passes. Complete regression is being repeated, with application bytes
+unchanged. See the validation report for exact red/green scope.
+
 ## Actual drawing consumer audit (2026-10-19)
 
 The feature rows below describe bounded capabilities. Earlier numerical/netlist

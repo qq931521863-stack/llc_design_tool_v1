@@ -77,9 +77,14 @@ def test_real_schematic_click_selects_matching_waveform_and_stress(app, window, 
 
 
 def test_rapid_edits_invalidate_immediately_and_only_latest_input_is_exported(app, window, tmp_path):
+    import html
+    import re
+    from power_stage_design.loop import Compensator, LoopPlant, analyze_loop
+
     initial_id = window.result.design_id
     window.analyze_loop()
-    assert window.loop_result is not None
+    initial_loop = window.loop_result
+    assert initial_loop is not None
     for value in (12.1, 12.2, 12.7, 13.25):
         window.input_widgets["vin_v"].setValue(value)
         assert window.result is None
@@ -87,10 +92,34 @@ def test_rapid_edits_invalidate_immediately_and_only_latest_input_is_exported(ap
         assert not window.report_action.isEnabled()
         assert not window.current_plot.listDataItems()
         assert not window.loop_gain_plot.listDataItems()
-    stale = tmp_path / "stale.html"
-    with pytest.raises(ValueError):
-        window.report_to(stale)
-    assert not stale.exists()
+    # An explicit export now commits/recomputes current valid input rather than
+    # waiting for the debounce timer. It must never export the previous result.
+    immediate = tmp_path / "immediate-current.html"
+    window.report_to(immediate)
+    assert window.result.inputs.vin_v == 13.25
+    immediate_text = immediate.read_text(encoding="utf-8")
+    assert window.result.design_id in immediate_text
+    assert initial_id not in immediate_text
+    assert "13.25" in immediate_text
+    snapshots = []
+    for block in re.findall(r"<pre>(.*?)</pre>", immediate_text, re.S):
+        try:
+            value = json.loads(html.unescape(block))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(value, dict) and {"inputs", "design_id", "loop_settings"} <= value.keys():
+            snapshots.append(value)
+    snapshot, = snapshots
+    assert snapshot["inputs"] == asdict(window.result.inputs)
+    assert snapshot["design_id"] == window.result.design_id
+    assert snapshot["loop_settings"]["plant"]["vin_v"] == 13.25
+    assert window.loop_result is not None and window.loop_result is not initial_loop
+    settings = snapshot["loop_settings"]
+    fresh_loop = analyze_loop(LoopPlant(**settings["plant"]),
+                             Compensator(**settings["compensator"]), window.loop_result.frequency_hz)
+    for name in ("plant_response", "compensator_response", "amplifier_response", "loop_response"):
+        np.testing.assert_array_equal(getattr(window.loop_result, name), getattr(fresh_loop, name))
+    assert np.max(np.abs(window.loop_result.loop_response - initial_loop.loop_response)) > 0
     QTest.qWait(180)
     app.processEvents()
     assert window.result.inputs.vin_v == 13.25
@@ -101,13 +130,22 @@ def test_rapid_edits_invalidate_immediately_and_only_latest_input_is_exported(ap
     assert window.result.design_id in text
     assert initial_id not in text
     assert "13.25" in text
-    assert "此报告没有当前工况的有效模拟环路结果" in text
+    assert window._loop_settings["plant"]["vin_v"] == 13.25
+    assert "此报告没有当前工况的有效模拟环路结果" not in text
     window.input_widgets["vout_v"].setValue(20.)
     QTest.qWait(180)
     assert window.result is None
     assert not window.report_action.isEnabled()
     assert not window.current_plot.listDataItems()
     assert "未得到有效设计" in window.status.text()
+    invalid = tmp_path / "invalid-current.html"
+    with pytest.raises(ValueError):
+        window.report_to(invalid)
+    assert not invalid.exists()
+    invalid.write_text("existing report", encoding="utf-8")
+    with pytest.raises(ValueError):
+        window.report_to(invalid)
+    assert invalid.read_text(encoding="utf-8") == "existing report"
 
 
 @pytest.mark.parametrize("topology", ["T01", "T02", "T09"])
