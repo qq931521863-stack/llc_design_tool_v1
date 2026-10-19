@@ -1,6 +1,96 @@
 # Power Stage Designer validation report
 
-## Fresh qualification after diagnostic repairs (2026-10-19)
+## Latest completed application regression and remaining gates (2026-10-19)
+
+The immutable application source
+`4f9f5b4513a62fa9c5effb1b4cad5beacf36daac` completed the full configured
+Linux/offscreen collection with **4140 passed, 2 skipped, 2 historical xfailed,
+43 warnings in 2728.51 s**, exit 0. JUnit contains 4144 outcomes, zero failures and
+zero errors; its four skip-encoded records consist of two actual skips and two
+expected failures. The worktree remained clean and all **760 tracked-file hashes**
+matched before/after. This is one completed run, not a sum of diagnostic segments.
+
+| Evidence | Result and exact scope |
+| --- | --- |
+| Complete regression | `final-regression/integrated-full-4f9f5b4`: `source.json`, `pytest.log`, `junit.xml`, `status.json`, `rss.csv`, `lifetime.jsonl`; source SHA above |
+| Ownership and resources | Final native owner roots, scenes, plots, menus and WidgetGroups all zero; peak aggregate RSS **1,847,560 KiB**, peak parent RSS **1,352,888 KiB**. This measured run is not a universal no-leak proof. |
+| Independent integrated-LLC consumers | All five consumer/identity/boundary/FHA-projection/TD-label scripts PASS at the same exact SHA; unchanged source hashes. Evidence set: `integrated-merge-qa/4f9f5b4513a62fa9c5effb1b4cad5beacf36daac`. |
+| Opt-in real switched-PFC desktop test | **PASS: one actual shared-ngspice desktop/consumer case in 825.16 s, exit 0, exact 4f9f5b4**; remains skipped in the aggregate and is counted only in its separate serial run. |
+| Opt-in finite-Coss PSFB joint sizing | **PASS: one finite-Coss joint-sizing case in 495.49 s, exit 0, exact 4f9f5b4, including 18 forward evaluations and independent extrema**; remains skipped in the aggregate and is counted only in its separate serial run. |
+| Installed wheel and actual Linux frozen application | **PASS for the actual installed-wheel and Linux frozen schema-4 runs at 759a8fb; source-collection audit is recorded separately below**: both runtime checks completed successfully from an isolated installed wheel, with original proof bytes retained. No older artifact result is substituted. |
+| Native Windows/macOS | **pending actual Windows/macOS CI qualification on the pushed source**: both native package/startup/frozen proofs remain separate gates; Linux/offscreen checks do not satisfy them. |
+
+The two existing expected failures are
+`backend.tests.test_control_api::test_compensator_design_meets_bandwidth_and_phase_margin`
+and `::test_loop_gain_api_reports_margins`. They document the single-2P2Z
+attainable-phase-margin limit with the chosen EDF plant (approximately 25 degrees
+at 5 kHz, below the requested 45 degrees). They are not newly hidden regressions
+or passed control targets. The two opt-in skip reasons and the 43 warnings remain
+in the raw log; skipped and expected-failure cases are not counted as passes.
+
+### Exact installed/frozen artifact provenance
+
+The source-isolated installed wheel and actual PyInstaller Linux executable both
+completed the production schema-4 self-test and strict bundle validator at
+`759a8fb54a0443a2e97125335dc69b61b5942ec7`. All six workspaces, real PSD/bridge
+suggestions, TwoStage consumers, CSC selection and integrated-LLC default HB,
+cancellation/timeout, save/recompute/report consumers are exercised.
+
+The enclosing preparation command initially exited 1 after these runtime passes:
+its separate provenance helper treated PyInstaller's `-` namespace marker as a
+real file path. That red log and empty output remain intact. The outside-product
+helper now accepts only actual namespace directories without `__init__.py`, and
+validates exact runtime-specific import paths and bounded wall times rather than
+requiring these inherently different values to match. **78 helper/negative cases
+and the actual collection audit pass**: 377 installed-wheel module sources and
+17 resources match the frozen source bytes; one namespace is verified. Exactly
+seven fields differ (frozen flag, three import locations, three bounded durations);
+every other semantic/numerical field matches exactly. Product source, artifacts
+and original proof bytes were unchanged. This repair did not rerun or relabel the
+application regression, and did not weaken the production bundle validator.
+
+- Wheel SHA-256: `2638343c5797b5371e4204d9e4253e7ee454ce7a574e5905cf52946cfe8ba843`.
+- Installed-wheel proof SHA-256: `d29df14e39a1e0ff5a043e01934eb837fa04de59e02b467c4cf27785ffcf63e0`.
+- Linux frozen proof SHA-256: `83b0c0652f4a18c983dafd2faa4c62e91aae3d8d5c0941affecddee3687579e5`.
+- Linux executable SHA-256: `fa81dc0db058cede0f163e4459366c6dac2b5c260f8c2512c6f314b6c1f6d55b`.
+
+Original logs, proofs, collection audit, repair counterexamples and the separate
+exit-status summary remain in the `completion-artifact-qa` evidence set. PFC's
+101 warnings include font fallback warnings; the original run and screenshots
+are retained. No warning, historical xfail or failed preparation command is
+silently counted as a passing test.
+
+### Application source versus final artifact and pushed source
+
+- **Application full-regression SHA:** `4f9f5b4513a62fa9c5effb1b4cad5beacf36daac`.
+- **Integrated CI-only pause:** `759a8fb54a0443a2e97125335dc69b61b5942ec7` changes exactly
+  two publication-job guards to literal false and adds 11 pause-contract cases.
+  Independent focused release-contract qualification is **415 passed, including
+  those 11**, not 426. This result is not a second full-suite run or native proof.
+  Integration status: **integrated by local fast-forward; all application/resource bytes remain identical to 4f9f5b4**.
+- **Artifact build SHA:** **759a8fb54a0443a2e97125335dc69b61b5942ec7**; **final intended push
+  SHA:** **recorded externally in the final delivery and remote-commit mapping after this documentation commit**. These identities remain separate.
+  The final certificate enumerates every delta from the application-test SHA and
+  confirms unchanged application code/resources. The approved CI-only/docs delta
+  does not require repeating the full suite; it also must not be described as a
+  full run on the later SHA. Any additional application/resource change requires
+  renewed qualification rather than this exemption.
+- **Remote main:** **authorized after qualification, but not yet performed at this documentation checkpoint; inspect the corresponding GitHub Actions run and final transfer record**; no remote write is claimed
+  by this documentation checkpoint. The verified remote SHA belongs in the final transfer record.
+- **Formal release:** paused. Source integration/push, CI validation/build and
+  public tag/release publication are separate actions. A successful source push
+  does not authorize or establish a published 9.9.0 release.
+
+All application evidence is bounded by the detailed feature matrix. Exact TI
+executable correlation remains unverified; unsupported physical models are
+separate engineering limits. Native platforms, vendor-data accuracy, new bench correlation, thermal/EMI and
+hardware safety remain unqualified unless separately proven. Existing measured-FRA
+import/analysis capabilities are not a hardware sign-off.
+The earlier red, interrupted and diagnostic-only records below are retained as
+history; their former pending statuses are superseded only by the specific
+completed gates above.
+
+## Historical qualification after diagnostic repairs (2026-10-19)
 
 The diagnostic-only tail completed with 1279 pass, 2 expected failures and
 3 failures. One existing TD-loss GUI test double lacked the new cooperative
@@ -22,7 +112,7 @@ Publication remains paused, with native Windows/macOS, TI executable correlation
 and hardware validation still separate unfulfilled gates.
 
 
-## Latest immutable aggregate and T15 independent diagnosis (2026-10-19)
+## Historical failed aggregate and T15 independent diagnosis (2026-10-19)
 
 At clean source `bfb0e54067eebb973811213a671e9906dca0f6c6`, the full 4140-case
 collection stopped at the first failure with **1353 passed, 1 skipped, 1 failed**
@@ -66,7 +156,7 @@ The later lifecycle diagnostic failure is the same missing-translation cause,
 not evidence of a second resource defect. Complete qualification of the corrected source remains open.
 
 
-## Latest completion qualification correction (2026-10-19)
+## Historical completion qualification correction (2026-10-19)
 
 Integrated-LLC leakage resonance is locally implemented in `c06f1d5`. Independent
 review corrected two unsafe substitutions: balanced-MMF leakage energy is not
@@ -160,7 +250,7 @@ is described in the source magnetic catalog section below. Actual new-source
 aggregate and installed/frozen qualification remain pending; missing model
 conventions and conflicts are never filled from legacy defaults.
 
-## Current re-audit and terminated aggregate run (2026-10-19)
+## Historical re-audit and terminated aggregate run (2026-10-19)
 
 Source `3d2f9fbd020fd0b9513f6f9e5950de5c31dfb38e`: 3502 collected;
 2508 PASS + 1 SKIP recorded before SIGKILL (-9), 1741.417 s. No completed
@@ -645,7 +735,7 @@ critical-point rejection remains a valid, explicitly retained result. No failed
 or unknown point is removed to make a candidate pass. Vendor/material/thermal,
 commutation approximations and physical operating limits remain visible.
 
-## Final qualification source freeze
+## Historical qualification source freeze
 
 Artifact qualification now requires production proof schema 3, including all
 47 optional-model branches, exact recomputation/plot/report data and a real

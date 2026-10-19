@@ -1,6 +1,62 @@
 # Power Stage Designer development status
 
-## Fresh qualification after diagnostic repairs (2026-10-19)
+## Latest completion checkpoint (2026-10-19)
+
+The requested software workflows and follow-on integrated-LLC/CSC additions are
+implemented within their declared domains. The clean application checkpoint
+`4f9f5b4513a62fa9c5effb1b4cad5beacf36daac` completed the full configured
+Linux/offscreen regression: **4140 passed, 2 opt-in skips, 2 historical xfails,
+43 warnings**, exit 0 in 2728.51 s. All 760 tracked-file hashes were unchanged;
+final native owner/scene/plot/menu/group counts were zero. Five independent
+integrated-LLC consumer/identity/boundary/projection/TD-label scripts pass on
+that exact source. This closes the previously incomplete aggregate gate for
+that application SHA, without erasing its earlier red runs.
+
+- **Priority workflows:** T01 Buck, T02 Boost and T03 inverting Buck-Boost have
+  actual CCM/BCM/DCM component/project/report paths. T05's two-switch optional
+  dynamics, T17's ordinary/joint light-load sizing, T18's declared PSFB models and
+  T20/T21's existing LLC consumers retain their topology-specific domains. See
+  the [current per-priority summary](PSD_FEATURE_MATRIX.md#latest-application-qualification-and-supported-scope-2026-10-19).
+- **Desktop entry:** Power Stage Designer is the first-level launcher card;
+  direct CLI/module entry and existing workspaces remain available. Linux Qt
+  720p/768p/900p layout evidence is separate from native platform qualification.
+- **Integrated LLC:** separate-Lr remains the default; declared two-winding
+  leakage resonance reaches real physical-flux/winding/loss/thermal, optimization,
+  save/reopen and report consumers. Unsupported CT/star and magnetizing-series-R
+  domains and FHA/EDF display projections remain explicit.
+- **CSC catalog:** 630 explicit parts, 318 source-specific geometries and 44
+  printed formulas supplement 46 complete presets and 137 legacy references.
+  Actual PFC/LLC consumers retain missing-data and source-conflict boundaries.
+- **Long gates:** one actual switched-PFC desktop case passed in 825.16 s;
+  one finite-Coss PSFB joint-sizing case passed in 495.49 s, including 18 actual
+  forward evaluations and independent extrema. Both used exact 4f9f5b4 and
+  retained separate JUnit/source-hash records; the aggregate skip count is unchanged.
+- **Artifacts:** the isolated installed wheel and actual Linux frozen application
+  pass the schema-4 consumer checks at
+  `759a8fb54a0443a2e97125335dc69b61b5942ec7`. The final source-collection audit and
+  its retained preparation failure are documented in the validation report.
+- **Source identities:** artifact source differs from application-tested 4f9f5b4
+  only by the exact two publication guards and 11 new tests. The independent
+  release-contract group has 415 passes including those 11. The final documentation
+  commit and mapped remote SHA are recorded in the delivery/transfer manifests;
+  the complete application run is never attributed to that later SHA.
+- **Publication:** formal release remains paused. Main push is authorized after
+  qualification, but had not yet occurred at this documentation checkpoint.
+  Actual remote CI/native results remain separate verification records.
+
+Remaining work has two categories. Model extensions still exclude, among other
+row-specific domains, asymmetric bridge/reset physics, nonlinear commutation,
+zero-load/burst policies and missing vendor/thermal data. External verification
+still includes exact TI executable correlation, both native platforms, new
+bench/thermal/EMI correlation and hardware safety. TI access does not explain or resolve the
+unsupported model domains. The [validation report](PSD_VALIDATION_REPORT.md)
+records each evidence level and the source/artifact distinction.
+
+Earlier dated checkpoints below are historical. Preserve their failures and
+corrections; read their then-current pending/no-push statements in the context
+of those checkpoints, with this section governing the latest status.
+
+## Historical qualification after diagnostic repairs (2026-10-19)
 
 The diagnostic-only tail completed with 1279 pass, 2 expected failures and
 3 failures. One existing TD-loss GUI test double lacked the new cooperative
@@ -22,7 +78,7 @@ Publication remains paused, with native Windows/macOS, TI executable correlation
 and hardware validation still separate unfulfilled gates.
 
 
-## Latest aggregate red and narrow correction (2026-10-19)
+## Historical aggregate red and narrow correction (2026-10-19)
 
 The clean `bfb0e54067eebb973811213a671e9906dca0f6c6` full run stopped normally
 with exit 1 after **1353 passed, 1 skipped, 1 failed** of 4140 collected cases.
@@ -58,7 +114,7 @@ PASS. A fresh complete-source run, opt-in long PFC and actual installed/frozen
 qualification remain mandatory. Publication remains paused.
 
 
-## Active completion extension and lifecycle gate (2026-10-19)
+## Historical completion extension and lifecycle gate (2026-10-19)
 
 The latest user addition is integrated LLC resonant magnetics: preserve the
 separate-Lr default and add transformer-leakage resonance with actual electrical,
@@ -113,7 +169,7 @@ same lifetime checks. A fresh immutable full-suite,
 long-PFC and installed-wheel/actual Linux frozen run will follow integration;
 native Windows/macOS proof remains a separate release condition.
 
-## Current direction: finish remaining functions before publication
+## Historical direction before final qualification
 
 Publication is paused. No remote push, CI dispatch, tag or release was performed.
 Version 9.9.0 and release preflight changes remain local preparation only.
@@ -131,7 +187,7 @@ save/restore, reports and same-source formula PDF. The
 report/corner temperature mismatch is repaired and independently verified. A05
 real C99/FRA/LLC/PFC export boundaries are independently accepted after the fixes.
 
-## Active full-matrix repair and aggregate resource gate
+## Historical full-matrix repair and aggregate resource gate
 
 The frozen priority snapshot `3d2f9fbd020fd0b9513f6f9e5950de5c31dfb38e`
 collected 3502 cases but its single-process pytest child exited by SIGKILL (-9)
@@ -159,7 +215,7 @@ remains the next gate. Next: checkpoint exact source; run complete configured re
 opt-in long switched-PFC GUI, then newly built wheel and real Linux freeze. Native
 Windows/macOS and TI executable correlation remain separate unrun gates.
 
-## 9.9.0 integration
+## Historical 9.9.0 integration checkpoint
 
 The M0–M5 implementation exists; the new full-matrix repair cycle remains active
 before fresh release qualification. The maintained scope is the [50-ID matrix](PSD_FEATURE_MATRIX.md);
@@ -214,7 +270,7 @@ available in Python). X04 exposes its named approximate printed-equation RMS,
 not a thermal-qualified current. Detailed LLC HB points that do not converge
 invalidate export; successful neighboring points do not establish whole-domain convergence.
 
-## Source and publication integrity
+## Historical source and publication integrity checkpoint
 
 The recovered development source is identified in [the validation report](PSD_VALIDATION_REPORT.md).
 Its old local Git object IDs are provenance, not claimed remote commits.
@@ -226,7 +282,7 @@ Large raw simulation records and iterative debug archives are not bundled into
 the public application assets; maintained tests and these engineering boundaries
 remain in the source tree.
 
-## Active completion checkpoint (2026-10-19)
+## Historical completion checkpoint (2026-10-19)
 
 - Publication is paused by the user's latest instruction. No remote commit,
   workflow dispatch, tag or release was created in this resumed pass.
@@ -255,7 +311,7 @@ remain in the source tree.
   regression/RSS and installed/frozen application checks. Linux evidence cannot
   establish unrun Windows/macOS or hardware/TI executable equivalence.
 
-## Strengthened artifact gate
+## Historical artifact-gate implementation checkpoint
 
 The historical production `packaging/launcher.py --self-test` used proof schema 3.
 Current schema 4 additionally requires source-backed magnetic and integrated-LLC
@@ -270,7 +326,7 @@ passed at the historical freeze. The priority extension below has its own fresh 
 self-test outside the repository. A separate QA executable is not substituted.
 
 
-## Latest priority checkpoint
+## Historical priority checkpoint
 
 - Buck/Boost/inverting Buck-Boost actual nine-mode workflows independently pass.
 - Advanced T05/T18 parameter proposals now preserve typed options and support
@@ -296,7 +352,7 @@ self-test outside the repository. A separate QA executable is not substituted.
 - Publication is still paused. No remote write, CI dispatch, tag or release has
   been performed during this work.
 
-### Priority qualification freeze
+### Historical priority qualification freeze
 
 All requested Buck/Boost/Buck-Boost/full-bridge repair owners have finished their
 source edits. The source is being committed locally for a fresh, sequential

@@ -7,13 +7,13 @@ Power Stage Designer · LLC · DAB TPS · Totem-Pole PFC · Vienna / Two-Level P
 [![Build & Test](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml)
 [![ngspice Smoke](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml)
 ![Python](https://img.shields.io/badge/Python-%3E%3D3.10-blue)
-![Version](https://img.shields.io/badge/version-9.9.0-informational)
+![Source version](https://img.shields.io/badge/source-9.9.0--dev-informational)
 [![GitHub Release](https://img.shields.io/github/v/release/yangshuai2022-star/power-design-toolkit)](https://github.com/yangshuai2022-star/power-design-toolkit/releases/latest)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 
 Power Design Toolkit is an engineering-oriented power-electronics design and digital-control platform. It connects **power-stage design, component/loss screening, multi-fidelity models, measured FRA data, exact discrete controller H(z), stability analysis, C99 code generation, firmware-correlated switching co-simulation and Agent/API access** in one codebase.
 
-**v9.9.0 development source:** Power Stage Designer, shared-waveform LLC/PFC analysis and session/export safeguards. Publication is paused while the requested converter workflows and desktop layout receive final qualification. Native Windows/macOS package verification is pending. The published [v9.8.1 binary baseline](https://github.com/yangshuai2022-star/power-design-toolkit/releases/tag/v9.8.1) predates these additions; see [Install and run](#8-install-and-run) for source installation and release targets.
+**v9.9.0 development source:** Power Stage Designer, shared-waveform LLC/PFC analysis, integrated LLC resonant magnetics, source-backed CSC selection and session/export safeguards. The application checkpoint `4f9f5b4` completed its configured Linux regression with 4,140 passes; both opt-in long tests and the new installed-wheel/Linux frozen runtime checks **passed separately on their documented source identities**. Native Windows/macOS verification is also pending, and formal release remains paused. The published [v9.8.1 binary baseline](https://github.com/yangshuai2022-star/power-design-toolkit/releases/tag/v9.8.1) predates these additions. See [validation and exact source identities](docs/PSD_VALIDATION_REPORT.md) and [Install and run](#8-install-and-run).
 
 ## Current capabilities
 
@@ -30,7 +30,7 @@ One toolkit connects power-stage design, magnetics, loss estimation, voltage/cur
 | **Vienna PFC** | ABC current control, DC-bus/midpoint balance, three-level modulation, sectors/waveforms, RMS/peak currents, PF/ITHD, device/core/capacitor losses and two center-switch implementations | PFC → Vienna; [analysis scope (Chinese)](docs/engineering-expansion.md#电流损耗与效率的范围) |
 | **Three-PLL comparison** | SRF, DDSRF and dual-SOGI positive-sequence PLLs under identical inputs; locking, phase error, frequency ripple, ABC/positive-sequence outputs, diagrams, CSV and C99 | Two-Level / Vienna → PLL Comparison; DDSOGI denotes DSOGI here |
 | **Digital control and multi-harmonic PR** | PI/PIF/PID/Type-II/III and more; selectable quasi-PR harmonics 1/3/5/7/9/11, branch/combined Bode, float32 coefficients and C function export | Control Tools; [PR equations and coefficients (Chinese)](docs/MULTI_PR_AND_MAGNETICS.md) |
-| **Core/material database** | 46 complete core/bobbin presets, 137 legacy reference records, search/filter/parameter loading, source/anomaly tracking and measured CSV comparisons | LLC → Transformer Design → Core Catalog |
+| **Core/material database** | 46 complete core/bobbin presets and 137 legacy references, plus 630 explicit CSC part numbers, 318 source-specific geometries and 44 printed bias/loss formulas; source/conflict tracking, bounded calculations and saved identity | LLC → Transformer Design → Core Catalog; PFC → TTPL / Vienna → Inductor Design → CSC PDF source catalog |
 | **Magnetic models and complex impedance** | Waveform-based iGSE, Litz/Dowell loss, complex-impedance fitting/SPICE, and an optional 3C90 residual model that passed an independent-test gate | [Magnetic modeling, data and AI validation (Chinese)](docs/engineering-expansion.md#ai-的独立验证与接入边界) |
 | **FRA and measured tuning** | Bode100/SIMPLIS/CSV import, existing-controller de-embedding, Fc/PM/GM/Ms/Mt, automatic design, measured PI tuning map and MATLAB/Python research exports | FRA Loop Designer; [measured tuning map](docs/FRA_TUNING_MAP.md) |
 | **Web / Agent** | FastAPI/Web and MCP interfaces backed by shared deterministic kernels | [Web](docs/WEB_DEPLOYMENT.md) / [MCP](docs/AGENT_MCP.md); desktop additions do not automatically add API coverage |
@@ -154,7 +154,7 @@ Click the first launcher card, **功率级设计 / Power Stage Designer → 进�
 
 **Controller export evidence:** the LLC, Control Tools and FRA exact C99 paths release a usable header only after the actual host float32 compile/run check passes. FAIL or NOT_RUN headers are compile-blocked diagnostics with hash-bound evidence. PFC semantic firmware templates separately label configuration checks, numerical verification and hardware status. A host-gcc PASS does not qualify an MCU, ISR timing or a board.
 
-**Acceptance boundary:** the register contains 33 top-level stage/tool items. Its historical row count is 30 verified-in-scope and three partial items, two-switch Buck-Boost, QR Flyback and PSFB, whose exact TI executable strategies/domains remain unverified. The 11 nested loop plant/network items and six enhancements are counted separately. Missing device/thermal data, nonlinear commutation, measured FRA and hardware validation are not inferred from passing software tests. The complete 2026-10-19 re-audit found and repaired further model/consumer gaps; fresh aggregate and artifact qualification is in progress, so historical counts are not current release acceptance. Native Windows/macOS validation of this PSD update remains pending.
+**Acceptance boundary:** the register covers 33 top-level stage/tool items, 11 nested loop plant/network items and six enhancements, for 50 explicit IDs. Its 30 verified-in-scope and three partial top-level labels are bounded capability labels, not release or hardware certification. Two-switch Buck-Boost, QR Flyback and PSFB retain unverified exact TI executable policies. Separately, unsupported model domains include asymmetric bridge/reset behavior, nonlinear commutation and zero-load/burst extensions where their rows exclude them; missing device/thermal data remain unknown. The complete 2026-10-19 application regression passed at `4f9f5b4` with the explicit skips/xfails described below. The two long tests and local wheel/Linux frozen runtime gates pass separately; native Windows/macOS qualification remains pending. Existing measured-FRA analysis remains available; these software results do not establish new bench correlation, thermal/EMI or hardware safety. See the [per-priority topology scope](docs/PSD_FEATURE_MATRIX.md#latest-application-qualification-and-supported-scope-2026-10-19).
 
 See the [feature matrix](docs/PSD_FEATURE_MATRIX.md), [validation report](docs/PSD_VALIDATION_REPORT.md) and [development status](docs/PSD_DEVELOPMENT_STATUS.md) for the supported domains, independent checks and remaining gates.
 
@@ -281,8 +281,9 @@ The winding screen includes insulation spacing, required build and unreachable
 leakage targets. Its labeled reference examples are software models, not tested
 hardware. Saved inputs, calculation books and formula PDFs retain source identity,
 the physical/APR distinction and geometry limits. See the [integrated LLC workflow](docs/magnetics/integrated_llc_workflow.md)
-for input definitions and the two-winding/full-bridge-secondary scope. Final
-integrated-source GUI and artifact qualification is still in progress.
+for input definitions and the two-winding/full-bridge-secondary scope. Five
+independent actual consumer/identity/boundary/projection/TD-label checks pass on
+application source `4f9f5b4`; the installed wheel and actual Linux frozen runtime checks also pass. Native Windows/macOS qualification remains separate and pending.
 
 ### Source-backed powder-core selection
 
@@ -540,7 +541,7 @@ analytical model
 
 Passing an earlier stage is evidence, not permission to skip a later stage.
 
-The tested PSD/shared-consumer source checkpoint `bfc8bd9` completed the full ten-package Linux regression with **2,864 passed, one explicit long-test skip and two existing expected failures**, including process teardown. The skipped long real-PFC GUI case was run separately on the same production code and exited successfully. Installed-wheel CLI/resources and real offscreen Qt save/reopen/recompute/report checks also passed. These are checkpoint-specific software results, not a claim that a later release build, native Windows/macOS package or hardware has passed. See [PSD validation](docs/PSD_VALIDATION_REPORT.md).
+The latest complete application regression ran on clean source `4f9f5b4513a62fa9c5effb1b4cad5beacf36daac`: **4,140 passed, 2 opt-in skips, 2 historical expected failures and 43 warnings in 2,728.51 s**, exit 0, with all 760 tracked-file hashes unchanged. Final native owner/scene/plot/menu/group counts were zero; peak aggregate RSS was 1,847,560 KiB. The skips are the long real-PFC GUI and finite-Coss PSFB joint-sizing cases; both separate reruns passed on the same exact application source, and the installed-wheel/Linux frozen runtime checks passed on `759a8fb54a0443a2e97125335dc69b61b5942ec7`. The expected failures retain the backend single-2P2Z attainable-phase-margin limit. The final artifact/push SHA and any CI/docs-only source difference must be recorded separately; this full result must not be relabeled as a run on a later SHA. Earlier `bfc8bd9` results remain historical. See [PSD validation](docs/PSD_VALIDATION_REPORT.md).
 
 ### Magnetic and optimization benchmarks
 

@@ -1,6 +1,48 @@
 # Power Stage Designer feature matrix
 
-## Qualification status after final diagnostic tail (2026-10-19)
+## Latest application qualification and supported scope (2026-10-19)
+
+Application source `4f9f5b4513a62fa9c5effb1b4cad5beacf36daac` completed the
+configured Linux/offscreen regression: **4140 passed, 2 opt-in skips, 2 historical
+expected failures**, 43 warnings, exit 0. All 760 tracked-file hashes were
+unchanged. The aggregate retains its two skips; each long test passed in a separate serial run on the same exact application source.
+The five independent integrated-LLC consumer, identity, boundary, FHA-projection
+and TD-label scripts also pass on this exact application source.
+
+| Requested priority | Implemented and software-checked scope | Limits that remain |
+| --- | --- | --- |
+| T01 Buck | Ideal periodic CCM/BCM/DCM, finite diode drop, same-result component V/I and stress, sizing, save/recompute/report; VMC and peak-CMC analog plants | No synchronous forced-CCM or nonlinear switching model; analog plants require strict CCM |
+| T02 Boost | Ideal periodic CCM/BCM/DCM, finite diode drop, actual component/sizing/project/report workflows; peak-CMC analog plant | No synchronous forced-CCM or nonlinear switching model; analog plant requires strict CCM |
+| T03 Inverting Buck-Boost | Signed negative output, asynchronous CCM/BCM/DCM, actual component/sizing/project/report workflows; peak-CMC analog plant | Forced synchronous operation and nonlinear parasitics excluded; analog plant requires strict CCM |
+| T05 Two-Switch Buck-Boost | Simultaneous-gated ideal CCM/BCM and opt-in finite-Coss/Ron/diode/winding periodic dynamics, including floating-node DCM; typed physical-option suggestions and actual consumers | Constant-capacitance/resistance assumptions; nonlinear Coss, recovery and startup excluded; no four-switch substitution or generic analog-loop plant; exact TI control policy unverified |
+| T17 Full Bridge | Symmetric center-tap rectification; ordinary/joint CCM, BCM and DCM; actual Lout/Lm/ratio target reanalysis and component/project/report consumers | Asymmetric timing/flux, primary body-diode-clamped reset, nonlinear parasitics and unsupported commutation sub-modes excluded; no generic analog-loop plant |
+| T18 Phase-Shifted Full Bridge | Ideal CCM/diode-secondary BCM/DCM; opt-in seven-state constant-Coss/Ron positive-CCM commutation and per-gate ZVS; explicit Lout/Lm/ratio targets | Nonlinear Qoss, recovery, zero-load/burst and switched closed-loop behavior excluded; no generic analog-loop plant; exact TI policy unverified; separate finite-Coss joint-sizing long test passed |
+| T20 LLC Half Bridge | Existing FHA/HB/ideal TD engine with actual bridge identity, component views, saved-input recomputation and reports | Model-specific convergence and commutation limits; ideal midpoint-source current is underdetermined and remains unavailable |
+| T21 LLC Full Bridge | Existing FHA/HB/ideal TD engine, Co ESR, modeled series resistance and signed DC-bus component views; separate or integrated resonant magnetics with actual consumers | Model-specific convergence limits; integrated magnetics requires declared linear two-winding data, physical/APR flux separation and feasible geometry; CT/star and nonzero magnetizing-series-R paths are unsupported |
+
+T15 Half Bridge and T16 Push-Pull also support ordinary/joint CCM, BCM and DCM
+sizing, with their own pulse amplitudes and turns conventions. T15's finite split-C
+ripple reconstruction retains a nominal-midpoint first-order magnetic model and
+a 10% individual ripple limit; it is not a coupled finite-C transient model.
+
+The separate CSC addition preserves **630 explicit part numbers, 318 source-specific
+geometries and 44 printed formulas**. It supplements the **46 complete presets and
+137 legacy references**; geometry/availability data do not become complete material
+models. Missing conventions, data and source conflicts remain explicit.
+
+These are bounded software capabilities. Unsupported physical/model domains are
+listed above and in the detailed rows; they are not all blocked by TI access.
+Separately, exact TI executable correlation, native Windows/macOS qualification,
+new device/material/thermal/bench correlation and hardware safety validation
+remain unverified. The installed-wheel/Linux frozen runtime checks and both separately executed long tests pass; the validation report records their individual source identities and audit results. Formal release remains paused. Final artifact/push
+SHA and any CI/docs-only difference are recorded separately in the
+[validation report](PSD_VALIDATION_REPORT.md).
+
+Earlier dated qualification sections below are retained as historical checkpoints.
+Their failures and incomplete runs remain visible; their then-pending statements
+are superseded by the latest evidence above, not combined into its pass count.
+
+## Historical qualification status after the diagnostic tail (2026-10-19)
 
 The T15 source-boundary, new shell translations, cancellation-aware test double
 and immutable historical release fixture are repaired with focused evidence.
@@ -11,7 +53,7 @@ red/green diagnostic segments are not an aggregate PASS. Model-domain limitation
 below remain unchanged, and publication remains paused.
 
 
-## Latest T15 source-boundary correction (2026-10-19)
+## Historical T15 source-boundary correction (2026-10-19)
 
 T15's equal split-C/stiff-total-bus model requires instantaneous source current
 (Q1+Q2)/2, not the reported input-current cycle mean. An independent 16-vector
@@ -32,7 +74,7 @@ silently promoted by the KCL repair. X12's input is explicitly labeled average
 current; its operating-point calculation and imported metric are unchanged.
 
 
-## Latest acceptance additions and corrections (2026-10-19)
+## Historical acceptance additions and corrections (2026-10-19)
 
 - New user requirement: integrated LLC transformer-leakage resonance is implemented
   alongside the separate-Lr default (`c06f1d5`), separate from the original 50 IDs.
@@ -70,7 +112,7 @@ current; its operating-point calculation and imported metric are unchanged.
 The stopped `0dfd790` aggregate recorded 965 PASS and 1 FAIL, not a complete pass.
 All new changes require fresh integrated-source qualification before any release.
 
-## Current full-matrix completion repairs (2026-10-19)
+## Historical full-matrix completion repairs (2026-10-19)
 
 The task was re-read in full and all 50 IDs traced to their actual inputs, kernels,
 desktop consumers, persistence and exports. This found real software omissions;
@@ -100,19 +142,18 @@ The comparison baseline is TI Power Stage Designer 01.00.00.0D (2023-02-23),
 [SLVUBB4B](https://www.ti.com/lit/ug/slvubb4b/slvubb4b.pdf), rather than later
 supplementary articles. [Official product page](https://www.ti.com/tool/POWERSTAGE-DESIGNER).
 
-There are **33 top-level alignment items** (T01–T21 + X01–X12):
-**historical row labels: 30 VERIFIED_IN_SCOPE and 3 PARTIAL**.
-These labels are not current release acceptance: the complete 2026-10-19 re-audit
-found ten implementable model/consumer gaps across T15/T16/T18, X01/X02/X07/X10/X12,
-L/C and A06. The repairs and new acceptance gates below supersede any earlier
-blanket completion statement. The six plants and five networks are
-11 nested X11 subitems, not 11 extra top-level features. All six enhancements have implemented consumers in their stated software domains;
-A06 restore/request/provenance repairs are undergoing fresh acceptance. A03 previously lacked production two-stage callers
-and mixed FHA substitutions with TD loss outputs in the formula PDF. A05 had two
-C99 dialogs announcing success despite failed float32 verification. Both now have
-actual-consumer independent red/green acceptance; the historical correction remains.
-The earlier blanket enhancement acceptance was too broad and is corrected explicitly below.
-The table therefore lists all **50 explicit IDs**, without inflating the denominator.
+There are **33 top-level alignment items** (T01–T21 + X01–X12), with bounded
+capability labels of **30 VERIFIED_IN_SCOPE and 3 PARTIAL**. The six plants and
+five networks are 11 nested X11 subitems; together with six enhancements, the
+table lists **50 explicit IDs** without inflating the denominator. These labels
+are not release acceptance, complete TI equivalence or hardware certification.
+The 2026-10-19 re-audit found and repaired real gaps across T15/T16/T18,
+X01/X02/X07/X10/X12, L/C and A06. The current integrated application regression
+is complete at the exact SHA above; opt-in long/artifact/native gates remain
+separate and pending in this proposal. All six enhancements have actual consumers
+in their stated software domains. The historical A03 missing-consumer/formula-source
+and A05 false-success C99 findings and their independent red/green corrections
+remain below, so the earlier overbroad acceptance is not erased.
 
 - VERIFIED_IN_SCOPE means the implemented calculation has an actual consumer,
   independent model checks, and persistence/invalidation checks where applicable.
@@ -186,10 +227,14 @@ component selection, same-result voltage/current statistics (including distinct
 total and AC RMS), saved-input recomputation, HTML reports and waveform CSV.
 Target-driven parameter suggestions preserve exact proposed values and require
 explicit Apply followed by actual model reanalysis; fixed presets are not counted
-as sizing. Unsupported or unreachable targets fail explicitly. T17 Full Bridge automatic sizing now includes ordinary CCM, joint-demagnetizing
-CCM, BCM and DCM, with actual waveform rechecks of L/Lm/n targets. T15/T16
-automatic sizing retains its ordinary-CCM limit; their manual analysis domains
-are separately stated.
+as sizing. Unsupported or unreachable targets fail explicitly. T15 Half Bridge, T16 Push-Pull and T17 Full Bridge automatic sizing cover
+ordinary CCM, joint-demagnetizing CCM, BCM and DCM, with actual waveform rechecks
+of output-L, explicitly targeted Lm and turns-ratio targets. T15 uses a Vin/2
+primary pulse; T16 uses Vin and a half-primary/half-secondary turns convention.
+T15 retains equal split capacitors on a stiff total bus, a 10%-of-half-bus
+individual ripple limit and nominal-midpoint first-order magnetic slopes.
+These symmetric models do not add PSFB finite-Coss/ZVS physics; unsupported
+commutation sub-modes and unreachable targets are rejected.
 
 Vin/load changes, edited physical inputs, controller replacement, late workers
 and modal dialogs cannot retain stale export authority. Corner reports bind the
