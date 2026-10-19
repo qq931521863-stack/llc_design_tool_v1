@@ -47,6 +47,7 @@ include = ["power_stage_design*", "dab_design*", "pfc_design*", "llc_design*", "
 exclude = ["*.output*", "*.__pycache__*"]
 
 [tool.setuptools.package-data]
+"llc_design" = ["examples/*.json"]
 "engineering_data" = ["*.json"]
 "pfc_design.data" = ["*.json"]
 "llc_design.data" = ["*.json", "*.jpg"]
