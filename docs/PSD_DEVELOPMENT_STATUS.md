@@ -9,7 +9,12 @@ This is implemented and locally integrated as `c06f1d5`, including coherent APR
 mapping, physical flux, explicit winding feasibility, actual GUI/save/report and
 locked-magnetics optimization. Focused independent physical/TD and 34-step desktop
 acceptance pass; the final merged-source replay, aggregate and artifact gates are
-next. Default seven-harmonic HB completion/cancellation remains under observation.
+next. Default seven-harmonic HB passes actual-event-loop replay in under three seconds;
+the earlier qWait-harness timeout is not a product failure. The narrow cooperative
+Cancel/finite total-budget repair now has independent actual HB/TD cancellation,
+close, timeout, invalidation and retry acceptance. Product integration and the
+new-source aggregate/artifact sequence are next; no lowered numerical criteria
+or partial-result fallback is used to satisfy a timeout.
 FHA/EDF projection limits and unsupported multiwinding/series-R domains are explicit.
 See the [integrated workflow](magnetics/integrated_llc_workflow.md) and two synthetic
 [software examples](../examples/integrated_llc/).

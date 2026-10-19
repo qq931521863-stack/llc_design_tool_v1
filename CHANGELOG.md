@@ -38,6 +38,9 @@ This file keeps the **maintained product history**. Detailed debugging notes, on
   validation through candidate application, sessions and export;
 - fixes late-worker/modal result ownership, component linkage, switched dead-time
   current paths and reverse-current feedback; strengthens real Qt teardown tests.
+- adds cooperative model-comparison cancellation and an explicit execution budget;
+  actual HB/TD checkpoints release cancelled work without weakening convergence
+  or publishing cancelled, timed-out or stale partial results.
 
 ### Release and engineering boundary
 

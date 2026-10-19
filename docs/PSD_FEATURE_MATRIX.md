@@ -12,6 +12,9 @@
   FHA/EDF Vμ is explicitly a display projection; accepted TD uses mapped physical
   flux. CT/star and nonzero magnetizing-series-R paths are rejected, not approximated
   as this model. See [workflow and limits](magnetics/integrated_llc_workflow.md).
+  The comparison workspace now has cooperative Cancel and an explicit total
+  execution budget. These stop HB/TD at numerical checkpoints without weakening
+  convergence, publishing partial results or reviving stale report ownership.
 
 - T18 parameter suggestions: the optional Lm target must be off by default and
   must not silently carry between topologies or new projects. A real aggregate

@@ -18,9 +18,25 @@ not be summed. Independent real Qt flow covers 34 checks including exact input
 roundtrip, invalid-import atomicity, late-result rejection, mode changes, EDF
 waveform/export and formula PDF. A final EDF check reconciles all 2048 exported
 Vμ samples and preserves source metadata/warnings. Actual 720p/768p controls and
-stale-transformer-status counterexamples were repaired. The default seven-harmonic
-HB comparison exceeded a 120 s independent observation window; its full completion,
-UI/cancellation and cleanup are still being checked, not replaced by low-order PASS.
+stale-transformer-status counterexamples were repaired. The first default-HB
+observation used a repeated QTest.qWait harness that starved the Python worker;
+its 120 s observation limit is not a product timeout or performance failure.
+Independent replay using the actual Qt event loop completes default 7-harmonic /
+1024-sample HB twice in 2.750/2.849 s (residual 2.438e-15, 9 iterations), with
+responsive UI and zero remaining workers/threads. The old source's running-close
+hides the window and discards the result, then naturally completes; it did not
+cooperatively cancel. A separate narrow repair adds a real Cancel action and a
+visible 0.1–3600 s session-only total budget (default 300 s). An independent
+36-check replay confirms unchanged default HB output, Cancel, global-input change,
+close, actual in-TD cancellation, timeout and retry; a separate seven-check replay
+confirms disabled page-input protection and programmatic input invalidation.
+Cancellation is observed from a numerical checkpoint with no result payload and
+zero workers/native threads, not inferred from hiding the window. The author's
+current 10-case gate additionally exports the new 390 V retry and compares every
+CSV sample/current metadata. An attempted TD-loss export from a nonconverged
+fixture was correctly refused and is retained as an earlier test-fixture error;
+convergence was not weakened to make that test pass. Final-source aggregate and
+frozen qualification still remain separate gates.
 
 FHA/fast EDF display voltages are hybrid fundamental/square-clamp projections:
 one independent example has a 46.47% RMS difference from Lμ*dIμ/dt. Labels,

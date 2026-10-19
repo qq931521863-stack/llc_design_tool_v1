@@ -34,6 +34,20 @@ illustrates the electrical transformation and an unreachable winding geometry.
 **载入可达绕组参考例（标称点）** demonstrates a nominal-point geometric fit. Neither
 button represents tested hardware or guarantees full-envelope feasibility.
 
+## Long-running model comparisons
+
+The **FHA / HB / TD** page retains its normal 7-harmonic / 1024-sample settings.
+**取消计算** requests cooperative cancellation inside HB/TD numerical work. The
+page remains busy until the actual worker exits, then shows a cancellation reason;
+closing the workspace or changing its physical inputs also cancels the owned
+comparison. No cancelled or timed-out partial result is published for export.
+
+**本次计算总预算** is a session-only execution limit, default 300 s, adjustable from
+0.1 to 3600 s. It does not change harmonic order, sampling or convergence criteria,
+and is not saved as a physical project parameter. A timeout is shown explicitly;
+retry with an appropriate budget or inputs. A finished comparison can still contain
+a nonconverged numerical model, which remains ineligible for TD-loss publication.
+
 ## Electrical and physical definitions
 
 All inductances below use henries; inductance-matrix currents enter the dotted
