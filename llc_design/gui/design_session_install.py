@@ -433,6 +433,10 @@ def install_llc_session(host):
 
 
 def _reflect_ttpl(control, config):
+    for name in ("waveform_line_cycles", "waveform_integration_rate_hz"):
+        widget, value = getattr(control, name), getattr(config, name)
+        if not widget.minimum() <= value <= widget.maximum():
+            raise ValueError(f"{name} is outside the supported GUI range; session not restored")
     stage, fw = config.power_stage, config.firmware
     names = {
         "vin_rms": stage.vin_rms_v, "vbus": stage.bus_voltage_v, "pout": stage.output_power_w,
@@ -447,6 +451,8 @@ def _reflect_ttpl(control, config):
         "amc_delay_us": fw.amc_update_delay_s * 1e6,
         "voltage_delay_us": fw.voltage_computation_delay_s * 1e6,
         "switch_cycles": config.switching_cycles, "switch_samples": config.switching_samples_per_cycle,
+        "waveform_line_cycles": config.waveform_line_cycles,
+        "waveform_integration_rate_hz": config.waveform_integration_rate_hz,
     }
     for name, value in names.items():
         _set(getattr(control, name), value)
@@ -493,6 +499,7 @@ def install_ttpl_session(host):
         control._solution_map_restore_config(config)
         restore_map_state(control.solution_map_view, *prepared, document["model_revision"])
         control._restore_candidate_evidence(document.get("candidate_evidence"))
+        host._invalidate_ttpl_results()
         host.result = control.result = None
         host.engineering_result = None
         control.research_export.set_analysis(None)

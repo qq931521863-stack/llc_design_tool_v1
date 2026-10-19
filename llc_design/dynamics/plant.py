@@ -623,9 +623,18 @@ def estimate_equivalent_series_resistance(
             + point.resonant_inductor.copper_w
             + point.resonant_capacitor.loss_w
         )
-        ir_rms_sq = max(operating_point.resonant_current_rms_a**2, 1e-9)
+        # Pair conductive loss with the current that actually produced it.
+        # TD adoption keeps the separate FHA operating point for commutation;
+        # its Ir must not normalize updated waveform-derived copper/ESR loss.
+        current_rms = (point.resonant_capacitor.current_rms_a
+                       if point.capacitor_source == "TIME_DOMAIN_WAVEFORM_CONSTANT_ESR"
+                       else operating_point.resonant_current_rms_a)
+        ir_rms_sq = max(current_rms**2, 1e-9)
         # Limit pathological reference records while preserving the loss-based
         # physical estimate for normal designs.
-        return min(max(conductive_w / ir_rms_sq, 1e-4), 5.0)
+        # Normalize NumPy scalar inputs before the nonlinear solver. Replayed
+        # JSON inputs are Python floats; mixing scalar types can change solver
+        # rounding and break exact controller-session replay.
+        return float(min(max(conductive_w / ir_rms_sq, 1e-4), 5.0))
     except (AttributeError, ValueError):
         return 0.10

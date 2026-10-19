@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import json
+from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from .waveforms import WaveformBundle
-
 
 DEFAULT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("primary_tank", ("v_leg_a", "v_leg_b", "v_bridge", "i_resonant", "v_resonant_cap")),
@@ -25,7 +25,7 @@ DEFAULT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 def _configure_cjk_fonts() -> None:
     """Use installed CJK fonts when available without bundling font files."""
     plt.rcParams["font.sans-serif"] = [
-        "AR PL UMing CN", "Noto Sans CJK SC", "Microsoft YaHei", "SimHei", "DejaVu Sans"
+        "AR PL UMing CN", "Noto Sans CJK JP", "Noto Sans CJK SC", "Microsoft YaHei", "SimHei", "DejaVu Sans"
     ]
     plt.rcParams["axes.unicode_minus"] = False
 
@@ -47,7 +47,7 @@ def _plot_group(bundle: WaveformBundle, keys: tuple[str, ...], path: Path, title
         axis.grid(True, alpha=0.3)
         axis.text(
             0.995, 0.92,
-            f"RMS={stats.rms:.4g}  min={stats.minimum:.4g}  max={stats.maximum:.4g}",
+            f"RMS={stats.rms:.4g}  AC RMS={stats.ac_rms:.4g}  min={stats.minimum:.4g}  max={stats.maximum:.4g}",
             transform=axis.transAxes, ha="right", va="top", fontsize=8)
     axes[-1].set_xlabel("Time (µs)")
     fig.suptitle(title)
@@ -57,7 +57,7 @@ def _plot_group(bundle: WaveformBundle, keys: tuple[str, ...], path: Path, title
     return path
 
 
-def write_waveform_markdown(bundle: WaveformBundle, path: str | Path) -> Path:
+def write_waveform_markdown(bundle: WaveformBundle, path: str | Path, *, context: dict | None = None) -> Path:
     output = Path(path)
     lines = [
         "# LLC 关键节点波形计算书",
@@ -70,15 +70,24 @@ def write_waveform_markdown(bundle: WaveformBundle, path: str | Path) -> Path:
         "",
         "## 波形统计",
         "",
-        "| 信号 | 单位 | 频率 | 平均值 | RMS | 最小值 | 最大值 | 峰峰值 | 基波 RMS | THD |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| 信号 | 单位 | 频率 | 平均值 | 总 RMS | AC RMS | 最小值 | 最大值 | 峰峰值 | 基波 RMS | THD |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for signal in bundle.signals.values():
         s = signal.statistics
         lines.append(
             f"| {signal.label} | {signal.unit} | {s.frequency_hz/1e3:.7g} kHz | {s.average:.7g} | {s.rms:.7g} | "
-            f"{s.minimum:.7g} | {s.maximum:.7g} | {s.peak_to_peak:.7g} | "
+            f"{s.ac_rms:.7g} | {s.minimum:.7g} | {s.maximum:.7g} | {s.peak_to_peak:.7g} | "
             f"{s.fundamental_rms:.7g} | {s.thd_percent:.3f}% |")
+    lines.extend(["", "## 输入与结果来源", "",
+                  "总 RMS 包含直流分量；AC RMS 为去均值后波形的均方根。", ""])
+    for key, value in bundle.metadata.items():
+        lines.append(f"- {key}: {value}")
+    if context is not None:
+        lines.extend(["", "## 电路与器件上下文", "",
+                      "![LLC electrical schematic](llc_schematic.png)", ""])
+        for key, value in context.items():
+            lines.append(f"- {key}: {json.dumps(value, ensure_ascii=False, sort_keys=True)}")
     lines.extend(["", "## 模型警告", ""])
     lines.extend(f"- {warning}" for warning in bundle.warnings)
     lines.extend(["", "## 图表", ""])
@@ -89,7 +98,8 @@ def write_waveform_markdown(bundle: WaveformBundle, path: str | Path) -> Path:
     return output
 
 
-def export_waveform_bundle(bundle: WaveformBundle, directory: str | Path) -> dict[str, Path]:
+def export_waveform_bundle(bundle: WaveformBundle, directory: str | Path, *,
+                           context: dict | None = None) -> dict[str, Path]:
     output = Path(directory)
     output.mkdir(parents=True, exist_ok=True)
     paths = bundle.export_csv(output)
@@ -98,6 +108,7 @@ def export_waveform_bundle(bundle: WaveformBundle, directory: str | Path) -> dic
         "switching_frequency_hz": bundle.switching_frequency_hz,
         "warnings": list(bundle.warnings),
         "metadata": dict(bundle.metadata),
+        "context": context or {},
         "signals": {
             key: {
                 "label": signal.label,
@@ -115,7 +126,7 @@ def export_waveform_bundle(bundle: WaveformBundle, directory: str | Path) -> dic
     paths["metadata"] = output / "waveform_metadata.json"
     paths["metadata"].write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-    paths["report"] = write_waveform_markdown(bundle, output / "LLC_waveforms.md")
+    paths["report"] = write_waveform_markdown(bundle, output / "LLC_waveforms.md", context=context)
     for group, keys in DEFAULT_GROUPS:
         paths[f"plot_{group}"] = _plot_group(
             bundle, keys, output / f"{group}.png",

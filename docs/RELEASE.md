@@ -34,18 +34,18 @@ Workflow: [build-release.yml](../.github/workflows/build-release.yml).
 Reviewed PR with synchronized version metadata
   -> full PR tests + required real-ngspice checks
   -> merge to main
-  -> full main regression
-  -> annotated vX.Y.Z tag and tag workflow dispatch
-  -> tag regression
+  -> full main regression and live simulator qualification
   -> Windows and macOS platform regression + PyInstaller
   -> frozen executable verification on both platforms
+  -> annotated vX.Y.Z tag and tag workflow dispatch
+  -> repeat tagged-source regression, native builds and frozen verification
   -> archive/resource/checksum verification
   -> upload BOTH packages and evidence to a DRAFT release
   -> verify remote asset names, sizes and SHA-256 digests
   -> publish complete release
 ```
 
-`build` matrix jobs have read-only repository permissions and cannot publish a release. The single `publish` job depends on successful `test` and the complete `build` matrix. A failed or skipped platform blocks publication.
+Native `build` matrix jobs run for PR/main qualification as well as tags/manual dispatch; the main auto-tag job waits for both successful native builds. `build` matrix jobs have read-only repository permissions and cannot publish a release. The single `publish` job depends on successful `test` and the complete `build` matrix. A failed or skipped platform blocks publication.
 
 ## Frozen executable verification
 
@@ -66,7 +66,7 @@ codes to obtain a green build.
 
 `packaging/verify_bundle.py` starts the actual executable using `subprocess.run`, waits for completion with a timeout, and requires a zero exit code plus a freshly created JSON self-test report. It runs outside the repository working directory, so source-tree data cannot hide missing bundled resources.
 
-The report must confirm the expected runtime version, frozen-process status, platform, construction/show/hide of all five workspaces, Guided System Design construction, and the SHA-256 of the bundled brand taxonomy. The checksum must match the checked-out release source. The child only writes success evidence after completing the tests.
+The report must confirm the expected runtime version, frozen-process status, platform, construction/show/hide of all six workspaces (LLC, PFC, Control Tools, FRA, DAB and Power Stage Designer), Guided System Design construction, and the SHA-256 of the bundled brand taxonomy. The PSD proof must include its actual launcher button, independently checked Buck/Boost/Flyback results, Buck VMC frequency curves, and save/edit/reopen/recompute/HTML-report identity. A boolean claiming that PSD imported is insufficient. The checksum must match the checked-out release source. The child only writes success evidence after completing the tests.
 
 Startup may initiate a real asynchronous update check. The self-test joins those
 workers before writing success evidence; normal parent/application teardown uses
@@ -101,3 +101,12 @@ A same-tag retry may replace assets in an existing draft. It must not overwrite 
 ## Engineering boundary
 
 Passing regression, frozen GUI checks and simulator checks establishes software evidence, not hardware validation. Keep model limitations and UNKNOWN / APPROXIMATION / PARTIAL classifications visible. See [Engineering validation policy](ENGINEERING_VALIDATION.md).
+
+## Power Stage Designer 9.9.0 scope
+
+The new workspace and shared-consumer repairs retain explicit topology, loss and
+measurement limits. See [feature matrix](PSD_FEATURE_MATRIX.md),
+[validation](PSD_VALIDATION_REPORT.md) and [remaining work](PSD_DEVELOPMENT_STATUS.md).
+The pre-integration Linux regression does not replace native evidence for the
+release commit. Public assets contain the application, fresh proof JSON and
+checksums, not the large iterative development simulation archive.

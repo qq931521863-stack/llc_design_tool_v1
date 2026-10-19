@@ -37,6 +37,7 @@ class QuasiPRView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.config = None
+        self._config_generation = 0
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.setInterval(100)
@@ -71,10 +72,10 @@ class QuasiPRView(QWidget):
             row.addWidget(QLabel('wc/2π [Hz]'))
             row.addWidget(bw)
             left.addLayout(row)
-            selected.toggled.connect(lambda *_: self.timer.start())
+            selected.toggled.connect(self.schedule)
             self.branch_widgets[h] = selected, kr, bw
         self.freeze = QCheckBox('饱和时冻结全部谐振状态（需闭环验证）')
-        self.freeze.toggled.connect(lambda *_: self.timer.start())
+        self.freeze.toggled.connect(self.schedule)
         left.addWidget(self.freeze)
         note = QLabel('带宽参数为 wc/2π，模拟支路全 −3 dB 带宽为其两倍。\n'
                       '默认仅输出限幅，不防止内部状态累积。Bode 对应未饱和小信号。\n'
@@ -117,8 +118,24 @@ class QuasiPRView(QWidget):
         w.setRange(lo, hi)
         w.setValue(value)
         w.setKeyboardTracking(False)
-        w.valueChanged.connect(lambda *_: self.timer.start())
+        w.valueChanged.connect(self.schedule)
         return w
+
+    def schedule(self):
+        self._invalidate_config()
+        self.timer.start()
+
+    def _invalidate_config(self):
+        self._config_generation += 1
+        self.config = None
+        self.export_button.setEnabled(False)
+        self.json_button.setEnabled(False)
+        self.export_state_changed.emit(False)
+
+    def closeEvent(self, event):
+        self.timer.stop()
+        self._invalidate_config()
+        super().closeEvent(event)
 
     def _clear_plot(self):
         # Shared log axes can warn while Figure.clear resets their limits.
@@ -128,10 +145,8 @@ class QuasiPRView(QWidget):
         self.figure.clear()
 
     def recalculate(self):
-        self.config = None
-        self.export_button.setEnabled(False)
-        self.json_button.setEnabled(False)
-        self.export_state_changed.emit(False)
+        self.timer.stop()
+        self._invalidate_config()
         try:
             cfg = QuasiPRConfig(
                 sample_rate_hz=self.fs.value(), grid_frequency_hz=self.grid.value(), kp=self.kp.value(),
@@ -182,15 +197,18 @@ class QuasiPRView(QWidget):
         self.recalculate()
         if self.config is None:
             return
+        config = self.config
+        generation = self._config_generation
         suffix = 'json' if json else 'h'
         path, _ = QFileDialog.getSaveFileName(self, '导出多谐波准 PR', f'multi_pr.{suffix}', f'*.{suffix}')
-        if not path:
+        if (not path or generation != self._config_generation
+                or self.config is not config):
             return
         target = Path(path)
         if target.suffix.lower() != '.' + suffix:
             target = target.with_suffix('.' + suffix)
         try:
-            target.write_text(coefficient_json(self.config) if json else render_quasi_pr_c99(self.config), encoding='utf-8')
+            target.write_text(coefficient_json(config) if json else render_quasi_pr_c99(config), encoding='utf-8')
             self.status.setText(f'已导出 {target}')
         except OSError as exc:
             self.status.setText(f'导出失败：{exc}')

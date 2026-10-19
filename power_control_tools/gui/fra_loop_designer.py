@@ -61,6 +61,7 @@ from power_control_tools.fra.loop_link import (
     STEP_OK,
     link_plant_model_with_controller,
 )
+from power_control_tools.fra.loop_session import FRALoopSession, read_loop_session, write_loop_session
 from power_control_tools.fra.models import FRAMeasurement, FRAMeasurementKind, FRASourceFormat
 from power_control_tools.fra.tuning import firmware_feedback_a_to_denominator, scale_digital_controller
 from power_control_tools.gui.main_window import SliderSpin
@@ -78,6 +79,7 @@ class FRALoopDesignerWindow(QMainWindow):
         super().__init__(parent)
         self.setWindowTitle("电源设计工具箱 — FRA Loop Designer")
         self.resize(1850, 1080)
+        self._result_generation = 0
 
         self.measurement: FRAMeasurement | None = None
         self.current_old_controller: DigitalTransferFunction | None = None
@@ -136,7 +138,13 @@ class FRALoopDesignerWindow(QMainWindow):
         tb.addAction(action)
         action = QAction("导出 C99", self)
         action.triggered.connect(self.export_c99)
+        action.setEnabled(False)
+        self.export_action = action
         tb.addAction(action)
+        for label, callback in (("保存 FRA 会话", self.save_session), ("打开 FRA 会话", self.open_session)):
+            action = QAction(label, self)
+            action.triggered.connect(callback)
+            tb.addAction(action)
         action = QAction("实测迭代调参 Map", self)
         action.triggered.connect(self.open_tuning_map)
         tb.addAction(action)
@@ -165,7 +173,43 @@ class FRALoopDesignerWindow(QMainWindow):
         self.schedule()
 
     def schedule(self) -> None:
+        self._invalidate_result()
         self.timer.start()
+
+    def _invalidate_result(self) -> None:
+        self._result_generation += 1
+        self.current_old_controller = None
+        self.current_new_controller = None
+        self.current_metrics = None
+        self.current_deembed = None
+        self.current_plant = None
+        self.current_loop = None
+        self.current_frequency_hz = None
+        self.current_usable_mask = None
+        self.current_plant_valid_mask = None
+        self.current_step = None
+        self.current_step_status = "DISABLED"
+        self.export_button.setEnabled(False)
+        if hasattr(self, "export_action"):
+            self.export_action.setEnabled(False)
+        if hasattr(self, "output_text"):
+            self.output_text.clear()
+            self.summary.setPlainText("输入已改变，请等待重新计算。")
+            self.details.clear()
+            for figure, canvas in ((self.bode_fig, self.bode_canvas),
+                                   (self.st_fig, self.st_canvas),
+                                   (self.step_fig, self.step_canvas)):
+                for axis in figure.axes:
+                    axis.set_xscale("linear")
+                figure.clear()
+                canvas.draw_idle()
+
+    def closeEvent(self, event) -> None:
+        self.timer.stop()
+        self._invalidate_result()
+        if hasattr(self, "_tuning_map_window"):
+            self._tuning_map_window.close()
+        super().closeEvent(event)
 
     @staticmethod
     def _field_visible(form: QFormLayout, widget: QWidget, visible: bool) -> None:
@@ -711,7 +755,8 @@ class FRALoopDesignerWindow(QMainWindow):
             else:
                 a = raw_a
                 source = "FRA existing canonical B/A"
-            return DigitalTransferFunction(b, a, fs, self.old_structure.currentText(), source).normalized()
+            result = DigitalTransferFunction(b, a, fs, self.old_structure.currentText(), source).normalized()
+            return self._retain_saved_identity(result, "_saved_old_controller")
         analog = design_controller(ControllerKind.PI, kp=self.old_kp.value(), ti_s=self.old_ti.value())
         return discretize_transfer_function(analog, fs, self.old_method.currentData())
 
@@ -743,9 +788,10 @@ class FRALoopDesignerWindow(QMainWindow):
         if kind == EXACT_CONTROLLER:
             b = self._parse_coefficients(self.new_exact_b.text())
             a = self._parse_coefficients(self.new_exact_a.text())
-            return DigitalTransferFunction(
+            result = DigitalTransferFunction(
                 b, a, self.new_fs.value(), "Custom H(z)", "FRA exact H(z) entry"
             ).normalized()
+            return self._retain_saved_identity(result, "_saved_new_controller")
         kind = ControllerKind(kind)
         kwargs = dict(
             gain=self.new_gain.value(),
@@ -849,6 +895,8 @@ class FRALoopDesignerWindow(QMainWindow):
         self.recalculate()
 
     def recalculate(self) -> None:
+        self.timer.stop()
+        self._invalidate_result()
         try:
             f = self._analysis_frequency_hz()
             measured = None
@@ -894,10 +942,11 @@ class FRALoopDesignerWindow(QMainWindow):
             self.current_usable_mask = usable
             self.current_plant_valid_mask = plant_valid
             self.export_button.setEnabled(new_controller.implementable)
+            self.export_action.setEnabled(new_controller.implementable)
             step_lines = self._render_step(f, plant, usable)
             self._render(measured_f, measured, plant, cnew, loop, plant_valid, usable, valid_limit, step_lines)
         except Exception as exc:
-            self.current_new_controller = None
+            self._invalidate_result()
             self.summary.setPlainText("ERROR: " + str(exc))
             self.details.setPlainText("ERROR: " + str(exc))
             self.export_button.setEnabled(False)
@@ -1070,6 +1119,111 @@ class FRALoopDesignerWindow(QMainWindow):
         coeff_lines += ["", render_c99_single_file(controller, prefix=self.export_prefix.text().strip() or "FRA_CTRL")]
         self.output_text.setPlainText("\n".join(coeff_lines))
 
+    def _retain_saved_identity(self, controller, attribute):
+        saved = getattr(self, attribute, None)
+        if saved is not None and (saved.b, saved.a, saved.sample_rate_hz) == (
+            controller.b, controller.a, controller.sample_rate_hz
+        ):
+            return saved
+        return controller
+
+    def _session_snapshot(self) -> FRALoopSession:
+        if self.current_new_controller is None:
+            raise ValueError("请先完成当前输入的有效计算，再保存 FRA 会话。")
+        return FRALoopSession(
+            controller=self.current_new_controller,
+            old_controller=self.current_old_controller,
+            measurement=self.measurement,
+            measurement_kind=self.measurement_kind.currentData(),
+            phase_offset_deg=self.phase_offset.value(),
+            plant_source=self.plant_source.currentData(),
+            identified_plant=self.identified_plant,
+            identified_band_hz=self.identified_plant_band,
+            identified_confidence=self.identified_plant_confidence,
+            step_enabled=self.step_enable.isChecked(),
+            step_max_order=self.step_max_order.value(),
+            step_samples=self.step_samples.value(),
+            export_prefix=self.export_prefix.text(),
+        )
+
+    def save_session(self) -> None:
+        try:
+            session = self._session_snapshot()
+            document = session.to_document()  # Freeze and validate before the picker.
+            generation = self._result_generation
+            path, _ = QFileDialog.getSaveFileName(self, "保存 FRA 会话", "fra-loop.json", "JSON (*.json)")
+            if (not path or generation != self._result_generation
+                    or self.current_new_controller is not session.controller):
+                return
+            if self._session_snapshot().to_document() != document:
+                return
+            write_loop_session(FRALoopSession.from_document(document), path)
+        except (ValueError, OSError) as exc:
+            show_operation_issue(self, t("FRA 会话保存失败"), str(exc), critical=True)
+
+    def open_session(self) -> None:
+        generation = self._result_generation
+        controller = self.current_new_controller
+        path, _ = QFileDialog.getOpenFileName(self, "打开 FRA 会话", "", "JSON (*.json)")
+        if (not path or generation != self._result_generation
+                or self.current_new_controller is not controller):
+            return
+        try:
+            session = read_loop_session(path)  # Validate fully before changing current inputs.
+            self._restore_session(session)
+        except (ValueError, OSError) as exc:
+            show_operation_issue(self, t("FRA 会话打开失败"), str(exc), critical=True)
+
+    def _restore_session(self, session: FRALoopSession) -> None:
+        # Restoring exact b/a never reconstructs a PI or repeats S-to-Z.
+        session.to_document()
+        self.timer.stop()
+        self._invalidate_result()
+        widgets = (self.source_format, self.old_structure, self.measurement_kind, self.phase_offset, self.plant_source, self.new_mode,
+                   self.new_kind, self.new_fs, self.new_exact_b, self.new_exact_a, self.old_mode,
+                   self.old_coeff_convention, self.old_fs, self.old_b, self.old_a,
+                   self.step_enable, self.step_max_order, self.step_samples, self.export_prefix)
+        previous = [widget.blockSignals(True) for widget in widgets]
+        try:
+            self.measurement = session.measurement
+            if session.measurement is not None:
+                self.source_format.setCurrentIndex(self.source_format.findData(session.measurement.source_format))
+            self.identified_plant = session.identified_plant
+            self.identified_plant_band = session.identified_band_hz
+            self.identified_plant_confidence = session.identified_confidence
+            self._saved_new_controller = session.controller
+            self._saved_old_controller = session.old_controller
+            self.measurement_kind.setCurrentIndex(self.measurement_kind.findData(session.measurement_kind))
+            self.phase_offset.setValue(session.phase_offset_deg)
+            self.plant_source.setCurrentIndex(self.plant_source.findData(session.plant_source))
+            self.new_mode.setCurrentIndex(self.new_mode.findData("structure"))
+            self.new_kind.setCurrentIndex(self.new_kind.findData(EXACT_CONTROLLER))
+            self.new_fs.setValue(session.controller.sample_rate_hz)
+            self.new_exact_b.setText(", ".join(repr(v) for v in session.controller.b))
+            self.new_exact_a.setText(", ".join(repr(v) for v in session.controller.a))
+            if session.old_controller is not None:
+                self.old_structure.setCurrentText("Custom H(z)")
+                self.old_mode.setCurrentIndex(self.old_mode.findData("ba"))
+                self.old_coeff_convention.setCurrentIndex(self.old_coeff_convention.findData("canonical"))
+                self.old_fs.setValue(session.old_controller.sample_rate_hz)
+                self.old_b.setText(", ".join(repr(v) for v in session.old_controller.b))
+                self.old_a.setText(", ".join(repr(v) for v in session.old_controller.a))
+            self.step_enable.setChecked(session.step_enabled)
+            self.step_max_order.setValue(session.step_max_order)
+            self.step_samples.setValue(session.step_samples)
+            self.export_prefix.setText(session.export_prefix)
+            self.file_label.setText(session.measurement.source_path if session.measurement is not None else "未导入")
+            self.identified_label.setText(
+                f"已恢复辨识模型：band={session.identified_band_hz} Hz | confidence={session.identified_confidence}"
+                if session.identified_plant is not None else "未回传辨识模型"
+            )
+        finally:
+            for widget, blocked in zip(widgets, previous):
+                widget.blockSignals(blocked)
+        self._invalidate_plant_model()
+        self._update_visibility()
+        self.recalculate()  # Only fresh analysis can re-enable export.
+
     def export_c99(self) -> None:
         if self.current_new_controller is None:
             QMessageBox.information(self, t("没有可导出的控制器"), t("请先导入 FRA 并完成一次有效计算。"))
@@ -1077,16 +1231,27 @@ class FRALoopDesignerWindow(QMainWindow):
         if not self.current_new_controller.implementable:
             QMessageBox.critical(self, t("控制器不可导出"), t("当前 H(z) 含单位圆外极点。请先恢复控制器稳定性。"))
             return
+        controller = self.current_new_controller
+        generation = self._result_generation
         prefix = self.export_prefix.text().strip() or "FRA_CTRL"
         default = str(Path.cwd() / f"{prefix.lower()}.h")
         path, _ = QFileDialog.getSaveFileName(self, "导出 FRA 设计控制器", default, "C99 Header (*.h)")
-        if not path:
+        if (not path or generation != self._result_generation
+                or self.current_new_controller is not controller):
             return
         if not path.lower().endswith(".h"):
             path += ".h"
         try:
-            out = export_c99_filter(self.current_new_controller, path, prefix=prefix)
-            verify = verify_c99_filter(self.current_new_controller, out)
+            out = export_c99_filter(controller, path, prefix=prefix)
+            verify = verify_c99_filter(controller, out)
+            if not verify.available or not verify.passed:
+                QMessageBox.warning(
+                    self, t("C99 导出失败"),
+                    f"{out.file_path}\n\n"
+                    + t("系数文件已写入，但验证未通过；请勿用于控制硬件。")
+                    + f"\n{verify.message}\nImpulse error={verify.impulse_max_abs_error:.3e}\nStep error={verify.step_max_abs_error:.3e}",
+                )
+                return
             QMessageBox.information(
                 self,
                 t("C99 导出完成"),

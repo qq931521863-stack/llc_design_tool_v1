@@ -183,10 +183,11 @@ def test_two_stage_optimizer_rejection_gates_are_not_vacuous(monkeypatch, reject
         validity = module.ModelValidity.PASS
         if reject_at == "td" and candidate.ln_ratio == rejected_ln:
             validity = module.ModelValidity.FAIL
-        return SimpleNamespace(overall_validity=validity)
+        return SimpleNamespace(overall_validity=validity, points=[SimpleNamespace(td=object())])
 
     monkeypatch.setattr(module, "_envelope_status", envelope_status)
     monkeypatch.setattr(module, "validate_fha_against_time_domain", td_report)
+    monkeypatch.setattr(analyzer, "with_time_domain_losses", lambda current, results: current)
     monkeypatch.setattr(
         module, "evaluate_zvs_margin",
         lambda *args, **kwargs: SimpleNamespace(zvs_margin=0.5),

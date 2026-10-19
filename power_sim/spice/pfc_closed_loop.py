@@ -12,12 +12,13 @@ S2Z conversion.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from collections import deque
+from dataclasses import asdict, dataclass
 
 import numpy as np
 
-from pfc_design.control import PFCControlLabAnalysis
+from pfc_design.control import PFCControlLabAnalysis, PFCControlLabConfig
 from pfc_design.control.firmware_runtime import (
     PFCExactFirmwareControllerRuntime,
     PFCSampledSenseRuntime,
@@ -71,6 +72,8 @@ class TTPLSharedNgSpiceConfig:
     use_initial_conditions: bool = True
     additional_pwm_delay_s: float = 0.0
     shadow_update: bool = True
+    event_guard_s: float | None = None
+    retain_line_cycles: int | None = None
     record_vectors: tuple[str, ...] = (
         "time",
         "v(line)",
@@ -82,7 +85,9 @@ class TTPLSharedNgSpiceConfig:
         "v(g_lf_p)",
         "v(g_lf_n)",
         "i(lboost)",
-        "i(vac)",
+        "i(vac)", "v(c_int)", "i(vscap)", "i(vsload)",
+        "i(vshfh)", "i(vshfl)", "i(vslfp)", "i(vslfn)",
+        "i(vdhfh)", "i(vdhfl)", "i(vdlfp)", "i(vdlfn)",
     )
 
     def validate(self, switching_frequency_hz: float, current_rate_hz: float) -> tuple[float, float]:
@@ -92,6 +97,10 @@ class TTPLSharedNgSpiceConfig:
             raise ValueError("TTPL switching/control rates must be positive")
         if self.wall_timeout_s <= 0.0:
             raise ValueError("TTPL wall timeout must be positive")
+        if self.retain_line_cycles is not None and (not isinstance(self.retain_line_cycles, int) or self.retain_line_cycles < 3):
+            raise ValueError("retained switching window must cover at least three line cycles")
+        if self.event_guard_s is not None and (not math.isfinite(self.event_guard_s) or self.event_guard_s <= 0):
+            raise ValueError("event observation guard must be finite and positive")
         if self.additional_pwm_delay_s < 0.0:
             raise ValueError("TTPL additional PWM delay cannot be negative")
         period = 1.0 / switching_frequency_hz
@@ -161,6 +170,7 @@ class TTPLSharedNgSpiceResult:
     metadata: dict[str, object]
     simulator_messages: tuple[str, ...]
     circuit_netlist: str
+    config: PFCControlLabConfig | None = None
 
 
 def _callback_vector(point: dict[str, complex], name: str) -> complex | None:
@@ -190,6 +200,19 @@ def _lookup(point: dict[str, complex], *names: str) -> float | None:
     return None
 
 
+def rectified_current_feedback(signed_current_a: float, target_polarity: int) -> float:
+    """Control-frame current, retaining regenerative sign of the physical state."""
+    if target_polarity not in (-1, 1) or not math.isfinite(signed_current_a):
+        raise ValueError("rectified current feedback requires finite current and polarity +/-1")
+    return float(target_polarity * signed_current_a)
+
+
+def validate_accepted_time(time_s: float, previous_s: float) -> None:
+    """Accepted SendData records cannot rewind controller/sensor state."""
+    if not math.isfinite(time_s) or time_s < previous_s:
+        raise ValueError(f"accepted ngspice time moved backwards or nonfinite: {previous_s!r} -> {time_s!r}")
+
+
 def _clip(value: float, minimum: float, maximum: float) -> float:
     return min(max(float(value), float(minimum)), float(maximum))
 
@@ -199,6 +222,36 @@ def _next_pwm_boundary(time_s: float, period_s: float, *, epsilon_s: float = 1e-
     return index * period_s
 
 
+def _native_decimal_time(value: float) -> tuple[str, float]:
+    """Emit a positive time using ngspice's INPevaluate arithmetic.
+
+    INPevaluate accumulates decimal digits in a double and then multiplies by
+    pow(10, exponent); it is not correctly-rounded strtod. Even a .17e Python
+    roundtrip can move the native stop by one ULP. Prefer an exactly matching
+    token, otherwise disclose a <=1 ULP earlier horizon; never integrate later
+    than requested. The same native horizon bounds the Python synchronizer.
+    """
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("native time must be finite and positive")
+    candidates = []
+    for nearby in (value, math.nextafter(value, -math.inf), math.nextafter(value, math.inf)):
+        for precision in range(14, 19):
+            token = f"{nearby:.{precision}e}"
+            mantissa, exponent = token.split('e')
+            whole, fraction = mantissa.split('.')
+            accumulator = 0.
+            for digit in whole+fraction:
+                accumulator = (10.*accumulator+ord(digit))-ord('0')
+            parsed = accumulator*math.pow(10., int(exponent)-len(fraction))
+            if parsed == value:
+                return token, parsed
+            if parsed <= value and value-parsed <= math.ulp(value):
+                candidates.append((token, parsed))
+    if not candidates:
+        raise ValueError("requested time cannot be represented within the native one-ULP horizon budget")
+    return max(candidates, key=lambda item: item[1])
+
+
 def _metrics(
     vectors: dict[str, np.ndarray],
     samples: tuple[TTPLControlSample, ...],
@@ -206,37 +259,33 @@ def _metrics(
     line_frequency_hz: float,
     duration_s: float,
 ) -> TTPLSharedNgSpiceMetrics:
-    bus = np.asarray(vectors.get("v(bus)", []), dtype=float)
-    line = np.asarray(vectors.get("v(line)", []), dtype=float)
-    neutral = np.asarray(vectors.get("v(neutral)", []), dtype=float)
-    current = np.asarray(vectors.get("i(lboost)", []), dtype=float)
-    n = min(len(bus), len(line), len(neutral), len(current))
-    if n == 0:
-        raise RuntimeError("TTPL shared-ngspice did not return required power-stage vectors")
-    bus = bus[:n]
-    vac = line[:n] - neutral[:n]
-    current = current[:n]
-    finite = np.isfinite(bus) & np.isfinite(vac) & np.isfinite(current)
-    if not np.any(finite):
-        raise RuntimeError("TTPL shared-ngspice returned no finite electrical samples")
-    bus_f = bus[finite]
-    vac_f = vac[finite]
-    current_f = current[finite]
-    tail = max(8, int(0.1 * len(bus_f)))
-    final_bus = float(np.mean(bus_f[-tail:]))
-    ripple = float(np.ptp(bus_f[-tail:]))
-    peak_i = float(np.max(np.abs(current_f)))
-    covered = duration_s >= 0.95 / line_frequency_hz
+    time = np.asarray(vectors.get("time", []), dtype=float)
+    signals = [np.asarray(vectors.get(key, []), dtype=float)
+               for key in ("v(bus)", "v(line)", "v(neutral)", "i(lboost)")]
+    if len(time) < 2 or any(v.shape != time.shape for v in signals):
+        raise RuntimeError("TTPL shared-ngspice returned incomplete electrical samples")
+    if not np.all(np.isfinite(time)) or any(not np.all(np.isfinite(v)) for v in signals) or np.any(np.diff(time) < 0):
+        raise RuntimeError("TTPL shared-ngspice returned invalid electrical samples")
+    bus, line, neutral, current = signals
+    period = 1 / line_frequency_hz
+    covered = bool(time[-1]-time[0] >= period*(1-1e-10))
+    start = max(time[0], time[-1]-period)
+    inside = (time > start) & (time < time[-1])
+    t = np.r_[start, time[inside], time[-1]]
+    def moment(native_values):
+        # Form nonlinear products on native event sides before clipping. Keep
+        # duplicate timestamps rather than collapsing a two-sided switch jump.
+        end_index = int(np.searchsorted(time, time[-1], side='left'))
+        values = np.r_[np.interp(start,time,native_values),native_values[inside],native_values[end_index]]
+        return float(np.sum(.5*(values[1:]+values[:-1])*np.diff(t))/(t[-1]-t[0]))
+    final_bus = moment(bus)
+    ripple = float(np.ptp(np.r_[np.interp(start,time,bus),bus[inside],bus[-1]]))
+    peak_i = float(np.max(np.abs(current)))
     i_rms = pin = pf = None
-    if covered and len(vac_f) >= 32:
-        count = max(16, int(round(len(vac_f) * min(1.0, (1.0 / line_frequency_hz) / duration_s))))
-        vv = vac_f[-count:]
-        ii = current_f[-count:]
-        vrms = float(np.sqrt(np.mean(vv * vv)))
-        i_rms = float(np.sqrt(np.mean(ii * ii)))
-        pin = float(np.mean(vv * ii))
-        apparent = vrms * i_rms
-        pf = pin / apparent if apparent > 1e-12 else None
+    if covered:
+        vrms, i_rms = math.sqrt(moment((line-neutral)**2)), math.sqrt(moment(current**2))
+        pin = moment((line-neutral)*current)
+        pf = pin/(vrms*i_rms) if vrms*i_rms > 1e-12 else None
     saturation_fraction = float(np.mean([sample.current_controller_saturated for sample in samples])) if samples else 0.0
     aw_fraction = float(np.mean([sample.current_anti_windup_frozen for sample in samples])) if samples else 0.0
     zc_fraction = float(np.mean([sample.zero_cross_active for sample in samples])) if samples else 0.0
@@ -280,8 +329,9 @@ def run_ttpl_shared_closed_loop(
     circuit = build_ttpl_pfc_circuit(spice)
     circuit.save_vectors = list(dict.fromkeys(simulation.record_vectors))
     uic = " uic" if simulation.use_initial_conditions else ""
+    stop_token, native_stop = _native_decimal_time(simulation.duration_s)
     circuit.directives.append(
-        f".tran {output_step:.12e} {simulation.duration_s:.12e} 0 {max_step:.12e}{uic}"
+        f".tran {output_step:.17e} {stop_token} 0 {max_step:.17e}{uic}"
     )
     netlist = render_netlist(circuit)
     circuit_lines = [line for line in netlist.splitlines() if line.strip()]
@@ -349,14 +399,22 @@ def run_ttpl_shared_closed_loop(
     latest_zc_state = initial_state
     latest_zc_active = False
     tolerance = max(1e-12, current_period * 1e-7)
+    # Observe both sides of ideal-switch events. Without pre/post points a
+    # one-us solver step can smear a 100-ns diode path and its I²R energy.
+    event_guard_s = simulation.event_guard_s or max(100*tolerance, min(pwm_period*1e-4, max(spice.deadtime_s*.01, 1e-10)))
     samples: list[TTPLControlSample] = []
+    last_control_event = -math.inf
 
     pending_voltage: list[tuple[float, float, float, float, float]] = []
     pending_amc: list[tuple[float, float, float, float]] = []
 
     record_names = tuple(dict.fromkeys(name.lower() for name in simulation.record_vectors))
-    vector_lists: dict[str, list[float]] = {name: [] for name in record_names}
+    vector_lists = {name: deque() if simulation.retain_line_cycles else [] for name in record_names}
     last_time = -math.inf
+    native_keys: dict[str, str | None] = {}
+    gate_cache: dict[str, float] = {}
+    gate_cache_time = None
+    callback_failures: list[str] = []
 
     def schedule_sorted(queue: list, item: tuple) -> None:
         queue.append(item)
@@ -403,7 +461,8 @@ def run_ttpl_shared_closed_loop(
 
     def update_current(time_s: float) -> None:
         nonlocal latest_current_raw, latest_current_out, latest_current_sat, latest_current_aw
-        nonlocal latest_duty_unclamped, latest_zc_state, latest_zc_active
+        nonlocal latest_duty_unclamped, latest_zc_state, latest_zc_active, last_control_event
+        last_control_event = time_s
         apply_pending(time_s)
         zc = zero_cross.step(vac_sense.output)
         latest_zc_state = zc.state_code
@@ -418,7 +477,7 @@ def run_ttpl_shared_closed_loop(
         if zc.reset_current_pi:
             current_rt.reset(initial_output=0.0)
 
-        error = i_ref - abs(current_sense.output)
+        error = i_ref - rectified_current_feedback(current_sense.output, zc.target_polarity)
         cstep = current_rt.step(error)
         latest_current_raw = cstep.raw_output
         latest_current_out = cstep.output
@@ -439,6 +498,7 @@ def run_ttpl_shared_closed_loop(
         )
         apply_time = _next_pwm_boundary(requested, pwm_period) if simulation.shadow_update else requested
         duty_timeline.set_duty(apply_time, duty)
+        gate_cache.clear()
         samples.append(
             TTPLControlSample(
                 time_s=float(time_s),
@@ -475,7 +535,13 @@ def run_ttpl_shared_closed_loop(
         )
 
     def external_voltage(time_s: float, source_name: str) -> float:
-        return gates.gate_value(time_s, source_name)
+        nonlocal gate_cache_time
+        if time_s != gate_cache_time:
+            gate_cache.clear()
+            gate_cache_time = time_s
+        if source_name not in gate_cache:
+            gate_cache[source_name] = gates.gate_value(time_s, source_name)
+        return gate_cache[source_name]
 
     def sync_callback(
         time_s: float,
@@ -485,7 +551,8 @@ def run_ttpl_shared_closed_loop(
         location: int,
     ) -> float | None:
         del old_delta_s, redostep, location
-        candidates = [
+        event = gates.next_pwm_event_after(max(0., time_s-2*event_guard_s))
+        candidates = [last_control_event+event_guard_s, event-event_guard_s, event, event+event_guard_s,
             gates.next_pwm_event_after(time_s),
             next_current,
             next_voltage,
@@ -499,22 +566,46 @@ def run_ttpl_shared_closed_loop(
         if pending_amc:
             candidates.append(pending_amc[0][0])
         future = [value for value in candidates if value > time_s + tolerance]
-        if not future:
-            return proposed_delta_s
-        return min(float(proposed_delta_s), max(min(future) - time_s, tolerance))
+        delta = float(proposed_delta_s)
+        if future:
+            delta = min(delta, max(min(future)-time_s, tolerance))
+        # The native sharedsync overshoot clamp subtracts delmin. Reaching
+        # final time exactly avoids a spurious negative final timestep.
+        remaining = native_stop-time_s
+        return min(delta, remaining) if remaining > 0 else delta
 
     def data_callback(index: int, point: dict[str, complex]) -> None:
         nonlocal last_time, latest_vac, latest_current, latest_bus
         nonlocal next_current, next_voltage, next_amc
         del index
-        time_s = _lookup(point, "time")
-        if time_s is None or time_s + tolerance < last_time:
+        if not native_keys:
+            # ngspice names are fixed for this transient. Resolve aliases once,
+            # rather than rebuilding a lower-case dictionary for every one of
+            # 25 recorded vectors at every accepted adaptive timestep.
+            lowered = {str(key).lower(): key for key in point}
+            for name in (*record_names, 'time', 'v(line)', 'v(neutral)', 'v(bus)', 'i(lboost)'):
+                aliases = [name]
+                if name.startswith('v('):
+                    aliases.append(name[2:-1])
+                elif name.startswith('i('):
+                    aliases.extend((name[2:-1]+'#branch', '@'+name[2:-1]+'[i]'))
+                native_keys[name] = next((lowered[a] for a in aliases if a in lowered), None)
+        def read(name):
+            value = point.get(native_keys[name])
+            return None if value is None else float(value.real)
+        time_s = read("time")
+        if time_s is None or callback_failures:
             return
-        last_time = max(last_time, time_s)
-        line = _lookup(point, "v(line)")
-        neutral = _lookup(point, "v(neutral)")
-        bus = _lookup(point, "v(bus)")
-        current = _lookup(point, "i(lboost)")
+        try:
+            validate_accepted_time(time_s, last_time)
+        except ValueError as exc:
+            callback_failures.append(str(exc))
+            return
+        last_time = time_s
+        line = read("v(line)")
+        neutral = read("v(neutral)")
+        bus = read("v(bus)")
+        current = read("i(lboost)")
         if line is not None and neutral is not None:
             latest_vac = line - neutral
         if bus is not None and math.isfinite(bus):
@@ -528,14 +619,21 @@ def run_ttpl_shared_closed_loop(
         apply_pending(time_s)
 
         for name in record_names:
-            value = _callback_vector(point, name)
-            vector_lists[name].append(float(value.real) if value is not None else math.nan)
+            value = read(name)
+            vector_lists[name].append(value if value is not None else math.nan)
+        if simulation.retain_line_cycles:
+            cutoff = time_s-simulation.retain_line_cycles/stage.line_frequency_hz
+            # Keep one context point before the cutoff for exact native-product
+            # boundary clipping. Simulation/control history remains continuous.
+            while len(vector_lists['time']) > 2 and vector_lists['time'][1] < cutoff:
+                for values in vector_lists.values():
+                    values.popleft()
 
         # Execute due tasks chronologically. Coincident tasks use the firmware
         # order voltage -> AMC/reference -> current.
         while True:
             due = min(next_voltage, next_amc, next_current)
-            if due > time_s + tolerance or due > simulation.duration_s + tolerance:
+            if due > time_s + tolerance or due > native_stop:
                 break
             if next_voltage <= due + tolerance:
                 event = next_voltage
@@ -564,6 +662,14 @@ def run_ttpl_shared_closed_loop(
             f"TTPL shared ngspice transient failed: exit={session.exit_status}; "
             + " | ".join(session.messages[-30:])
         )
+    if callback_failures:
+        raise RuntimeError("TTPL accepted callback time failed: " + callback_failures[0])
+    failures = [message for message in session.messages if any(marker in message.lower()
+        for marker in ('timestep too small', 'simulation(s) aborted', 'doanalyses:'))]
+    if failures:
+        raise RuntimeError('TTPL ngspice reported a failed transient: ' + ' | '.join(failures[-10:]))
+    if not vector_lists.get('time') or vector_lists['time'][-1] != native_stop or vector_lists['time'][-1] > simulation.duration_s:
+        raise RuntimeError('TTPL ngspice achieved horizon differs from declared native stop or exceeds request')
     if not samples:
         raise RuntimeError("TTPL shared ngspice produced no digital control samples")
 
@@ -577,6 +683,21 @@ def run_ttpl_shared_closed_loop(
     )
     metadata: dict[str, object] = {
         "engine": "shared-ngspice",
+        "source_config": asdict(cfg),
+        "simulation": asdict(simulation),
+        "native_stop_time_s": native_stop,
+        "achieved_stop_time_s": float(vectors["time"][-1]),
+        "native_stop_token": stop_token,
+        "native_stop_offset_ulp": (native_stop-simulation.duration_s)/math.ulp(simulation.duration_s),
+        "native_time_parser": "ngspice INPevaluate digit accumulation then pow10; <=1 ULP earlier horizon only",
+        "scenario": asdict(scenario),
+        "circuit_config": asdict(spice),
+        "load_model": spice.load_model.value,
+        "constant_power_floor_v": spice.constant_power_floor_v,
+        "current_feedback": "target_polarity * signed inductor current; reverse flow retains negative sign",
+        "commutation_segments": [asdict(segment) for segment in commutation_timeline.segments],
+        "duty_segments": [asdict(segment) for segment in duty_timeline.segments],
+        "branch_sensor_convention": "channel drain-to-source; diode anode-to-cathode; capacitor/load positive from bus",
         "topology": "single_phase_ttpl_pfc",
         "model_level": "ideal_switching_correlation_firmware_faithful_control",
         "exact_hz_schema": exact.as_dict()["schema"],
@@ -614,6 +735,10 @@ def run_ttpl_shared_closed_loop(
         "zero_cross_gate_boundary": (
             "state logic is firmware-faithful; detailed ePWM DBRED/DBFED/TBCLK register timing remains a later hardware-fidelity layer"
         ),
+        "event_observation_guard_s": event_guard_s,
+        "retained_raw_start_s": float(vectors["time"][0]),
+        "initial_state": {"inductor_current_a": 0.0, "bus_capacitor_voltage_v": initial_bus, "current_controller_output": 0.0, "voltage_controller_output": voltage_bias, "input_phase_deg": simulation.input_phase_deg},
+        "moment_integration": "native instantaneous power/squared-current trapezoids with event-adjacent samples",
         "shared_senddata_points": session.data_callback_count,
     }
     return TTPLSharedNgSpiceResult(
@@ -623,6 +748,7 @@ def run_ttpl_shared_closed_loop(
         metadata,
         tuple(session.messages),
         netlist,
+        cfg,
     )
 
 

@@ -125,7 +125,7 @@ class TTPLACPerformanceView(QWidget):
             + f"Current THD         : {metrics.current_thd_percent:.5f} %\n"
             + f"Fundamental Irms    : {metrics.fundamental_current_rms_a:.4f} A\n"
             + f"Vbus avg / ripple   : {metrics.bus_voltage_average_v:.3f} V / {metrics.bus_voltage_ripple_pp_v:.3f} Vpp\n"
-            + f"Cbus current RMS    : {metrics.bus_capacitor_current_rms_a:.4f} A\n"
+            + f"Cbus averaged RMS   : {metrics.bus_capacitor_current_rms_a:.4f} A (PWM moments in Capacitor / Thermal)\n"
             + f"Duty min / max      : {metrics.duty_min:.5f} / {metrics.duty_max:.5f}\n"
             + f"Current error RMS   : {metrics.current_error_rms_a:.5f} A\n"
             + f"Zero-cross err RMS  : {metrics.zero_cross_current_error_rms_a:.5f} A\n"

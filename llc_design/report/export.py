@@ -40,6 +40,7 @@ def operating_point_rows(analysis: SystemAnalysis) -> list[dict]:
             "vbus_v": op.vbus_v,
             "load_pct": op.load_fraction * 100.0,
             "pout_w": op.pout_w,
+            "operating_point_source": "FHA_OPERATING_POINT",
             "frequency_khz": op.switching_frequency_hz / 1e3,
             "normalized_frequency": op.normalized_frequency,
             "required_gain": op.required_gain,
@@ -53,9 +54,21 @@ def operating_point_rows(analysis: SystemAnalysis) -> list[dict]:
             "zvs_charge_margin": point.primary.zvs_charge_margin,
             "zvs_energy_margin": point.primary.zvs_energy_margin,
             "output_ripple_vpp": point.output_capacitor.total_ripple_vpp,
+            "transformer_flux_dc_t": point.transformer.b_dc_t,
+            "magnetic_source": point.magnetic_source,
+            "capacitor_source": point.capacitor_source,
+            "passive_frequency_hz": point.passive_frequency_hz or op.switching_frequency_hz,
+            "commutation_source": point.commutation_source,
+            "loss_waveform_sha256": point.loss_waveform_sha256,
+            "semiconductor_source": point.semiconductor_source,
+            "semiconductor_frequency_hz": point.semiconductor_frequency_hz or op.switching_frequency_hz,
+            "primary_device_rms_current_a": point.primary.device_rms_current_a,
+            "sr_device_rms_current_a": point.synchronous_rectifier.device_rms_current_a,
             "total_loss_w": point.total_loss_w,
             "efficiency_pct": point.efficiency * 100.0,
         }
+        row.update({f"{component}_source": source
+                    for component, source in point.component_sources().items()})
         row.update(point.breakdown())
         row.update(point.detailed_magnetics_breakdown())
         rows.append(row)
@@ -70,7 +83,7 @@ def write_markdown_report(analysis: SystemAnalysis, path: str | Path) -> Path:
     ind = analysis.resonant_inductor
     bus = analysis.bus_capacitor
     lines = [
-        "# LLC 全桥 + 全桥同步整流 V2 磁性损耗计算书",
+        f"# LLC {'半桥' if spec.primary_topology.value == 'HALF_BRIDGE' else '全桥'} + 全桥同步整流 V2 磁性损耗计算书",
         "",
         "> 版权说明：工具设计人 **杨帅** · 开关电源仿真与实用设计",
         "",
@@ -106,11 +119,18 @@ def write_markdown_report(analysis: SystemAnalysis, path: str | Path) -> Path:
         "",
         "| 项目 | 结果 |",
         "|---|---:|",
-        f"| 开关频率 | {nominal.operating_point.switching_frequency_hz/1e3:.3f} kHz |",
-        f"| 输入阻抗相角 | {nominal.operating_point.input_phase_deg:.3f}° |",
-        f"| 谐振电流 RMS/峰值 | {nominal.operating_point.resonant_current_rms_a:.3f} / {nominal.operating_point.resonant_current_peak_a:.3f} A |",
-        f"| 二次电流 RMS/峰值 | {nominal.operating_point.secondary_current_rms_a:.3f} / {nominal.operating_point.secondary_current_peak_a:.3f} A |",
+        f"| FHA 开关频率 | {nominal.operating_point.switching_frequency_hz/1e3:.3f} kHz |",
+        f"| FHA 输入阻抗相角 | {nominal.operating_point.input_phase_deg:.3f}° |",
+        f"| FHA 谐振电流 RMS/峰值 | {nominal.operating_point.resonant_current_rms_a:.3f} / {nominal.operating_point.resonant_current_peak_a:.3f} A |",
+        f"| FHA 二次电流 RMS/峰值 | {nominal.operating_point.secondary_current_rms_a:.3f} / {nominal.operating_point.secondary_current_peak_a:.3f} A |",
         f"| ZVS 电荷/能量裕量 | {nominal.primary.zvs_charge_margin:.2f} / {nominal.primary.zvs_energy_margin:.2f} |",
+        f"| 器件电流来源 | {nominal.semiconductor_source} |",
+        f"| 磁件电流/磁通来源 | {nominal.magnetic_source} |",
+        f"| 电容电流/电压来源 | {nominal.capacitor_source} |",
+        f"| 换流/ZVS 来源 | {nominal.commutation_source} |",
+        f"| 损耗波形 SHA256 | {nominal.loss_waveform_sha256 or 'N/A'} |",
+        f"| 器件损耗频率 | {(nominal.semiconductor_frequency_hz or nominal.operating_point.switching_frequency_hz)/1e3:.3f} kHz |",
+        f"| 主开关/SR 单器件 RMS | {nominal.primary.device_rms_current_a:.3f} / {nominal.synchronous_rectifier.device_rms_current_a:.3f} A |",
         f"| 总损耗 | {nominal.total_loss_w:.3f} W |",
         f"| 估算效率 | {nominal.efficiency*100:.3f}% |",
         f"| 输出电容纹波电流 RMS | {nominal.output_capacitor.capacitor_current_rms_a:.3f} A |",

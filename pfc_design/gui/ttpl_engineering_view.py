@@ -304,6 +304,7 @@ class TTPLWorkbenchView(QWidget):
         self.control_lab.min_pulse_us.setValue(spec.minimum_effective_pulse_s * 1e6)
         if hasattr(self.control_lab, "inductor_editor"):
             self.control_lab.inductor_editor.sync_from_stage()
+        self.control_lab._notify_inputs_changed()
         self.tabs.setCurrentWidget(self.control_lab)
 
     # Compatibility surface used by PFCMainWindow.

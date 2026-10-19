@@ -105,8 +105,8 @@ def test_link_rejects_a_band_with_no_points_below_the_digital_limit():
 def test_closed_loop_step_matches_direct_z_minus_one_difference_equation():
     controller = _pi(kp=0.5)
     plant = discretize_plant_model(PLANT, FS)
-    bn = np.polymul(np.asarray(controller.b), np.asarray(plant.b))
-    an = np.polymul(np.asarray(controller.a), np.asarray(plant.a))
+    bn = np.convolve(np.asarray(controller.b), np.asarray(plant.b))
+    an = np.convolve(np.asarray(controller.a), np.asarray(plant.a))
     size = max(len(an), len(bn))
     closed_den = np.zeros(size)
     closed_den[: len(an)] += an

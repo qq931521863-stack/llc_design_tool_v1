@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from itertools import pairwise
 import math
 from typing import Any, Mapping, Sequence
 
@@ -137,6 +138,13 @@ class LineCycleConvergenceResult:
     vbus_ripple_pp_v: float
     iac_rms_a: float
     notes: tuple[str, ...] = ()
+    checked_cycles: int = 0
+    vbus_waveform_relative_error: float | None = None
+    iac_waveform_relative_error: float | None = None
+    pin_tolerance: float = 0.02
+    vbus_tolerance: float = 0.05
+    vbus_waveform_tolerance: float = 0.005
+    iac_waveform_tolerance: float = 0.01
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -148,6 +156,15 @@ class LineCycleConvergenceResult:
             "vbus_ripple_pp_v": self.vbus_ripple_pp_v,
             "iac_rms_a": self.iac_rms_a,
             "notes": list(self.notes),
+            "checked_cycles": self.checked_cycles,
+            "vbus_waveform_relative_error": self.vbus_waveform_relative_error,
+            "iac_waveform_relative_error": self.iac_waveform_relative_error,
+            "thresholds": {
+                "pin_cycle_relative_error": self.pin_tolerance,
+                "vbus_relative_error": self.vbus_tolerance,
+                "vbus_waveform_relative_error": self.vbus_waveform_tolerance,
+                "iac_waveform_relative_error": self.iac_waveform_tolerance,
+            },
         }
 
 
@@ -177,6 +194,7 @@ class PFCLineCycleResult:
     lf_leg_current_a: FloatArray
     convergence: LineCycleConvergenceResult
     settled_slice: slice
+    config: PFCControlLabConfig | None = None
 
     def instant_point(self, theta_deg: float, *, pout_w: float) -> PFCInstantPoint:
         ang = np.asarray(self.theta_deg, dtype=float)
@@ -200,10 +218,18 @@ class PFCLineCycleResult:
         )
 
     def as_dict(self) -> dict[str, Any]:
+        from .capacitor_ripple import analyze_capacitor_ripple
+        capacitor_ripple = (analyze_capacitor_ripple(self)
+            if self.convergence.status == ConvergenceStatus.LINE_CYCLE_CONVERGED else None)
         return {
             "fsw_hz": self.fsw_hz,
             "convergence": self.convergence.as_dict(),
             "n_samples": int(len(self.time_s)),
+            "source": "closed_loop_final_line_cycle",
+            "capacitor_current_rms_a": float(np.sqrt(np.mean(self.capacitor_current_a**2))),
+            "capacitor_current_rms_scope": "accepted averaged current",
+            "capacitor_ripple": None if capacitor_ripple is None else capacitor_ripple.as_dict(),
+            "inductor_current_rms_a": float(np.sqrt(np.mean(self.il_avg_a**2 + self.il_ripple_pp_a**2 / 12.0))),
             "metrics": {
                 "pf": self.waveforms.metrics.power_factor,
                 "thd_percent": self.waveforms.metrics.current_thd_percent,
@@ -438,42 +464,95 @@ def assess_line_cycle_convergence(
     vbus_command_v: float,
     pin_tolerance: float = 0.02,
     vbus_tolerance: float = 0.05,
+    periodicity_cycles: int = 3,
+    vbus_waveform_tolerance: float = 0.005,
+    iac_waveform_tolerance: float = 0.01,
 ) -> LineCycleConvergenceResult:
+    """Screen repeated physical states, not merely coincident cycle means.
+
+    At least three consecutive complete periods must agree in both Vbus and
+    signed Iac at the same line phase. Adjacent periods are interpolated onto
+    a shared phase grid, so a noninteger samples-per-period ratio does not
+    manufacture drift. Defaults are software-model screening tolerances, not
+    a guarantee of regulation accuracy or hardware validation.
+    """
+    if (isinstance(periodicity_cycles, (bool, np.bool_))
+            or not isinstance(periodicity_cycles, (int, np.integer))
+            or periodicity_cycles < 3):
+        raise ValueError("periodicity check requires an integer count of at least three complete cycles")
+    periodicity_cycles = int(periodicity_cycles)
+    thresholds = (line_hz, vbus_command_v, pin_tolerance, vbus_tolerance,
+                  vbus_waveform_tolerance, iac_waveform_tolerance)
+    if not all(np.isfinite(value) and value > 0 for value in thresholds):
+        raise ValueError("convergence frequencies, voltages and tolerances must be finite and positive")
     time = np.asarray(waveforms.time_s, dtype=float)
+    if time.ndim != 1 or len(time) < 4 or not np.all(np.isfinite(time)):
+        raise ValueError("convergence requires finite one-dimensional time samples")
+    dt = float(np.mean(np.diff(time)))
+    if dt <= 0 or not np.allclose(np.diff(time), dt, rtol=1e-6, atol=1e-15):
+        raise ValueError("convergence requires uniformly increasing time samples")
     pin = np.asarray(waveforms.signals["input_power"], dtype=float)
     vbus = np.asarray(waveforms.signals["vbus"], dtype=float)
     iac = np.asarray(waveforms.signals["i_input_signed"], dtype=float)
-    slices = _cycle_slices(time, line_hz, 2)
-    notes: list[str] = []
-    pin_err = None
-    if len(slices) >= 2:
-        pin0 = float(np.mean(pin[slices[-2]]))
-        pin1 = float(np.mean(pin[slices[-1]]))
-        pin_err = abs(pin1 - pin0) / max(abs(pin1), 1e-9)
-    sl = slices[-1] if slices else _last_cycle_slice(time, line_hz)
+    if any(values.shape != time.shape or not np.all(np.isfinite(values))
+           for values in (pin, vbus, iac)):
+        raise ValueError("convergence requires finite matching Pin/Vbus/Iac signals")
+
+    period = 1.0 / line_hz
+    samples = int(np.floor(period / dt + 1e-9))
+    if samples < 4:
+        raise ValueError("convergence requires at least four samples per line period")
+    available = int(np.floor((time[-1] - time[0] + dt) / period + 1e-6))
+    checked = min(available, periodicity_cycles)
+    end = time[-1] + dt
+    phase = np.arange(samples) / samples
+    cycles = [
+        tuple(np.interp(end - (checked - index) * period + phase * period, time, values)
+              for values in (pin, vbus, iac))
+        for index in range(checked)
+    ]
+    pin_errors, voltage_errors, current_errors = [], [], []
+    for previous, current in pairwise(cycles):
+        pin0, pin1 = float(np.mean(previous[0])), float(np.mean(current[0]))
+        pin_errors.append(abs(pin1 - pin0) / max(abs(pin1), abs(pin0), 1e-9))
+        voltage_errors.append(float(np.sqrt(np.mean((current[1] - previous[1])**2))) / vbus_command_v)
+        current_scale = max(float(np.sqrt(np.mean(previous[2]**2))),
+                            float(np.sqrt(np.mean(current[2]**2))), 1e-9)
+        current_errors.append(float(np.sqrt(np.mean((current[2] - previous[2])**2))) / current_scale)
+    pin_err = max(pin_errors) if pin_errors else None
+    vbus_shape_err = max(voltage_errors) if voltage_errors else None
+    iac_shape_err = max(current_errors) if current_errors else None
+    sl = _last_cycle_slice(time, line_hz)
     vbus_avg = float(np.mean(vbus[sl]))
-    vbus_err = abs(vbus_avg - vbus_command_v) / max(abs(vbus_command_v), 1e-9)
+    vbus_err = abs(vbus_avg - vbus_command_v) / vbus_command_v
     ripple = float(np.ptp(vbus[sl]))
     iac_rms = float(np.sqrt(np.mean(iac[sl] ** 2)))
+    notes = [
+        f"Periodicity screen: {checked}/{periodicity_cycles} consecutive full cycles; worst adjacent phase-aligned RMS differences, Vbus/Vcommand <= {vbus_waveform_tolerance:g}, Iac/max adjacent Irms <= {iac_waveform_tolerance:g}.",
+        f"Mean-power drift <= {pin_tolerance:g}; final Vbus mean/command error <= {vbus_tolerance:g}. Model screening only, not hardware validation or a regulation-accuracy guarantee.",
+    ]
     status = ConvergenceStatus.LINE_CYCLE_CONVERGED
-    if pin_err is None:
+    if checked < periodicity_cycles:
         status = ConvergenceStatus.UNKNOWN
-        notes.append("Fewer than two full cycles available for Pin drift check")
-    if pin_err is not None and pin_err > pin_tolerance:
-        status = ConvergenceStatus.NOT_CONVERGED
-        notes.append(f"Pin cycle-to-cycle relative error {pin_err:.4g} > {pin_tolerance:g}")
-    if vbus_err > vbus_tolerance:
-        status = ConvergenceStatus.NOT_CONVERGED
-        notes.append(f"Vbus average error {vbus_err:.4g} > {vbus_tolerance:g}")
+        notes.append("Fewer than the required consecutive complete cycles available for state-repeatability check")
+    checks = ((pin_err, pin_tolerance, "Pin cycle-to-cycle relative error"),
+              (vbus_err, vbus_tolerance, "Vbus average error"),
+              (vbus_shape_err, vbus_waveform_tolerance, "Vbus phase-aligned waveform relative RMS error"),
+              (iac_shape_err, iac_waveform_tolerance, "Iac phase-aligned waveform relative RMS error"))
+    for value, tolerance, label in checks:
+        if value is not None and value > tolerance:
+            status = ConvergenceStatus.NOT_CONVERGED
+            notes.append(f"{label} {value:.4g} > {tolerance:g}")
     return LineCycleConvergenceResult(
-        status=status,
-        pin_cycle_relative_error=pin_err,
-        vbus_average_v=vbus_avg,
-        vbus_command_v=vbus_command_v,
-        vbus_relative_error=vbus_err,
-        vbus_ripple_pp_v=ripple,
-        iac_rms_a=iac_rms,
-        notes=tuple(notes),
+        status=status, pin_cycle_relative_error=pin_err,
+        vbus_average_v=vbus_avg, vbus_command_v=vbus_command_v,
+        vbus_relative_error=vbus_err, vbus_ripple_pp_v=ripple,
+        iac_rms_a=iac_rms, notes=tuple(notes), checked_cycles=checked,
+        vbus_waveform_relative_error=vbus_shape_err,
+        iac_waveform_relative_error=iac_shape_err,
+        pin_tolerance=pin_tolerance, vbus_tolerance=vbus_tolerance,
+        vbus_waveform_tolerance=vbus_waveform_tolerance,
+        iac_waveform_tolerance=iac_waveform_tolerance,
     )
 
 
@@ -526,6 +605,7 @@ def build_line_cycle_result(
         lf_leg_current_a=np.abs(iac),
         convergence=conv,
         settled_slice=sl,
+        config=config,
     )
 
 

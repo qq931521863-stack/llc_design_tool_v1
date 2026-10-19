@@ -130,7 +130,24 @@ class DigitalTransferFunction:
     @property
     def sos(self) -> NDArray[np.float64]:
         n = self.normalized()
-        return signal.tf2sos(np.asarray(n.b), np.asarray(n.a)).astype(float)
+        b = np.asarray(n.b, dtype=float)
+        nonzero = np.flatnonzero(b != 0.0)
+        if not nonzero.size:
+            return np.asarray([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0]])
+        delay = int(nonzero[0])
+        # tf2sos/tf2zpk normalize away leading numerator zeros (and sufficiently
+        # small leading values). In ascending z^-1 these are real sample delays,
+        # not redundant high-degree polynomial terms.
+        core = b[delay:]
+        sos = signal.zpk2sos(np.roots(core), np.roots(n.a), core[0]).astype(float)
+        delay_sections = []
+        while delay:
+            ticks = min(delay, 2)
+            row = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+            row[ticks] = 1.0
+            delay_sections.append(row)
+            delay -= ticks
+        return np.vstack((sos, delay_sections)) if delay_sections else sos
 
 
 @dataclass(frozen=True)

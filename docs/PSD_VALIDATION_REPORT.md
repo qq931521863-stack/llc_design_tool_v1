@@ -1,0 +1,209 @@
+# Power Stage Designer validation report
+
+## Evidence levels and source provenance
+
+Software correctness, model validity and hardware correlation are separate.
+The [feature matrix](PSD_FEATURE_MATRIX.md) defines the domain of each claim.
+Independent reference values are model checks, not readings from TI software.
+Unknown physical inputs are not zeros. No MATLAB, TI executable or hardware
+correlation result is fabricated.
+
+The historical final development source was
+`bfc8bd9ce4c0eab7ce6d480cace5627d767a0eeb`; documentation/evidence subsequently
+advanced to `74fada3cf799610a8bf4d2b15d88204e51432707` without executing-code
+changes. After environment recovery the cumulative patch was reapplied to
+`e02b0de9c73b46b0990ce337d526e174b0980f4f`. All **672 non-evidence source
+hashes matched** before release metadata/documentation and native-proof changes.
+These are historical local source identifiers, not claims that those Git objects
+were pushed. The new public integration commit and CI provide release provenance.
+
+- Cumulative patch SHA-256: `f109eef6abe6345600d8036ad5f15bb201be2616b0bb889bba60e69bf36c5278`.
+- Historical installed wheel SHA-256: `490aa2bf756943895bf09352e117f57efb52d553597a24f70f940214ad5717ed`.
+- Historical core delivery SHA-256: `61c1c22cca0294e21070adc1480457ade9d0a9f82bcf6072028bace65ffaca5b`.
+
+## Historical final regression: 2026-10-18
+
+The exact development source completed the ten configured paths in **one native
+process: 2864 passed, 1 skipped, 2 xfailed, 130 warnings, 1070.02 s, exit 0**.
+JUnit had 2867 cases and zero failures/errors. All 672 source hashes were unchanged;
+Qt/session teardown and interpreter exit completed. This is not a sum of reruns.
+
+| Test path | Collected cases |
+| --- | ---: |
+| power_stage_design | 1272 |
+| dab_design | 58 |
+| pfc_design | 372 |
+| llc_design | 729 |
+| power_codegen | 3 |
+| power_control_tools | 336 |
+| power_sim | 58 |
+| power_agent | 4 |
+| webapp | 18 |
+| backend | 17 |
+
+The sole skip was the opt-in long PFC GUI test, separately run on identical
+production code: **one pass, 824.849 s, exit 0**, real averaged preflight and
+shared-ngspice worker, actual consumers/export and stale-modal rejection.
+The two existing xfails are the explicitly insufficient phase boost of a single
+2P2Z for its chosen EDF target. They are not hidden new failures.
+Batch ngspice 44.2 and the shared library actually ran in that environment.
+Peak sampled RSS was about 4.75 GiB; minimum sampled available memory was about
+1.61 GiB. These are measured run observations, not platform memory guarantees.
+
+The exact wheel additionally passed out-of-tree resource/import checks and a
+real Qt Buck → loop → save → edit → open/recompute → HTML workflow using three
+actual file choosers. All 101 toolkit imports resolved inside the installed target;
+owner, plots, scenes and ViewBoxes were destroyed and the native event loop exited 0.
+This Linux Python-wheel evidence does not qualify a frozen Windows/macOS binary.
+
+## Reproducible independent checks in the source tree
+
+Run the entire configured suite with `QT_QPA_PLATFORM=offscreen MPLBACKEND=Agg
+python -m pytest` after installing `.[gui,dev,web,agent,research]`. On Windows,
+set those environment variables using the shell's syntax. Optional simulator
+checks report their actual availability; do not describe skipped tests as passes.
+The release workflow also runs the full suite on both supported native platforms.
+
+| Claim | Independent mechanism and maintained test entry |
+| --- | --- |
+| Buck/Boost/Flyback G01–G03 and boundaries | Periodic roots, charge/volt-second balance and numerical quadrature; [independent validation](../power_stage_design/tests/test_independent_validation.py) |
+| Extended topologies | Multi-state periodic roots, flux/charge matrix exponentials, nodal KCL/KVL and branch mapping; [extended validation](../power_stage_design/tests/test_extended_independent.py) |
+| QR/PSFB extensions | Separate LC ODE/event observers and diode-secondary idle/energy equations; [QR/PSFB](../power_stage_design/tests/test_qr_psfb_extensions.py), [finite QR capacitor](../power_stage_design/tests/test_qr_clamped_capacitor.py) |
+| Total versus AC RMS | Centered-energy quadrature over every direct topology; [AC RMS tests](../power_stage_design/tests/test_ac_rms_statistics.py) |
+| Sizing and actual Apply | Independent circuit roots, unreachable/domain rejection and real Qt restore/export; [sizing observer](../power_stage_design/tests/test_suggestions_independent.py), [desktop](../power_stage_design/tests/test_parameter_suggestions_desktop.py) |
+| Toolbox/G04 | Energy integration, complex admittance, resistor/GPIO nodal solves and endpoints; [toolbox observer](../power_stage_design/tests/test_toolbox_independent.py) |
+| Six plants/five networks | Circuit-node KCL, finite amplifier and peak-condition differentiation; [loop tests](../power_stage_design/tests/test_loop.py); all 30 actual GUI combinations |
+| Corners and per-metric worst points | Fixed controller and complete point/plant identity; [corner tolerance](../power_stage_design/tests/test_corner_tolerances.py), [identity](../power_stage_design/tests/test_corner_identity.py) |
+| LLC waveform consumers | Independent gated-branch I², event counts, flux/iGSE/Litz and I²ESR; [consumer observer](../llc_design/tests/test_psd_consumer_independent.py), [passives](../llc_design/tests/test_td_passive_consumers.py) |
+| LLC component linkage | Rendered-wire connectivity, both Cr-return conventions, actual clicks and exact effective-plant replay; [component workflows](../llc_design/tests/test_llc_component_workflows.py) |
+| PFC shared switched source | Native-record cycle/energy/KCL and same-source losses/thermal/export; [cycle](../pfc_design/tests/test_psd_switched_cycle.py), [actual GUI](../pfc_design/tests/test_psd_switched_gui.py) |
+| H(z)/FRA/code generation | Independent causal recurrence and actual compiled C; leading-zero delay and exact b/a survive Apply/save/restore; [digital chain](../power_stage_design/tests/test_digital_chain_independent.py) |
+| Real Qt lifecycle and stale operations | Retained-wrapper subprocesses, repeated owner destruction and late/modal workers; [lifecycle](../power_stage_design/tests/test_lifecycle_subprocess.py), [desktop fixture](../llc_design/tests/test_desktop_fixture_lifetime.py) |
+| Switched circuit repairs | Live ngspice dead-time diode paths and integrated KCL/energy; [LLC circuit](../power_sim/tests/test_llc_spice_deadtime.py) |
+
+Closed-form same-model tests normally use rtol 1e-8 with dimensioned absolute
+limits. Waveform quadrature checks resolution convergence and ≤0.1% away from
+zero. Dedicated switched edges retain their stated weaker time-resolution bounds;
+a good integrated energy residual is not proof of nonlinear Coss/Qrr dynamics.
+
+## Source discrepancies are explicit
+
+- SLVUBB4B eq77 as printed fails the ideal-amplifier limit. The finite-EA
+  implementation follows circuit-node KCL, not a force-fit to that expression.
+  Exact Type II/III impedances retain terms omitted by approximate pole/zero placement.
+- Boost peak-CMC fixed-slope normalization uses **Vslope/Vout**, supported by
+  independent peak-condition differentiation and TI SNVA542 D11–D14. SLVUBB4B
+  eq43 instead prints /Vin. Actual TI executable behavior remains unobserved.
+- X04's example gives C=416.294085 µF from its printed equation, while the
+  printed RMS expression gives 2.622526 A and the screenshot says 2.49 A.
+  Independent periodic ideal-diode integration gives about 2.281251 A under
+  its separately stated assumptions. The tool preserves the named
+  `bulk_rms_current_eq13_a` approximation and warns against thermal interpretation.
+- A sensitive PIF float32 compiled-C case exceeds the existing error budget
+  even though exact float64 coefficients are preserved. Validation remains FAIL;
+  neither coefficients nor tolerance were changed to manufacture success.
+
+## Real switched-source observations and limitations
+
+The accepted final TTPL GUI record retains 237,682 native points across three
+periods, ending exactly at 0.8001 s. All consumers carry source
+`6984f40d1848d86bccdcc82064c3b0a3901b846b570aa8d29ae49beee13fef10`.
+Current/bus cycle differences were 0.85367%/0.13189%; whole-cycle energy residual
+−0.023623 W and peak KCL residual 2.12e-10 A. Independent capacitor RMS was
+8.752537235746534 A. Electrical ESR 0.035 Ω gives 2.681242 W; a separately
+selected 0.024 Ω bank on frozen current gives 1.838566 W and the configured
+empirical hotspot 46.6547 °C. A changed electrical bank requires a circuit rerun.
+
+PF≈0.936962 and THD over harmonics 2–25≈18.93157% are retained as measured
+model results, **not a power-quality pass**. Generic switches/diodes and selected
+edge-energy terms exclude vendor Qrr/nonlinear Coss and hardware thermal accuracy.
+PWM mean/variance decomposition is not frequency-dependent ESR analysis.
+
+LLC accepted-period semiconductor, magnetic, capacitor and damping consumers
+use the same source. Material/geometry and commutation approximations keep
+separate provenance. Midpoint-return HB Cr has no silently added Vbus/2 offset;
+the separate PGND-return variant does. Same displayed operating point with a
+different effective RΣ is a different replay identity. Nonconverged detailed-HB
+points reject export, and restoring a waveform request does not restore TD-loss authority.
+
+## Failure history and corrective evidence
+
+Earlier red/incomplete runs are not relabeled as passes:
+
+- Six old PFC tests expected stale export after input edits. Revised tests verify
+  invalidation, unchanged historical files, and actual current recomputation/export.
+- A native exit139 exposed a retained-owner problem: `PlotWidget.close()` detached
+  children before owner destruction. Narrow fixture repair preserves the ownership
+  tree; strong-wrapper subprocesses verify deletion rather than just no crash.
+- A later run ended in SIGKILL (−9 / wrapper137) near 71%, without complete JUnit.
+  SIGKILL alone does not prove OOM. Independent i18n cycles established retained
+  roots/scenes under session-only cleanup; per-test owner cleanup removes them.
+- Replacing a pending Qt singleShot bound callback caused a separate native
+  shutdown139. The fixture now mocks only the network boundary, preserving the
+  real callback. Strong-owner, live/dead timer and busy-worker-close probes exit0.
+- Original LLC dead-time switching produced unphysical bridge excursions despite
+  weak smoke tests. Explicit body-diode paths and named numerical shunts were
+  repaired and independently checked with live circuit/energy tests.
+- Absolute-current TTPL feedback caused positive feedback during reverse current.
+  Target gate polarity × signed inductor current repairs that counterexample;
+  native I²/VI is integrated before display interpolation. Ngspice44.2 decimal
+  endpoint normalization has separate one-ULP and backward-time checks.
+
+No required cleanup, test or resource gate was removed to obtain the final
+historical pass. Its successful rerun does not prove a unique cause for every
+earlier intermittent crash.
+
+## 9.9.0 native release acceptance
+
+**Pending at candidate preparation.** Required: full Ubuntu test gate, full
+Windows x64 and macOS arm64 regression, actual PyInstaller executable runs
+outside the checkout, six launcher workspaces, Guided System Design, real PSD
+calculation/session/report/loop checks, correct data checksum and native exit0.
+Publication requires both platform proof JSON files and archive SHA-256 checks.
+The [release process](RELEASE.md) and Actions records are the authority for the
+new release; historical Linux evidence alone cannot satisfy these native gates.
+
+## External and physical gates
+
+The official TI download requires myTI login/export approval; anonymous access
+returned403. No restriction was bypassed. T05/T11/T18 exact executable policy
+comparisons remain PARTIAL. [Development status](PSD_DEVELOPMENT_STATUS.md)
+lists the precise next information and separate physical-model extensions.
+Hardware, real FRA/thermal/EMI correlation and whole-domain convergence remain
+UNKNOWN. Native startup does not certify a minimum physical display size.
+
+## Official source register
+
+- [TI product/version](https://www.ti.com/tool/POWERSTAGE-DESIGNER)
+- [SLVUBB4B, February2023 guide](https://www.ti.com/lit/ug/slvubb4b/slvubb4b.pdf), topology/calculator/loop baseline
+- [SNVA542](https://www.ti.com/lit/an/snva542/snva542.pdf), AppendixD peak-current Boost slope
+- [SLYU036A handbook](https://www.ti.com/lit/eb/slyu036a/slyu036a.pdf), supplemental topology physics and §18.1 PSFB domain
+- [SNVA790A](https://www.ti.com/lit/an/snva790a/snva790a.pdf), Fly-Buck
+- [SLVA750A](https://www.ti.com/lit/an/slva750a/slva750a.pdf), series-capacitor Buck
+- [SLYT584](https://www.ti.com/lit/an/slyt584/slyt584.pdf), distinct two-switch CCM gate strategies
+- [UCC28600 SLUS646K](https://www.ti.com/lit/ds/symlink/ucc28600.pdf), controller-specific QR behavior, not generic PSD policy
+
+These documents establish public model evidence, not unobserved software output.
+
+## Resumed-environment compatibility and local preflight: 2026-10-19
+
+The refreshed Python3.12/NumPy2.5.4 environment exposed four real LLC/H(z)
+save/replay failures: NumPy's NDArray annotation now has a named type-alias origin,
+so the strict encoder rejected a genuine float64 ndarray. Recognizing both the
+legacy ndarray origin and the named NDArray origin repairs this boundary without
+accepting lists, tuples, array subclasses or weakening dtype/shape/finite limits.
+The full session-validation set plus all four failures reran **79 passed, exit0**.
+Exact coefficient bytes, including signed zero, have explicit counterexamples.
+
+Windows-default cp1252 emulation reproduced a Chinese-report decode failure.
+Explicit UTF-8 test I/O repairs then passed **124 tests / one explicit long-test
+skip**; another affected group passed329. Counts are separate focused runs, not
+added to the historical full-suite number. The long PFC fixture also preserves
+the real Qt callback and stores evidence in its portable test directory.
+
+Release preflight passed77 focused tests; the real Linux PyInstaller executable
+passed six-workspace/PSD calculation, saved-project/report and 1600-point BuckVMC
+proof checks with frozen=true and exit0. This is Linux/Python3.12 only. No new
+Windows/macOS run or remote publication occurred; publication is now paused while
+remaining implementation work continues. A new full source freeze/regression is
+required after those changes.

@@ -2,6 +2,42 @@
 
 This file keeps the **maintained product history**. Detailed debugging notes, one-off migration instructions, CI result snapshots and binary release artifacts are intentionally kept out of the source documentation tree; Git history, Pull Requests, Actions and Releases provide that archive.
 
+## 9.9.0 — 2026-10-19
+
+### Added — Power Stage Designer workspace
+
+- adds a dedicated launcher entry and `power-stage-design` desktop/headless entry;
+- provides nineteen direct stage models plus existing LLC half/full-bridge entry,
+  connected component schematics, V/I waveforms, total/AC RMS and branch stress;
+- adds target-driven parameter suggestions, twelve calculators, six strict-CCM
+  loop plants and five exact compensation networks with finite amplifier effects;
+- reanalyzes actual selected/rounded components and explicit operating/tolerance
+  corners with complete point identity and per-metric worst cases;
+- saves validated input/model/controller/device snapshots and recomputes on load;
+  exports current HTML reports and waveform CSV with stale-result protection.
+
+### Improved — Shared LLC, PFC and digital evidence
+
+- connects accepted-period LLC waveforms to semiconductor, magnetic, capacitor
+  and damping consumers, and preserves actual effective-plant replay identity;
+- connects qualified signed TTPL switched-cycle records to device, capacitor,
+  thermal and report consumers without losing native I²/VI integration;
+- preserves exact H(z), leading-zero delay, causal FRA response and generated-C
+  validation through candidate application, sessions and export;
+- fixes late-worker/modal result ownership, component linkage, switched dead-time
+  current paths and reverse-current feedback; strengthens real Qt teardown tests.
+
+### Release and engineering boundary
+
+- qualifies six-workspace frozen bundles, including actual PSD calculation,
+  loop/session/report paths and packaged resources, before publication;
+- T05/T11/T18 exact TI executable policies remain PARTIAL; each other topology
+  retains its explicit ideal/small-ripple/domain limits. No complete TI parity,
+  vendor-model accuracy, real measurement or hardware safety acceptance is claimed;
+- missing loss terms remain UNKNOWN; source convergence is not a PF/THD performance
+  pass. See [feature matrix](docs/PSD_FEATURE_MATRIX.md),
+  [validation](docs/PSD_VALIDATION_REPORT.md) and [status](docs/PSD_DEVELOPMENT_STATUS.md).
+
 ## 9.8.1 — 2026-10-18
 
 ### Fixed — Smart Control limits and evidence

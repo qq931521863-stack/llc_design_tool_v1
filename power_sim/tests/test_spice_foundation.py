@@ -196,6 +196,14 @@ def test_live_ngspice_generated_llc_switches_and_carries_tank_current_if_install
     bridge = va - vb
     assert float(np.max(bridge)) > 0.8 * spec.vbus_nom_v
     assert float(np.min(bridge)) < -0.8 * spec.vbus_nom_v
+    # A conducting antiparallel path must clamp the inductive current during
+    # deadtime. Merely exceeding the bus amplitude also accepts megavolt spikes
+    # through the off-state resistances of an incomplete bridge model.
+    assert np.all(np.isfinite(bridge))
+    assert float(np.max(np.abs(bridge))) < 1.05 * spec.vbus_nom_v
+    for node_voltage in (va, vb):
+        assert float(np.min(node_voltage)) > -0.025 * spec.vbus_nom_v
+        assert float(np.max(node_voltage)) < 1.025 * spec.vbus_nom_v
     assert float(np.max(np.abs(ilr))) > 0.1
 
     # With Vout precharged to the design target, the smoke run should not

@@ -22,6 +22,8 @@ def install_ttpl_capacitor_thermal_stage(pfc_window) -> TTPLCapacitorThermalView
 
     device_view = getattr(workbench, "device_loss_view", None)
     if device_view is not None:
+        device_view.source.currentIndexChanged.connect(view.source.setCurrentIndex)
+        view.source.currentIndexChanged.connect(device_view.source.setCurrentIndex)
         device_index = workbench.tabs.indexOf(device_view)
         insert_index = device_index + 1 if device_index >= 0 else 2
     else:

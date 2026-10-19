@@ -100,9 +100,9 @@ def discretize_plant_model(
     fs = float(sample_rate_hz)
     if not math.isfinite(fs) or fs <= 0.0:
         raise ValueError("sample_rate_hz must be finite and positive")
+    if isinstance(extra_delay_samples, (bool, np.bool_)) or not isinstance(extra_delay_samples, (int, np.integer)) or extra_delay_samples < 0:
+        raise ValueError("extra_delay_samples must be a non-negative integer")
     delay = int(extra_delay_samples)
-    if delay < 0:
-        raise ValueError("extra_delay_samples must be non-negative")
     num_s, den_s = plant_model_polynomials_rad_s(model, pade_delay=True)
     num_z, den_z, _ = signal.cont2discrete((num_s, den_s), 1.0 / fs, method=str(method))
     num_z = np.asarray(num_z, dtype=float).reshape(-1)
@@ -154,8 +154,8 @@ def closed_loop_step_from_plant_and_controller(
         extra_delay_samples=extra_delay_samples,
     )
     c = controller.normalized()
-    loop_num = np.polymul(np.asarray(c.b, dtype=float), np.asarray(plant.b, dtype=float))
-    loop_den = np.polymul(np.asarray(c.a, dtype=float), np.asarray(plant.a, dtype=float))
+    loop_num = np.convolve(np.asarray(c.b, dtype=float), np.asarray(plant.b, dtype=float))
+    loop_den = np.convolve(np.asarray(c.a, dtype=float), np.asarray(plant.a, dtype=float))
 
     size = max(loop_den.size, loop_num.size)
     closed_den = np.zeros(size, dtype=float)
@@ -183,16 +183,10 @@ def closed_loop_step_from_plant_and_controller(
         )
 
     dt = 1.0 / float(controller.sample_rate_hz)
-    # ``closed_num``/``closed_den`` are ascending powers of z^-1, which is the
-    # same coefficient order as scipy's descending powers of z for the
-    # denominator.  The numerator additionally needs the degree-difference
-    # factor z^(n-m), i.e. trailing zeros up to the denominator length.
-    padded_num = closed_num
-    if closed_den.size > closed_num.size:
-        padded_num = np.concatenate([closed_num, np.zeros(closed_den.size - closed_num.size, dtype=float)])
-    t, y = signal.dstep((padded_num, closed_den, dt), n=max(int(samples), 200))
-    t = np.asarray(t, dtype=float).reshape(-1)
-    y = np.asarray(y[0], dtype=float).reshape(-1)
+    # Execute ascending z^-1 coefficients directly. Polynomial leading-zero
+    # trimming would erase the ZOH/controller delay and create feedthrough.
+    t = np.arange(max(int(samples), 200), dtype=float) * dt
+    y = signal.lfilter(closed_num, closed_den, np.ones(t.size))
     final = float(np.sum(closed_num) / np.sum(closed_den))
     return step_result_from_response(
         t,
@@ -290,9 +284,9 @@ def link_plant_model_with_controller(
         )
 
     f = np.geomspace(low, limit, max(int(points), 4))
+    if isinstance(extra_delay_samples, (bool, np.bool_)) or not isinstance(extra_delay_samples, (int, np.integer)) or extra_delay_samples < 0:
+        raise ValueError("extra_delay_samples must be a non-negative integer")
     delay = int(extra_delay_samples)
-    if delay < 0:
-        raise ValueError("extra_delay_samples must be non-negative")
     plant_response = plant_model.frequency_response(f)
     controller_response = digital_frequency_response(controller, f)
     if delay:

@@ -15,7 +15,9 @@ from typing import Iterable
 
 from ..core.operating_point import LLCOperatingPoint
 from ..core.spec import LLCDesignSpec
-from ..core.tank import TankDesign
+from ..core.tank import TankDesign, design_tank
+from ..dynamics.periodic_samples import PeriodicSamples, periodic_samples, transformer_flux
+from ..dynamics.waveforms import WaveformBundle
 from .core import CoreDatabase, CoreSpec
 from .litz import (LitzWire, StackLayer, WindingLossBreakdown,
                    dc_resistance_ohm, distribute_turns,
@@ -49,6 +51,7 @@ class TransformerLoss:
     secondary_termination_w: float = 0.0
     estimated_hotspot_c: float = 0.0
     material_warnings: tuple[str, ...] = ()
+    b_dc_t: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -96,9 +99,16 @@ class TransformerDesign:
     def turns_ratio(self) -> float:
         return self.primary_turns / self.secondary_turns
 
-    def _winding_stack(self, spec: LLCDesignSpec, op: LLCOperatingPoint) -> tuple[StackLayer, ...]:
-        samples = spec.magnetic_waveform_samples
-        primary, secondary, _ = transformer_current_waveforms(spec, op, samples)
+    def _winding_stack(self, spec: LLCDesignSpec, op: LLCOperatingPoint,
+                       samples: PeriodicSamples | None = None) -> tuple[StackLayer, ...]:
+        if samples is None:
+            primary, secondary, _ = transformer_current_waveforms(
+                spec, op, spec.magnetic_waveform_samples)
+        else:
+            primary = samples.signals["i_resonant"]
+            # TD Is is positive out of the secondary dot; the layer-MMF API
+            # uses currents INTO both winding dots. Preserve phase, invert Is.
+            secondary = -samples.signals["i_transformer_secondary"]
         primary_tuple = tuple(float(x) for x in primary)
         secondary_tuple = tuple(float(x) for x in secondary)
 
@@ -123,15 +133,18 @@ class TransformerDesign:
         return tuple(stack)
 
     def _loss_at_temperature(self, spec: LLCDesignSpec, op: LLCOperatingPoint,
-                             temperature_c: float) -> tuple[float, WindingLossBreakdown, WindingLossBreakdown,
+                             temperature_c: float, samples: PeriodicSamples | None = None) -> tuple[float, WindingLossBreakdown, WindingLossBreakdown,
                                                              float, float, tuple[str, ...]]:
-        t, b = transformer_flux_waveform(
-            op, self.primary_turns, self.core.ae_m2, spec.magnetic_waveform_samples)
+        if samples is None:
+            t, b = transformer_flux_waveform(
+                op, self.primary_turns, self.core.ae_m2, spec.magnetic_waveform_samples)
+        else:
+            t, b = samples.time_s, transformer_flux(samples, self.primary_turns, self.core.ae_m2, design_tank(spec).lm_h)
         b_peak = float(max(abs(b.min()), abs(b.max())))
         b_peak_min = b_peak * self.core.ae_m2 / self.core.amin_m2
         p_core = self.core.core_loss_waveform_w(t, b, temperature_c)
         stack_loss = layered_litz_stack_loss(
-            self._winding_stack(spec, op), op.switching_frequency_hz,
+            self._winding_stack(spec, op, samples), op.switching_frequency_hz,
             self.core.window_width_m, temperature_c,
             max_harmonic=spec.litz_max_harmonic,
             transposition_quality=spec.litz_transposition_quality,
@@ -144,11 +157,20 @@ class TransformerDesign:
         return (p_core, primary, secondary, b_peak, b_peak_min,
                 self.core.loss_range_warnings(op.switching_frequency_hz, b_peak))
 
-    def loss(self, spec: LLCDesignSpec, op: LLCOperatingPoint) -> TransformerLoss:
+    def loss(self, spec: LLCDesignSpec, op: LLCOperatingPoint, *,
+             waveform: WaveformBundle | None = None,
+             td_converged: bool | None = None) -> TransformerLoss:
+        samples = None
+        if waveform is not None:
+            samples = periodic_samples(waveform, {"i_resonant": "A",
+                "i_transformer_secondary": "A", "i_magnetizing": "A", "v_transformer_primary": "V"}, td_converged)
+            op = replace(op, switching_frequency_hz=samples.frequency_hz)
+        elif td_converged is not None:
+            raise ValueError("time-domain transformer loss requested without waveform")
         temperature = max(spec.winding_temperature_c, spec.ambient_temperature_c)
         last = None
         for _ in range(spec.magnetic_thermal_max_iterations):
-            last = self._loss_at_temperature(spec, op, temperature)
+            last = self._loss_at_temperature(spec, op, temperature, samples)
             p_core, primary, secondary, *_ = last
             predicted = spec.ambient_temperature_c + (
                 p_core + primary.total_w + secondary.total_w) * spec.transformer_rth_k_per_w
@@ -160,7 +182,7 @@ class TransformerDesign:
             temperature = updated
         assert last is not None
         p_core, primary, secondary, b_peak, b_peak_min, warnings = self._loss_at_temperature(
-            spec, op, temperature)
+            spec, op, temperature, samples)
         total = p_core + primary.total_w + secondary.total_w
         return TransformerLoss(
             core_w=p_core,
@@ -183,6 +205,9 @@ class TransformerDesign:
             secondary_termination_w=secondary.termination_w,
             estimated_hotspot_c=temperature,
             material_warnings=warnings,
+            b_dc_t=(float(sum(samples.signals["i_magnetizing"]) / len(samples.time_s))
+                    * design_tank(spec).lm_h / (self.primary_turns * self.core.ae_m2)
+                    if samples is not None else 0.0),
         )
 
 

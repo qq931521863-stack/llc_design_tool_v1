@@ -99,6 +99,8 @@ def _guard_loop_completions(host, callback_name: str, view, state) -> None:
     def run_worker(self, label, function, callback):
         if callback != getattr(self, callback_name):
             return original_run_worker(label, function, callback)
+        if callback_name == "_digital_loop_ready":
+            function._llc_digital_request = True
         state["request_id"] += 1
         request_id = state["request_id"]
         revision = state["revision"]
@@ -216,6 +218,7 @@ def install_llc_solution_map(host) -> SolutionMapView:
         return _merge_model_edits(frozen, state["displayed_controller"], edited)
 
     def restore_controller(controller, source="LLC restored controller") -> None:
+        loop_view.invalidate_analysis()
         state["revision"] += 1
         state["request_id"] += 1
         state["pending_evidence"] = None

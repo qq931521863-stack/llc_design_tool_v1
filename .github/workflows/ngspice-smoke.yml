@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       MPLBACKEND: Agg
+      QT_QPA_PLATFORM: offscreen
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,12 +26,12 @@ jobs:
       - name: Install ngspice and test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ngspice libngspice0
+          sudo apt-get install -y ngspice libngspice0 libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0
           ngspice --version
           ldconfig -p | grep -i ngspice || true
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[dev,gui]"
 
-      - name: Run power_sim including live batch/shared ngspice tests
+      - name: Run simulator and signed PFC producer/consumer checks
         run: |
-          python -m pytest power_sim/tests -q
+          python -m pytest power_sim/tests pfc_design/tests/test_psd_switched_cycle.py pfc_design/tests/test_psd_switched_gui.py -q

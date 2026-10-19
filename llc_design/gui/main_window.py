@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
-from pathlib import Path
+import json
 import traceback
+from copy import deepcopy
+from dataclasses import asdict, replace
+from pathlib import Path
 
-from PySide6.QtCore import QThreadPool, QTimer, Qt, Signal
-from PySide6.QtGui import QAction
+import numpy as np
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
+from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QAction, QImage, QPainter
 from PySide6.QtWidgets import (
     QComboBox,
     QDockWidget,
@@ -18,8 +23,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QMessageBox,
     QMenu,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -33,12 +38,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
-import numpy as np
+from shiboken6 import isValid
 
-from llc_design.user_messages import design_reason, design_status, show_operation_issue
 from llc_design.i18n import t
+from llc_design.user_messages import design_reason, design_status, show_operation_issue
 
 from ..analysis import (
     FidelityLevel,
@@ -54,36 +57,45 @@ from ..analysis import (
 from ..control.analysis import SmallSignalAnalysis, build_small_signal_analysis
 from ..control.digital_loop import DigitalLoopAnalysis, build_digital_loop_analysis
 from ..control.linearize import ControlInputKind
-from ..core.config import load_project, load_spec, save_project
+from ..core.config import (
+    create_waveform_session,
+    load_project,
+    load_spec,
+    save_project,
+    waveform_request_identity,
+)
+from ..core.q_zvs import LLCQZVSAnalysis, build_q_zvs_analysis
 from ..core.spec import LLCDesignSpec, PrimaryTopology, TankParameterMode
 from ..core.tank import design_tank, equivalent_ac_load_ohm, gain, target_gain
-from ..core.q_zvs import LLCQZVSAnalysis, build_q_zvs_analysis
 from ..dynamics.plant import DynamicPhasorModel
 from ..dynamics.switched import SwitchedSimulationConfig, simulate_switched_steady_state
 from ..dynamics.waveforms import WaveformBundle, reconstruct_dynamic_phasor_waveforms
-from ..models.system import LLCSystemAnalyzer, SystemAnalysis
-from ..magnetics.transformer_designer import (FerriteCoreInput, TransformerSynthesisResult,
-                                               TransformerSynthesisSettings, synthesize_transformer,
-                                               export_transformer_synthesis)
+from ..magnetics.transformer_designer import (
+    FerriteCoreInput,
+    TransformerSynthesisResult,
+    TransformerSynthesisSettings,
+    export_transformer_synthesis,
+    synthesize_transformer,
+)
 from ..models.devices import DeviceDatabase
-from ..switching.sr import analyze_sr
+from ..models.system import LLCSystemAnalyzer, SystemAnalysis
 from ..multiphase import solve_interleaved_llc
 from ..report.formula_pdf import build_formula_pdf
-from .workers import FunctionWorker
-from .updater import add_toolbar_right_side, check_for_updates
+from ..switching.sr import analyze_sr
+from . import theme
 from .help import install_help
 from .i18n_ui import about_text, install_language_selector
-from . import theme
-
-from .widgets.model_comparison_view import ModelComparisonView
-from .widgets.small_signal_view import SmallSignalView
+from .updater import add_toolbar_right_side, check_for_updates
 from .widgets.digital_loop_view import DigitalLoopView
-from .widgets.q_zvs_view import LLCQZVSView
-from .widgets.transformer_design_view import TransformerDesignView
-from .widgets.topology import TopologyView
-from .widgets.waveform_view import WaveformView
-from .widgets.sr_design_view import SRDesignView
 from .widgets.interleaved_view import InterleavedLLCView
+from .widgets.model_comparison_view import ModelComparisonView
+from .widgets.q_zvs_view import LLCQZVSView
+from .widgets.small_signal_view import SmallSignalView
+from .widgets.sr_design_view import SRDesignView
+from .widgets.topology import TopologyView
+from .widgets.transformer_design_view import TransformerDesignView
+from .widgets.waveform_view import WaveformView
+from .workers import FunctionWorker
 
 
 class LLCMainWindow(QMainWindow):
@@ -104,10 +116,78 @@ class LLCMainWindow(QMainWindow):
         self.multi_fidelity_analysis: MultiFidelityAnalysis | None = None
         self.thread_pool = QThreadPool.globalInstance()
         self._active_workers: list[FunctionWorker] = []
+        self._power_stage_revision = 0
+        self._waveform_generation = 0
+        self._closing = False
+        self._accepted_waveform_identity = None
+        self._waveform_small_signal = None
+        self._waveform_plant_inputs = None
+        self._results_current = False
         self.output_directory = Path("output/gui_session")
         self._build_actions()
         self._build_ui()
         self._load_spec_to_widgets(self.spec)
+        for key, widget in self.fields.items():
+            widget.valueChanged.connect(lambda _value, key=key: self._power_stage_field_edited(key))
+            widget.valueChanged.connect(self._power_stage_inputs_changed)
+        for widget in (self.topology, self.parameter_mode_combo, self.primary_device_combo):
+            widget.currentIndexChanged.connect(self._power_stage_inputs_changed)
+        self.topology_view.set_primary_topology(self.topology.currentData())
+        comparison = self.model_comparison_view
+        for widget in (comparison.vbus, comparison.load_percent,
+                       comparison.max_harmonic, comparison.hb_samples):
+            widget.valueChanged.connect(self._invalidate_model_comparison)
+        for widget in (comparison.include_td, comparison.apply_td_losses):
+            widget.toggled.connect(self._invalidate_model_comparison)
+
+    def _invalidate_model_comparison(self, *_args) -> None:
+        self._model_comparison_request_id = getattr(self, "_model_comparison_request_id", 0) + 1
+        self._accepted_model_options = None
+        self._power_stage_inputs_changed()
+        self.multi_fidelity_analysis = None
+        self.model_comparison_view.analysis = None
+        self.model_comparison_view.table.setRowCount(0)
+        self.model_comparison_view.details.clear()
+        self.model_comparison_view.set_loss_report_available(False)
+
+    def _power_stage_field_edited(self, key: str) -> None:
+        # An explicit edit back to the displayed rounded value is still an edit.
+        # It must not resurrect a previous hidden full-precision saved value.
+        getattr(self, "_loaded_widget_values", {}).pop(key, None)
+
+    def _power_stage_inputs_changed(self, *_args) -> None:
+        """Invalidate visible results and late jobs when the physical plant changes."""
+        self._power_stage_revision += 1
+        self._waveform_inputs_changed()
+        self.digital_loop_view.invalidate_analysis()
+        self.small_signal_analysis = None
+        self.topology_view.set_primary_topology(self.topology.currentData())
+        self.waveform_view.set_primary_topology(self.topology.currentData())
+        if not self._results_current and self.system_analysis is None:
+            return
+        self._results_current = False
+        self.system_analysis = self.small_signal_analysis = self.digital_loop_analysis = None
+        self.q_zvs_analysis = self.transformer_synthesis = self.multi_fidelity_analysis = None
+        self.external_control_design = None
+        self.summary_text.clear()
+        self.loss_summary_view._analysis = None
+        self.loss_summary_view.point.clear()
+        self.model_comparison_view.analysis = None
+        self.model_comparison_view.table.setRowCount(0)
+        self.model_comparison_view.details.clear()
+        self.model_comparison_view.set_loss_report_available(False)
+        self.waveform_view.bundle = None
+        self.waveform_view.refresh()
+        self.q_zvs_view.result = None; self.q_zvs_view.table.clear()
+        self.small_signal_view.result = None; self.small_signal_view.text.clear()
+        self.transformer_design_view.result = None
+        self.transformer_design_view.sketch.set_result(None)
+        self.transformer_design_view.apply_btn.setEnabled(False)
+        self.transformer_design_view.export_btn.setEnabled(False)
+        self.sr_design_view.text.clear(); self.interleaved_view.text.clear()
+        for canvas in self.findChildren(FigureCanvasQTAgg):
+            canvas.figure.clear(); canvas.draw_idle()
+        self.statusBar().showMessage("功率级参数已改变，旧结果已失效；请重新计算。")
 
     def _build_actions(self) -> None:
         """Build a deliberately small toolbar.
@@ -287,7 +367,7 @@ class LLCMainWindow(QMainWindow):
         elif current is self.interleaved_view:
             self.interleaved_view.run.click()
         elif current is self.waveform_view:
-            self.run_waveforms(False)
+            self.waveform_view.request_current()
         elif current is self.small_signal_view:
             self.small_signal_view.run_button.click()
         elif current is self.digital_loop_view:
@@ -464,6 +544,7 @@ class LLCMainWindow(QMainWindow):
 
         self.model_comparison_view = ModelComparisonView()
         self.model_comparison_view.analysis_requested.connect(self.run_model_comparison)
+        self.model_comparison_view.loss_report_requested.connect(self._export_td_loss_report)
         self.tabs.addTab(self.model_comparison_view, "FHA / HB / TD")
 
         self.transformer_design_view = TransformerDesignView()
@@ -484,6 +565,8 @@ class LLCMainWindow(QMainWindow):
         self.waveform_view.fast_requested.connect(lambda options: self.run_waveforms(False, options))
         self.waveform_view.harmonic_requested.connect(self.run_harmonic_waveforms)
         self.waveform_view.detailed_requested.connect(lambda options: self.run_waveforms(True, options))
+        self.waveform_view.inputs_changed.connect(self._waveform_inputs_changed)
+        self.waveform_view.export_requested.connect(self.export_current_waveforms)
         self.tabs.addTab(self.waveform_view, "波形")
 
         self.small_signal_view = SmallSignalView()
@@ -492,25 +575,47 @@ class LLCMainWindow(QMainWindow):
 
         self.digital_loop_view = DigitalLoopView()
         self.digital_loop_view.analysis_requested.connect(self.run_digital_loop)
+        self.digital_loop_view.inputs_changed.connect(self._digital_loop_inputs_changed)
         self.tabs.addTab(self.digital_loop_view, "数字控制")
         return self.tabs
 
     def _component_selected(self, key: str) -> None:
-        self.statusBar().showMessage(f"已选择功率级组件：{key}")
-        mapping = {
-            "bridge": ("v_bridge", "i_resonant"),
-            "lr": ("i_resonant", "v_resonant_inductor", "energy_lr"),
-            "cr": ("v_resonant_cap", "i_resonant"),
-            "transformer": ("v_transformer_primary", "i_transformer_primary", "i_magnetizing", "v_transformer_secondary"),
-            "sr": ("i_transformer_secondary", "i_rectified"),
-            "output": ("i_output_cap", "v_output", "v_output_ripple"),
-        }
-        if key == "transformer":
-            self.tabs.setCurrentWidget(self.transformer_design_view)
-            return
-        if self.waveform_view.bundle is not None and key in mapping:
+        self.statusBar().showMessage(f"已选择功率级器件：{key}")
+        if key in self.waveform_view.COMPONENT_SIGNALS:
             self.waveform_view.select_component(key)
             self.tabs.setCurrentWidget(self.waveform_view)
+
+    def _waveform_inputs_changed(self, *_args) -> None:
+        self._waveform_generation += 1
+        self._accepted_waveform_identity = None
+        if self.small_signal_analysis is self._waveform_small_signal:
+            self.small_signal_analysis = None
+        self._waveform_small_signal = None
+        self._waveform_plant_inputs = None
+        if hasattr(self, "waveform_view"):
+            self.waveform_view.invalidate()
+
+    def _waveform_session(self, spec=None) -> dict:
+        view = self.waveform_view
+        return create_waveform_session(spec or self._spec_from_widgets(), view.work_point(),
+                                       view.solver, view.selected_component,
+                                       view.group_combo.currentIndex(), self._waveform_plant_inputs)
+
+    def _waveform_owner(self):
+        return self._power_stage_revision, self._waveform_generation, self._closing
+
+    def closeEvent(self, event):
+        self._closing = True
+        self._power_stage_revision += 1
+        self._waveform_inputs_changed()
+        super().closeEvent(event)
+
+    def showEvent(self, event):
+        if self._closing:
+            self._closing = False
+            self._waveform_inputs_changed()
+            self._set_busy(bool(self._active_workers))
+        super().showEvent(event)
 
     def _set_busy(self, busy: bool, message: str = "") -> None:
         self.progress.setVisible(busy)
@@ -594,6 +699,14 @@ class LLCMainWindow(QMainWindow):
                 value *= 1e-9
             elif key in {"primary_turns", "secondary_turns"}:
                 value = int(value)
+            # Retain full saved input precision until this specific control is edited.
+            loaded = getattr(self, "_loaded_widget_values", {})
+            original = getattr(self, "_loaded_spec", None)
+            entering_manual = (key in {"user_lr_h", "user_cr_f", "user_lm_h"}
+                and self.parameter_mode_combo.currentData() == TankParameterMode.USER_DEFINED
+                and original is not None and original.parameter_mode != TankParameterMode.USER_DEFINED)
+            if original is not None and widget.value() == loaded.get(key) and not entering_manual:
+                value = getattr(original, key)
             changes[key] = value
         changes["primary_topology"] = PrimaryTopology(self.topology.currentData())
         changes["parameter_mode"] = TankParameterMode(self.parameter_mode_combo.currentData())
@@ -603,6 +716,7 @@ class LLCMainWindow(QMainWindow):
         return spec
 
     def _load_spec_to_widgets(self, spec: LLCDesignSpec) -> None:
+        self._power_stage_inputs_changed()
         for key, widget in self.fields.items():
             value = getattr(spec, key)
             if key in {"resonant_frequency_hz", "minimum_frequency_hz", "maximum_frequency_hz"}:
@@ -647,19 +761,25 @@ class LLCMainWindow(QMainWindow):
             self.sr_design_view.set_nominal_spec(spec)
         if hasattr(self, "interleaved_view"):
             self.interleaved_view.set_nominal_spec(spec)
+        self._loaded_spec = deepcopy(spec)
+        self._loaded_widget_values = {key: widget.value() for key, widget in self.fields.items()}
 
     def load_json(self) -> None:
+        owner = self._waveform_owner()
         path, _ = QFileDialog.getOpenFileName(self, "加载 LLC JSON", "", "JSON (*.json)")
         if not path:
             return
+        if self._closing or owner != self._waveform_owner():
+            return
         try:
-            spec, session = load_project(path)
+            spec, session, waveform_session = load_project(path, include_waveform=True)
             prepared = None
             if session is not None:
-                from .solution_map_install import install_llc_solution_map
-                from .design_session_install import validate_map_state
-                from ..control.design_session import decode_model
                 import json
+
+                from ..control.design_session import decode_model
+                from .design_session_install import validate_map_state
+                from .solution_map_install import install_llc_solution_map
                 view = install_llc_solution_map(self)
                 prepared = validate_map_state(view, session.get("solution_map"), "llc")
                 exact_spec = decode_model(session["inputs"])["spec"]
@@ -670,6 +790,14 @@ class LLCMainWindow(QMainWindow):
             self._load_spec_to_widgets(self.spec)
             if session is not None:
                 self.digital_loop_view._session_restore(session, prepared)
+            if waveform_session is not None:
+                view = self.waveform_view
+                view.solver = waveform_session["solver"]
+                view.set_work_point(waveform_session["work_point"])
+                view.group_combo.setCurrentIndex(waveform_session["group"])
+                view.selected_component = waveform_session["component"]
+                self._waveform_plant_inputs = deepcopy(waveform_session["plant_inputs"])
+                view.request_current()
             self._append_log(f"Loaded: {path}" + (
                 " — exact control inputs restored; Run and regenerate candidate before Apply."
                 if session is not None else ""))
@@ -677,8 +805,9 @@ class LLCMainWindow(QMainWindow):
             show_operation_issue(self, t("加载失败"), str(exc), critical=True)
 
     def save_json(self) -> None:
+        owner = self._waveform_owner()
         path, _ = QFileDialog.getSaveFileName(self, "保存 LLC JSON", "llc_project.json", "JSON (*.json)")
-        if not path:
+        if not path or self._closing or owner != self._waveform_owner():
             return
         try:
             self.spec = self._spec_from_widgets()
@@ -690,7 +819,8 @@ class LLCMainWindow(QMainWindow):
             from .solution_map_install import install_llc_solution_map
             install_llc_solution_map(self)
             session = self.digital_loop_view._session_capture()
-            save_project(self.spec, path, analysis, control_session=session)
+            save_project(self.spec, path, analysis, control_session=session,
+                         waveform_session=self._waveform_session(self.spec))
             self._append_log(f"Saved: {path}")
         except Exception as exc:
             show_operation_issue(self, t("保存失败"), str(exc), critical=True)
@@ -742,11 +872,41 @@ class LLCMainWindow(QMainWindow):
         # would otherwise drop it and its signals QObject could be
         # garbage-collected before the result callback fires.
         self._active_workers.append(worker)
-        worker.signals.result.connect(callback)
-        worker.signals.error.connect(self._worker_error)
-        worker.signals.finished.connect(lambda: self._set_busy(False))
-        worker.signals.finished.connect(
-            lambda: self._active_workers.remove(worker))
+        revision = self._power_stage_revision
+        digital_revision = self.digital_loop_view.input_revision
+        # The solution-map adapter wraps completion callbacks. Preserve task
+        # identity on its callable so stale exceptions are rejected as well.
+        digital_request = callback == self._digital_loop_ready or getattr(function, "_llc_digital_request", False)
+        waveform_current = getattr(function, "_llc_waveform_current", lambda: True)
+        def inputs_current():
+            return isValid(self) and not self._closing and revision == self._power_stage_revision and (
+                not digital_request or digital_revision == self.digital_loop_view.input_revision) and waveform_current()
+        def ready(result):
+            if not isValid(self) or self._closing:
+                return
+            if not waveform_current():
+                self._append_log("Discarded waveform: input/request identity changed.")
+                return
+            if revision != self._power_stage_revision:
+                self._append_log("Discarded result: power-stage inputs changed during calculation.")
+                return
+            if (digital_request or isinstance(result, DigitalLoopAnalysis)) and digital_revision != self.digital_loop_view.input_revision:
+                self._append_log("Discarded result: digital-loop inputs changed during calculation.")
+                return
+            self._results_current = True
+            callback(result)
+        worker.signals.result.connect(ready)
+        worker.signals.error.connect(lambda error: self._worker_error(error) if inputs_current() else None)
+        def finished():
+            if worker in self._active_workers:
+                self._active_workers.remove(worker)
+            if isValid(self) and not self._closing:
+                self._set_busy(bool(self._active_workers))
+            worker.signals.result.disconnect()
+            worker.signals.error.disconnect()
+            worker.signals.finished.disconnect()
+            worker.signals.deleteLater()
+        worker.signals.finished.connect(finished)
         self.thread_pool.start(worker)
 
     def _worker_error(self, error: str) -> None:
@@ -761,7 +921,13 @@ class LLCMainWindow(QMainWindow):
         self._run_worker("正在运行 LLC 完整计算…", lambda: LLCSystemAnalyzer().analyze(self.spec), self._design_ready)
 
     def _design_ready(self, analysis: SystemAnalysis) -> None:
+        self._waveform_inputs_changed()
+        self._results_current = True
         self.system_analysis = analysis
+        if hasattr(self, "model_comparison_view"):
+            self.model_comparison_view.set_loss_report_available(
+                any(point.semiconductor_source == "TIME_DOMAIN_WAVEFORM"
+                    for point in analysis.operating_points))
         nominal = analysis.nominal
         op = nominal.operating_point
         text = [
@@ -779,6 +945,9 @@ class LLCMainWindow(QMainWindow):
             f"谐振电感: {analysis.resonant_inductor.core.part_number}, {analysis.resonant_inductor.turns} T, {analysis.resonant_inductor.layers} layers",
             "",
             f"标称损耗={nominal.total_loss_w:.5f} W",
+            f"器件电流来源={nominal.semiconductor_source}",
+            f"磁件/电容来源={nominal.magnetic_source} / {nominal.capacitor_source}",
+            f"换流/ZVS 来源={nominal.commutation_source}",
             f"标称效率={nominal.efficiency*100:.5f}%",
             design_status(analysis.feasible),
         ]
@@ -922,10 +1091,18 @@ class LLCMainWindow(QMainWindow):
             max_harmonic += 1
         hb_samples = int(options.get("hb_samples", 1024))
         include_td = bool(options.get("include_time_domain", True))
+        apply_td_losses = bool(options.get("apply_td_losses", False))
+        spec = self.spec
+        self._model_comparison_request_id = getattr(self, "_model_comparison_request_id", 0) + 1
+        request_id = self._model_comparison_request_id
+        self.model_comparison_view.set_loss_report_available(False)
+        if apply_td_losses and not include_td:
+            show_operation_issue(self, t("参数错误"), t("请先勾选运行分段时域参考。"), critical=False)
+            return
 
         def calculate():
             request = LLCAnalysisRequest(
-                spec=self.spec,
+                spec=spec,
                 vbus_v=vbus_v,
                 load_fraction=load_fraction,
                 waveform_cycles=2,
@@ -943,16 +1120,37 @@ class LLCMainWindow(QMainWindow):
                     output_cycles=2,
                 ),
             )
-            return LLCGoldenSolver(config).solve(request)
+            result = LLCGoldenSolver(config).solve(request)
+            losses = None
+            if apply_td_losses:
+                analyzer = LLCSystemAnalyzer()
+                base = analyzer.analyze(spec, work_points=[(vbus_v, load_fraction)])
+                losses = analyzer.with_time_domain_losses(
+                    base, [result.result(FidelityLevel.SWITCHED_TIME_DOMAIN)])
+            return result, losses
 
         self._run_worker(
             "正在计算 FHA / 多谐波 HB / 分段时域对比…",
             calculate,
-            self._model_comparison_ready,
+            lambda payload: self._model_comparison_ready(*payload)
+            if request_id == self._model_comparison_request_id else None,
         )
 
-    def _model_comparison_ready(self, result: MultiFidelityAnalysis) -> None:
+    def _model_comparison_ready(self, result: MultiFidelityAnalysis,
+                                loss_analysis: SystemAnalysis | None = None) -> None:
+        try:
+            current_spec = self._spec_from_widgets()
+        except ValueError:
+            self._append_log("Discarded model comparison: current inputs are invalid")
+            return
+        if result.request.spec != current_spec:
+            self._append_log("Discarded stale model comparison: inputs changed during calculation")
+            return
+        self.model_comparison_view.set_loss_report_available(loss_analysis is not None)
+        if loss_analysis is not None:
+            self._design_ready(loss_analysis)
         self.multi_fidelity_analysis = result
+        self._accepted_model_options = self.model_comparison_view.options()
         self.model_comparison_view.set_analysis(result)
         self.tabs.setCurrentWidget(self.model_comparison_view)
         self._append_log(
@@ -960,6 +1158,36 @@ class LLCMainWindow(QMainWindow):
             f"reference={result.reference_level.value}, "
             f"models={','.join(level.value for level in result.results)}"
         )
+
+    def _export_td_loss_report(self) -> None:
+        analysis = self.system_analysis
+        comparison = self.multi_fidelity_analysis
+        if analysis is None or comparison is None:
+            return
+        if getattr(self, "_accepted_model_options", None) != self.model_comparison_view.options():
+            self._invalidate_model_comparison()
+            return
+        if not any(point.semiconductor_source == "TIME_DOMAIN_WAVEFORM"
+                   and point.operating_point.vbus_v == comparison.request.bus_voltage_v
+                   and point.operating_point.load_fraction == comparison.request.load_fraction
+                   for point in analysis.operating_points):
+            return
+        if analysis.spec != self._spec_from_widgets() or comparison.request.spec != analysis.spec:
+            show_operation_issue(self, t("参数错误"), t("输入已改变，请重新计算 TD 损耗后导出。"), critical=False)
+            return
+        directory = QFileDialog.getExistingDirectory(self, "导出当前 TD 损耗报告", str(self.output_directory))
+        if not directory:
+            return
+        from ..analysis import export_multifidelity_analysis
+        from ..report.export import export_calculation_book
+
+        def export():
+            paths = export_calculation_book(analysis, directory)
+            export_multifidelity_analysis(comparison, Path(directory) / "model_comparison")
+            return paths["report"]
+
+        self._run_worker(t("正在导出同一 TD 工况的损耗与波形报告…"), export,
+                         lambda path: self._append_log(f"TD loss report exported: {path}"))
 
     def run_sr_design(self, options: dict | None = None) -> None:
         try:
@@ -1000,6 +1228,14 @@ class LLCMainWindow(QMainWindow):
         self._append_log(f"Interleaved ready: N={result.phase_count}, offsets={result.phase_offsets_deg}, CoutIrms={result.output_capacitor_rms_a:.3f} A")
 
 
+    def _digital_loop_inputs_changed(self) -> None:
+        self.digital_loop_analysis = None
+        view = self.digital_loop_view
+        self.external_control_design = view._external_controller if view.external_controller_check.isChecked() else None
+        self.external_control_label = view._external_controller_label if self.external_control_design is not None else ""
+        if hasattr(self, "refresh_closed_loop_controller"):
+            self.refresh_closed_loop_controller()
+
     def set_external_control_design(self, digital, label: str = "") -> None:
         """Receive the canonical H(z) designed in Control Tools.
 
@@ -1015,69 +1251,165 @@ class LLCMainWindow(QMainWindow):
             f"Fs={digital.sample_rate_hz/1e3:.3f} kHz"
         )
 
+    def _prepare_waveform_request(self, solver: str, options: dict | None):
+        # Capture every physical input on the GUI thread, before the worker runs.
+        # No worker reads a widget or mutates the shared nominal system analysis.
+        retained_inputs = deepcopy(self._waveform_plant_inputs) if (
+            solver == self.waveform_view.solver and
+            (options is None or options == self.waveform_view.work_point())) else None
+        self._waveform_inputs_changed()
+        self._waveform_plant_inputs = retained_inputs
+        spec = deepcopy(self._spec_from_widgets())
+        self.spec = spec
+        view = self.waveform_view
+        view.solver = solver
+        if options is not None and options != view.work_point():
+            view.set_work_point(options)
+        state = self._waveform_session(spec)
+        identity = waveform_request_identity(state)
+        generation = self._waveform_generation
+        def current():
+            if not isValid(self) or self._closing or generation != self._waveform_generation:
+                return False
+            try:
+                return identity == waveform_request_identity(self._waveform_session())
+            except (TypeError, ValueError):
+                return False
+        return spec, state, identity, generation, current
+
+    def _accept_waveform(self, bundle, state, identity, generation):
+        # Resolved electrical coefficients are replayable inputs, not saved curve
+        # authority. Include them in the accepted identity and subsequent session.
+        self._waveform_plant_inputs = deepcopy(state["plant_inputs"])
+        identity = waveform_request_identity(state)
+        metadata = {**bundle.metadata, **state["work_point"],
+                    "primary_topology": self.spec.primary_topology.value,
+                    "request_identity": identity, "request_generation": generation,
+                    "spec_identity": state["spec_identity"],
+                    "model_revision": state["model_revision"], "solver": state["solver"],
+                    "solver_options": json.dumps(state["solver_options"], sort_keys=True),
+                    "replay_spec": json.dumps(asdict(self.spec), sort_keys=True),
+                    "replay_session": json.dumps(state, sort_keys=True)}
+        if state["plant_inputs"] is not None:
+            metadata["plant_inputs"] = json.dumps(state["plant_inputs"], sort_keys=True)
+            metadata["input_authority"] = "Frozen equivalent input coefficients only; recomputed curve, no saved TD loss authority"
+        signals = bundle.signals
+        if self.spec.primary_topology == PrimaryTopology.HALF_BRIDGE:
+            signals = {key: value for key, value in signals.items()
+                       if not key.endswith(("_q3", "_q4"))}
+        bundle = replace(bundle, metadata=metadata, signals=signals)
+        self._accepted_waveform_identity = identity
+        self.waveform_view.set_primary_topology(self.spec.primary_topology)
+        from ..models.waveform_evidence import component_waveform_evidence
+        self.waveform_view.component_context = component_waveform_evidence(bundle, self.spec)
+        self.waveform_view.set_bundle(bundle)
+        self.tabs.setCurrentWidget(self.waveform_view)
+        self._append_log(f"Waveforms ready: {bundle.model_name}; source={identity}")
+
     def run_harmonic_waveforms(self, options: dict | None = None) -> None:
         try:
-            self.spec = self._spec_from_widgets()
+            spec, state, identity, generation, current = self._prepare_waveform_request("harmonic", options)
         except Exception as exc:
             show_operation_issue(self, t("参数错误"), str(exc), critical=False); return
-        options = options or {}
-        request = LLCAnalysisRequest(
-            spec=self.spec,
-            vbus_v=float(options.get("vbus_v", self.spec.vbus_nom_v)),
-            load_fraction=float(options.get("load_fraction", 1.0)),
-            waveform_cycles=2,
-            samples_per_cycle=1024,
-        )
-        self._run_worker(
-            "正在求解自洽多谐波 LLC 波形…",
-            lambda: solve_harmonic_balance(
-                request,
-                HarmonicBalanceConfig(
-                    max_harmonic=7,
-                    samples_per_cycle=1024,
-                    output_cycles=2,
-                ),
-            ),
-            self._harmonic_waveforms_ready,
-        )
+        request = LLCAnalysisRequest(spec=spec, **state["work_point"],
+                                     waveform_cycles=2, samples_per_cycle=1024)
+        def calculate():
+            result = solve_harmonic_balance(request, HarmonicBalanceConfig(**state["solver_options"]))
+            if not result.convergence.converged:
+                raise ValueError(f"Harmonic waveform did not converge: {result.convergence.message}")
+            return result
+        calculate._llc_waveform_current = current
+        def ready(result):
+            self._accept_waveform(result.waveform, state, identity, generation)
+        self._run_worker("正在求解自洽多谐波 LLC 波形…", calculate, ready)
 
     def _harmonic_waveforms_ready(self, result: LLCModelResult) -> None:
+        # Retained API for existing callers; ordinary requests use guarded snapshots.
         self.waveform_view.set_bundle(result.waveform)
         self.tabs.setCurrentWidget(self.waveform_view)
-        self._append_log(
-            "Multi-harmonic waveform ready: "
-            f"fs={result.metrics.switching_frequency_hz/1e3:.6f} kHz, "
-            f"H={result.harmonic_orders}, "
-            f"residual={result.convergence.residual_norm:.3e}"
-        )
 
     def run_waveforms(self, detailed: bool, options: dict | None = None) -> None:
         try:
-            self.spec = self._spec_from_widgets()
+            spec, state, identity, generation, current = self._prepare_waveform_request(
+                "detailed" if detailed else "fast", options)
         except Exception as exc:
             show_operation_issue(self, t("参数错误"), str(exc), critical=False); return
-        options = options or {}
+        # Preserve existing nominal loss/damping consumers, but use a detached
+        # snapshot and only if its physical spec is exactly the requested spec.
+        analysis = deepcopy(self.system_analysis) if (
+            self.system_analysis is not None and self.system_analysis.spec == spec) else None
         def calculate():
-            small = self._build_small_signal(options)
+            local_analysis = analysis or LLCSystemAnalyzer().analyze(spec)
+            frozen = state["plant_inputs"]
+            small = build_small_signal_analysis(spec, system_analysis=local_analysis,
+                **state["work_point"], timer_clock_hz=120e6,
+                series_resistance_ohm=None if frozen is None else frozen["series_resistance_ohm"])
+            if frozen is not None:
+                geometry = {key: value for key, value in frozen.items()
+                            if key not in {"source", "series_resistance_ohm"}}
+                small = replace(small, parameters=replace(small.parameters, **geometry))
+            if not small.steady_state.converged:
+                raise ValueError("Waveform operating point did not converge")
             model = DynamicPhasorModel(small.parameters)
             if detailed:
-                bundle = simulate_switched_steady_state(
-                    model, small.steady_state,
-                    SwitchedSimulationConfig(samples_per_cycle=512, output_cycles=2))
+                bundle = simulate_switched_steady_state(model, small.steady_state,
+                    SwitchedSimulationConfig(**state["solver_options"]))
+                if str(bundle.metadata.get("converged", "False")).lower() != "true":
+                    raise ValueError("Detailed waveform did not reach a periodic steady state")
             else:
                 bundle = reconstruct_dynamic_phasor_waveforms(
-                    model, small.steady_state, cycles=2, samples_per_cycle=1024)
-            return small, bundle
-        self._run_worker(
-            "正在计算详细开关波形…" if detailed else "正在重构关键波形…",
-            calculate, self._waveforms_ready)
+                    model, small.steady_state, **state["solver_options"])
+            from ..models.waveform_evidence import waveform_electrical_inputs
+            inputs = frozen if frozen is not None else waveform_electrical_inputs(small, local_analysis)
+            return small, bundle, inputs
+        calculate._llc_waveform_current = current
+        def ready(result):
+            small, bundle, inputs = result
+            self.small_signal_analysis = small
+            self._waveform_small_signal = small
+            self._accept_waveform(bundle, {**state, "plant_inputs": inputs}, identity, generation)
+        self._run_worker("正在计算详细开关波形…" if detailed else "正在重构关键波形…",
+                         calculate, ready)
 
     def _waveforms_ready(self, result: tuple[SmallSignalAnalysis, WaveformBundle]) -> None:
-        small, bundle = result
-        self.small_signal_analysis = small
+        self.small_signal_analysis, bundle = result
         self.waveform_view.set_bundle(bundle)
         self.tabs.setCurrentWidget(self.waveform_view)
-        self._append_log(f"Waveforms ready: {bundle.model_name}; warnings={len(bundle.warnings)}")
+
+    def export_current_waveforms(self) -> None:
+        bundle = self.waveform_view.bundle
+        if bundle is None or self._accepted_waveform_identity is None:
+            return
+        owner = self._waveform_owner()
+        identity = self._accepted_waveform_identity
+        path = QFileDialog.getExistingDirectory(self, "导出当前波形与报告", str(self.output_directory))
+        if not path or self._closing or owner != self._waveform_owner() or bundle is not self.waveform_view.bundle:
+            return
+        try:
+            if identity != waveform_request_identity(self._waveform_session()):
+                self._waveform_inputs_changed()
+                return
+            from ..dynamics.export import export_waveform_bundle
+            context = {**self.topology_view.context(),
+                       "selected_component": self.waveform_view.selected_component,
+                       "selected_signals": list(self.waveform_view._selected_keys()),
+                       "request_identity": identity,
+                       "component_evidence": self.waveform_view.component_context,
+                       "losses_constraints": "Only same-bundle stresses and documented ratings; unmatched nominal losses are unknown."}
+            paths = export_waveform_bundle(bundle, path, context=context)
+            # Scene rendering preserves all connections even when its tab is hidden.
+            scene = self.topology_view.scene()
+            image = QImage(1380, 570, QImage.Format.Format_ARGB32)
+            image.fill(Qt.GlobalColor.white)
+            painter = QPainter(image)
+            scene.render(painter)
+            painter.end()
+            if not image.save(str(Path(path) / "llc_schematic.png")):
+                raise OSError("Could not save the electrical schematic")
+            self._append_log(f"Current waveform report: {paths['report']}; source={identity}")
+            self.statusBar().showMessage(f"当前波形与报告已导出：{paths['report']}", 8000)
+        except (OSError, TypeError, ValueError, RuntimeError) as exc:
+            show_operation_issue(self, t("导出失败"), str(exc), critical=True)
 
     def run_small_signal(self, options: dict) -> None:
         try:
@@ -1096,6 +1428,7 @@ class LLCMainWindow(QMainWindow):
             f"stable={result.stable}")
 
     def run_digital_loop(self, options: dict) -> None:
+        self.digital_loop_view.invalidate_analysis()
         try:
             self.spec = self._spec_from_widgets()
         except Exception as exc:
@@ -1107,6 +1440,7 @@ class LLCMainWindow(QMainWindow):
             small = self._build_small_signal(small_options)
             return build_digital_loop_analysis(small, **loop_options)
 
+        calculate._llc_digital_request = True
         self._run_worker(
             "正在建立完整 LLC 数字电压环…",
             calculate,

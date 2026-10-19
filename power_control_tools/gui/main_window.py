@@ -122,6 +122,7 @@ class ControlToolsMainWindow(QMainWindow):
         super().__init__(parent)
         self.setWindowTitle("电源设计工具箱 — Digital Control Tools")
         self.resize(1800, 1050)
+        self._design_generation = 0
         self.current_analog = None; self.current_digital = None; self.current_analysis = None
         root = QWidget(); row = QHBoxLayout(root)
         self.param_widget = self._build_parameters(); self.tabs = self._build_tabs()
@@ -171,6 +172,7 @@ class ControlToolsMainWindow(QMainWindow):
             self.export_action.setEnabled(self.pr_view.export_button.isEnabled() if pr else enabled)
 
     def _invalidate_design(self, *, clear_plots=False):
+        self._design_generation += 1
         self.current_analog = None
         self.current_digital = None
         self.current_analysis = None
@@ -186,6 +188,13 @@ class ControlToolsMainWindow(QMainWindow):
                     axis.set_xscale("linear")
                 figure.clear()
                 canvas.draw_idle()
+
+    def closeEvent(self, event):
+        self.timer.stop()
+        self._invalidate_design()
+        self.pr_view.timer.stop()
+        self.pr_view._invalidate_config()
+        super().closeEvent(event)
 
     @staticmethod
     def _field_visible(form: QFormLayout, widget: QWidget, visible: bool):
@@ -499,13 +508,18 @@ class ControlToolsMainWindow(QMainWindow):
             self.pr_view.export_c99()
             return
         if self.current_digital is None or not self.current_digital.implementable: return
+        digital = self.current_digital
+        generation = self._design_generation
         prefix = self.export_prefix.text().strip() or "POWER_CTRL"
         default = str(Path.cwd() / f"{prefix.lower()}.h")
         path, _ = QFileDialog.getSaveFileName(self, "导出单文件 C99", default, "C99 Header (*.h)")
-        if not path: return
+        if (not path or generation != self._design_generation
+                or self.current_digital is not digital
+                or prefix != (self.export_prefix.text().strip() or "POWER_CTRL")):
+            return
         if not path.lower().endswith('.h'): path += '.h'
         try:
-            out = export_c99_filter(self.current_digital, path, prefix=prefix); verify = verify_c99_filter(self.current_digital, out)
+            out = export_c99_filter(digital, path, prefix=prefix); verify = verify_c99_filter(digital, out)
             self.c99.setPlainText(out.file_path.read_text(encoding='utf-8') + f"\n/* Verification: {verify.message}; impulse={verify.impulse_max_abs_error:.3e}; step={verify.step_max_abs_error:.3e} */\n")
             QMessageBox.information(self, t("C99 导出完成"), f"单文件已生成:\n{out.file_path}\n\nVerification: {verify.message}")
         except Exception as exc:

@@ -47,16 +47,6 @@ _AUTO_KINDS = (
     ControllerKind.THREE_P_THREE_Z,
 )
 
-# PI/PIF/PID can be reconstructed exactly by the current New Structure slider
-# parameters, so Auto Design writes them back as tunable parameters.  Anything
-# else (Power 2P2Z / Power 3P3Z with an integrator pole, or a future structure)
-# is transferred as exact H(z) coefficients instead; translating it into the
-# generic sliders would silently produce a different controller.
-_GUI_RECONSTRUCTABLE_AUTO_KINDS = {
-    ControllerKind.PI,
-    ControllerKind.PIF,
-    ControllerKind.PID,
-}
 
 
 class FRAAutoDesignDialog(QDialog):
@@ -114,7 +104,16 @@ class FRAAutoDesignDialog(QDialog):
 
         self.output = QPlainTextEdit(); self.output.setReadOnly(True)
         root.addWidget(self.output, 1)
+        for widget in (self.fs, self.fc, self.pm, self.min_gm, self.max_ms):
+            widget.valueChanged.connect(self._invalidate_candidate)
+        for widget in (self.kind, self.method):
+            widget.currentIndexChanged.connect(self._invalidate_candidate)
         self._load_defaults()
+
+    def _invalidate_candidate(self, *_args) -> None:
+        self.result = None
+        self.apply_button.setEnabled(False)
+        self.output.clear()
 
     def _load_defaults(self) -> None:
         self.host.recalculate()
@@ -200,13 +199,11 @@ class FRAAutoDesignDialog(QDialog):
                 lines += ["", "EXACT DIGITAL H(z)"]
                 lines += [f"  b{i} = {value:+.12e}" for i, value in enumerate(d.b)]
                 lines += [f"  a{i} = {value:+.12e}" for i, value in enumerate(d.a)]
-                if c.controller_kind not in _GUI_RECONSTRUCTABLE_AUTO_KINDS:
-                    lines += [
-                        "",
-                        "NOTE: this result uses an integrator-pole power compensator topology whose parameterisation",
-                        "differs from the legacy generic P/Z sliders. Apply therefore transfers the exact H(z)",
-                        "coefficients into the host's Custom H(z) mode instead of silently mapping parameters.",
-                    ]
+                lines += [
+                    "",
+                    "NOTE: Apply transfers this candidate's full-precision H(z) coefficients into",
+                    "the host's Custom H(z) mode without rebuilding rounded analog parameters.",
+                ]
                 if result.status != "PASS":
                     lines += ["", "NOTE: REVIEW candidates are shown for diagnosis only and cannot be one-click applied."]
             lines += ["", "TRIAL SUMMARY"]
@@ -236,38 +233,22 @@ class FRAAutoDesignDialog(QDialog):
             index = host.new_mode.findData("structure")
             if index >= 0:
                 host.new_mode.setCurrentIndex(index)
-        if selected.controller_kind not in _GUI_RECONSTRUCTABLE_AUTO_KINDS:
-            # Exact-H(z) host mode: transfer the coefficients verbatim.
-            index = host.new_kind.findData(EXACT_CONTROLLER)
-            if index >= 0:
-                host.new_kind.setCurrentIndex(index)
-            host.new_fs.setValue(selected.controller.sample_rate_hz)
-            exact = selected.controller.normalized()
-            host.new_exact_b.setText(", ".join(f"{v:.12g}" for v in exact.b))
-            host.new_exact_a.setText(", ".join(f"{v:.12g}" for v in exact.a))
-            host.recalculate()
-            QMessageBox.information(
-                self,
-                "Auto Design 已应用（Exact H(z)）",
-                "严格 PASS 的自动设计结果已按精确 H(z) 系数回写到 Custom H(z) 模式。\n"
-                "这是积分极点型 Power 模板，不能用 legacy 通用 P/Z Slider 等价表示。\n"
-                "可继续修改系数或直接导出 C99。",
-            )
+        # The accepted candidate owns the exact H(z). Rebuilding even PI/PIF/PID
+        # through rounded parameter sliders changes that candidate's identity.
+        exact = selected.controller.normalized()
+        if not 1_000.0 <= exact.sample_rate_hz <= 1_000_000.0 or round(exact.sample_rate_hz, 1) != exact.sample_rate_hz:
+            show_operation_issue(self, t("Auto Design 失败"), "Fs cannot be represented exactly by the 0.1 Hz desktop input", critical=True)
             return
-        index = host.new_kind.findData(selected.controller_kind)
-        if index >= 0:
-            host.new_kind.setCurrentIndex(index)
-        host.new_fs.setValue(selected.controller.sample_rate_hz)
-        method_index = host.new_method.findData(self.method.currentData())
-        if method_index >= 0:
-            host.new_method.setCurrentIndex(method_index)
-        p = selected.parameters
-        if "kp" in p: host.new_kp.setValue(p["kp"])
-        if "ti_s" in p: host.new_ti.setValue(p["ti_s"])
-        if "td_s" in p: host.new_td.setValue(max(p["td_s"], 1e-9))
-        if "lpf_pole_hz" in p: host.new_lpf.setValue(p["lpf_pole_hz"])
+        host.new_kind.setCurrentIndex(host.new_kind.findData(EXACT_CONTROLLER))
+        host._saved_new_controller = exact
+        host.new_fs.setValue(exact.sample_rate_hz)
+        host.new_exact_b.setText(", ".join(repr(v) for v in exact.b))
+        host.new_exact_a.setText(", ".join(repr(v) for v in exact.a))
         host.recalculate()
-        QMessageBox.information(self, t("Auto Design 已应用"), t("严格 PASS 的自动设计参数已回写，可继续 Slider 微调并导出 C99。"))
+        QMessageBox.information(
+            self, t("Auto Design 已应用"),
+            t("严格 PASS 的自动设计结果已按完整精度 H(z) 系数应用；可继续编辑系数、保存会话或导出 C99。"),
+        )
 
 
 class FRAModelFitDialog(QDialog):

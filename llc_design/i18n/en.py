@@ -444,3 +444,44 @@ The two are different, so Auto Design results are written back as exact H(z).
 CATALOGUE.update({'设计提醒：': 'Design notes:', '可继续查看和导出已有结果；未满足项与未求解工况仍需复核。': 'Available results can still be viewed and exported; unmet constraints and unsolved operating points need review.'})
 
 CATALOGUE["实测迭代调参 Map"] = 'Measured PI tuning map'
+
+
+# Converged time-domain semiconductor loss selection and reports.
+CATALOGUE.update({
+    '导出当前 TD 损耗报告': 'Export current TD loss report',
+    '将收敛 TD 波形用于当前点损耗': 'Use converged TD waveforms for losses at this operating point',
+    'TD 波形驱动器件、磁件与电容损耗；材料/热模型仍为工程估算，换流/ZVS 与选型约束保持 FHA': 'TD waveforms drive semiconductor, magnetic and capacitor losses; material/thermal models remain estimates, while commutation/ZVS and hardware screening retain FHA',
+    '将收敛 TD 电流用于当前点器件损耗': 'Use converged TD currents for device losses at this operating point',
+    '仅更新器件电流/频率及系统损耗汇总；磁件、电容与 ZVS 仍为原工程估算': 'Update only device current/frequency inputs and system loss totals; magnetic components, capacitors and ZVS retain the existing engineering estimates',
+    '请先勾选运行分段时域参考。': 'Select the piecewise time-domain reference run first.',
+    '输入已改变，请重新计算 TD 损耗后导出。': 'Inputs have changed. Recalculate TD losses before exporting.',
+    '正在导出同一 TD 工况的损耗与波形报告…': 'Exporting loss and waveform reports for the same TD operating point…',
+    '收敛时域波形': 'converged time-domain waveform',
+    'FHA 工程估算': 'FHA engineering estimate',
+    '器件电流来源={source}（其余损耗保持原工程模型）': 'Device current source={source} (other losses retain the existing engineering models)',
+})
+
+
+# Explicit AC convergence controls and stale-result invalidation.
+CATALOGUE.update({
+    'AC 收敛周期数': 'AC settling cycles',
+    'AC 积分采样率': 'AC integration sample rate',
+    '未收敛时增加 AC 周期数并重新运行；只有收敛结果可用于器件与电容损耗。': 'If convergence fails, increase AC settling cycles and rerun; only converged results can feed device and capacitor losses.',
+    '积分采样率至少为电流环更新率的 4 倍；提高采样率会增加计算量。': 'The integration sample rate must be at least 4 times the current-loop update rate; higher rates increase computation.',
+    'TTPL 输入已改变，请重新运行分析。': 'TTPL inputs changed. Run the analysis again.',
+})
+
+
+# FRA reproducible session actions.
+CATALOGUE.update({
+    '保存 FRA 会话': 'Save FRA Session',
+    '打开 FRA 会话': 'Open FRA Session',
+})
+
+CATALOGUE['严格 PASS 的自动设计结果已按完整精度 H(z) 系数应用；可继续编辑系数、保存会话或导出 C99。'] = 'The strictly PASSing automatic design has been applied as full-precision H(z) coefficients; you can edit the coefficients, save the session or export C99.'
+
+CATALOGUE['系数文件已写入，但验证未通过；请勿用于控制硬件。'] = 'The coefficient file was written, but validation failed; do not use it to control hardware.'
+
+
+# Current-source LLC component waveform exports.
+CATALOGUE.update({'导出当前波形与报告': 'Export current waveforms and report', '总 RMS': 'Total RMS'})

@@ -17,6 +17,7 @@ import types
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
 import numpy as np
+from numpy.typing import NDArray
 
 from llc_design import __version__
 from llc_design.core.spec import (
@@ -173,7 +174,9 @@ def _matches(value: Any, hint: Any) -> bool:
             return False
         return (all(_matches(v, args[0]) for v in value) if args[-1:] == (Ellipsis,)
                 else len(value) == len(args) and all(_matches(v, h) for v, h in zip(value, args)))
-    if origin is np.ndarray or hint is np.ndarray:
+    # New NumPy exposes NDArray as a named typing alias; older versions expand
+    # NDArray[T] directly to np.ndarray. Both still require a real ndarray.
+    if origin is np.ndarray or origin is NDArray or hint is np.ndarray:
         return type(value) is np.ndarray
     return isinstance(hint, type) and type(value) is hint
 

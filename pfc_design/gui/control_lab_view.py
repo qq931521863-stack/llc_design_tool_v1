@@ -41,6 +41,7 @@ from llc_design.gui.widgets.control_block_diagram import BlockSpec, ConnectionSp
 from llc_design.gui.widgets.sense_schematic import AnalogSenseSchematic
 from llc_design.gui.widgets.research_export import ExportResearchPanel
 from llc_design.gui import theme
+from llc_design.gui.i18n_ui import bind_text
 from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
 from llc_design.control.phase_budget import phase_budget
@@ -73,6 +74,7 @@ class PFCControlLabView(QWidget):
     """PFC current inner-loop, bus-voltage outer-loop and waveform workspace."""
 
     analysis_requested = Signal(object)
+    inputs_changed = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -83,6 +85,7 @@ class PFCControlLabView(QWidget):
         ] | None = None
         self._cursor_frequency_hz: float | None = None
         self._syncing_cursor = False
+        self._busy = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -200,6 +203,24 @@ class PFCControlLabView(QWidget):
         root.addWidget(self.splitter, 1)
         self.inspector_toggle.toggled.connect(self._toggle_inspector)
         self.input_tabs.currentChanged.connect(self._input_tab_changed)
+        for widget in self.input_tabs.findChildren(QDoubleSpinBox) + self.input_tabs.findChildren(QSpinBox):
+            widget.valueChanged.connect(self._notify_inputs_changed)
+        for widget in self.input_tabs.findChildren(QComboBox):
+            widget.currentIndexChanged.connect(self._notify_inputs_changed)
+        self.codegen_button.setEnabled(False)
+
+    def _notify_inputs_changed(self, *_args) -> None:
+        self.invalidate_results()
+        self.inputs_changed.emit()
+
+    def invalidate_results(self) -> None:
+        """A result/export belongs to one immutable input snapshot."""
+        self.result = None
+        self._cursor_frequency_hz = None
+        self.research_export.set_analysis(None)
+        self.codegen_button.setEnabled(False)
+        self.summary.clear()
+        self.autotune_status.setText(t("TTPL 输入已改变，请重新运行分析。"))
 
     def _toggle_diagram(self, visible: bool) -> None:
         self.diagram.setVisible(bool(visible))
@@ -307,6 +328,14 @@ class PFCControlLabView(QWidget):
         self.duty_max = self._spin(0.01, 1.0, 5, 0.98)
         self.min_pulse_us = self._spin(0, 100, 4, 0, " µs")
         self.deadtime_ns = self._spin(0, 5000, 2, 100, " ns")
+        self.waveform_line_cycles = self._integer_spin(3, 512, PFCControlLabConfig().waveform_line_cycles)
+        self.waveform_line_cycles.setObjectName("waveform_line_cycles")
+        self.waveform_line_cycles.setToolTip(t("未收敛时增加 AC 周期数并重新运行；只有收敛结果可用于器件与电容损耗。"))
+        self.waveform_integration_rate_hz = self._spin(
+            200000, 2000000, 0, PFCControlLabConfig().waveform_integration_rate_hz, " Hz")
+        self.waveform_integration_rate_hz.setObjectName("waveform_integration_rate_hz")
+        self.waveform_integration_rate_hz.setSingleStep(25000)
+        self.waveform_integration_rate_hz.setToolTip(t("积分采样率至少为电流环更新率的 4 倍；提高采样率会增加计算量。"))
         self.switch_cycles = self._integer_spin(1, 20, 2)
         self.switch_samples = self._integer_spin(100, 5000, 800)
         self.load_model = QComboBox()
@@ -327,11 +356,15 @@ class PFCControlLabView(QWidget):
             ("Duty 最大", self.duty_max),
             ("最小有效脉宽", self.min_pulse_us),
             ("高频桥臂死区", self.deadtime_ns),
+            ("AC 收敛周期数", self.waveform_line_cycles),
+            ("AC 积分采样率", self.waveform_integration_rate_hz),
             ("局部开关周期数", self.switch_cycles),
             ("每开关周期采样点", self.switch_samples),
             ("后级负载", self.load_model),
         ):
             form.addRow(label, widget)
+            if widget in (self.waveform_line_cycles, self.waveform_integration_rate_hz):
+                bind_text(form.labelForField(widget), label)
         layout.addWidget(group)
 
         waveform_note = QGroupBox("波形范围")
@@ -693,6 +726,7 @@ class PFCControlLabView(QWidget):
             self.autotune_status.setStyleSheet("padding:6px;border:1px solid #fda29b;background:#fef3f2;color:#b42318;")
 
     def set_busy(self, busy: bool) -> None:
+        self._busy = busy
         self.run_button.setEnabled(not busy)
         self.research_export.set_busy(busy)
         # Freeze inputs while the worker is using a snapshot of them.  Without
@@ -703,7 +737,7 @@ class PFCControlLabView(QWidget):
         if hasattr(self, "autotune_current_button"):
             self.autotune_current_button.setEnabled(not busy)
         if hasattr(self, "codegen_button"):
-            self.codegen_button.setEnabled(not busy)
+            self.codegen_button.setEnabled((not busy) and self.result is not None)
 
     def _controller(self, fields, sample_rate, output_min, output_max):
         kind = fields["kind"].currentData()
@@ -789,19 +823,22 @@ class PFCControlLabView(QWidget):
             vbus_sense=self._sense(
                 "PFC bus voltage", self.vbus_sense,
                 self.vbus_sense["sample"].value() * 1e3),
+            waveform_line_cycles=self.waveform_line_cycles.value(),
+            waveform_integration_rate_hz=self.waveform_integration_rate_hz.value(),
             switching_cycles=self.switch_cycles.value(),
             switching_samples_per_cycle=self.switch_samples.value(),
         )
 
     def _generate_c99(self) -> None:
-        if self.result is None:
+        if self.result is None or self._busy:
             QMessageBox.information(self, t("C99 代码生成"), t("请先运行 PFC 完整分析；建议先执行一键稳定整定。"))
             return
+        snapshot = self.result
         directory = QFileDialog.getExistingDirectory(self, "选择 TTPL C99 输出目录")
-        if not directory:
+        if not directory or self._busy or self.result is not snapshot:
             return
         try:
-            analysis = self.result[0]
+            analysis = snapshot[0]
             result = generate_ttpl_control_code(analysis, Path(directory) / "ttpl_control_generated")
         except Exception as exc:
             show_operation_issue(self, t("C99 代码生成失败"), str(exc), critical=False)
@@ -1236,7 +1273,7 @@ class PFCControlLabView(QWidget):
             f"Zero-cross current-error RMS={m.zero_cross_current_error_rms_a:.6f} A",
             f"Vbus avg={m.bus_voltage_average_v:.5f} V, "
             f"ripple pp={m.bus_voltage_ripple_pp_v:.5f} V",
-            f"Icap rms={m.bus_capacitor_current_rms_a:.5f} A, "
+            f"Icap averaged rms={m.bus_capacitor_current_rms_a:.5f} A (HF moments separate), "
             f"current error rms={m.current_error_rms_a:.5f} A",
             f"AC 波形显示：最后 1 个完整 AC 周期；内部仿真 "
             f"{analysis.config.waveform_line_cycles} 周期用于收敛",

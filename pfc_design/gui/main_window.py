@@ -4,6 +4,7 @@ from __future__ import annotations
 import traceback
 from dataclasses import dataclass, replace
 
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from PySide6.QtCore import QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
@@ -59,6 +60,8 @@ from .vienna_control_view import ViennaControlLabView
 class _TTPLCalculation:
     legacy_result: tuple
     engineering: PFCEngineeringV3Result
+    input_revision: int | None = None
+    displayed_config: PFCControlLabConfig | None = None
 
 
 class PFCMainWindow(QMainWindow):
@@ -73,6 +76,7 @@ class PFCMainWindow(QMainWindow):
         self.thread_pool = QThreadPool.globalInstance()
         self._active_workers = []
         self._worker_request_id = 0
+        self._ttpl_input_revision = 0
         self.result = None
         self.engineering_result = None
 
@@ -105,6 +109,71 @@ class PFCMainWindow(QMainWindow):
         self._build_toolbar()
         self._build_statusbar()
         self._apply_pfc_style()
+        self.control_lab_view.control_lab.inputs_changed.connect(self._invalidate_ttpl_results)
+
+    def _invalidate_ttpl_results(self) -> None:
+        """Drop every accepted TTPL consumer/export without cancelling Vienna."""
+        self._ttpl_input_revision += 1
+        self.result = None
+        self.engineering_result = None
+        workbench = self.control_lab_view
+        control = workbench.control_lab
+        control.invalidate_results()
+        devices = workbench.device_loss_view
+        devices.line_cycle = None
+        devices.switched_cycle = None
+        devices._last_comparison = None
+        devices.hf_table.setRowCount(0)
+        devices.slow_table.setRowCount(0)
+        devices.hf_pick.clear()
+        devices.slow_pick.clear()
+        devices.export_button.setEnabled(False)
+        devices.summary.setText(t("TTPL 输入已改变，请重新运行分析。"))
+        devices.rollup_text.setPlainText(t("TTPL 输入已改变，请重新运行分析。"))
+        cap = workbench.cap_thermal_view
+        cap.line_cycle = cap.switched_cycle = cap.cap_result = cap.thermal_result = None
+        cap.cap_export_button.setEnabled(False)
+        cap.cap_summary.clear()
+        cap.thermal_summary.clear()
+        workbench.ac_performance_view.result = None
+        workbench.ac_performance_view.summary.clear()
+        switching = workbench.switching_validation_view
+        switching.result = switching.switching = switching.engineering_v3 = None
+        switching.summary.clear()
+        exact = workbench.exact_hz_view
+        exact.analysis = exact.handoff = None
+        exact.set_busy(bool(self._active_workers))
+        exact.status.setText(t("TTPL 输入已改变，请重新运行分析。"))
+        for text in (exact.current_text, exact.voltage_text, exact.contract_text):
+            text.clear()
+        spice = workbench.ngspice_closed_loop_view
+        spice.analysis = spice.result = spice.switched_cycle = None
+        spice.run_button.setEnabled(False)
+        spice.summary.clear()
+        spice.status.setText(t("TTPL 输入已改变，请重新运行分析。"))
+        workbench.v3_diagnostics_view.clear()
+        # Clear plotted snapshots too; changing a display tab must not resurrect
+        # the old Bode data or switching trajectory.
+        for panel in (control.current_bode, control.voltage_bode, control.sense_bode):
+            panel._disconnect_cursor()
+            panel._cursor_frequency_hz = None
+            panel._frequencies_hz = None
+            panel._curves = []
+            panel._margins = None
+            panel._clear_selector_grid()
+        for view in (control, workbench.ac_performance_view, switching, exact, spice):
+            for canvas in view.findChildren(FigureCanvasQTAgg):
+                canvas.figure.clear()
+                canvas.draw_idle()
+        self.statusBar().showMessage(t("TTPL 输入已改变，请重新运行分析。"))
+
+    def _ttpl_context_current(self, config, revision) -> bool:
+        if revision != self._ttpl_input_revision:
+            return False
+        try:
+            return config == self.control_lab_view.control_lab._config()
+        except (ValueError, TypeError):
+            return False
 
     def _build_toolbar(self):
         toolbar = self.addToolBar("PFC 工作区")
@@ -157,8 +226,9 @@ class PFCMainWindow(QMainWindow):
         if not path:
             return
         try:
-            from .solution_map_install import install_ttpl_solution_map
             from llc_design.control.design_session import write_session
+
+            from .solution_map_install import install_ttpl_solution_map
             install_ttpl_solution_map(self)
             write_session(self.control_lab_view.control_lab._session_capture(), path)
             self.statusBar().showMessage(f"TTPL session saved: {path}")
@@ -170,9 +240,11 @@ class PFCMainWindow(QMainWindow):
         if not path:
             return
         try:
-            from .solution_map_install import install_ttpl_solution_map
             from llc_design.control.design_session import read_session
             from llc_design.gui.design_session_install import validate_map_state
+
+            from .solution_map_install import install_ttpl_solution_map
+
             document = read_session(path)
             if document["workspace"] != "ttpl":
                 raise ValueError("Choose a TTPL design session")
@@ -244,7 +316,7 @@ class PFCMainWindow(QMainWindow):
     def _worker_finished(self, worker, request_id):
         if worker in self._active_workers:
             self._active_workers.remove(worker)
-        if request_id == self._worker_request_id:
+        if request_id == self._worker_request_id or not self._active_workers:
             self.set_busy(False)
 
     def _worker_error(self, error):
@@ -252,6 +324,8 @@ class PFCMainWindow(QMainWindow):
         show_operation_issue(self, t("计算失败"), str(error), critical=True)
 
     def run_ttpl_analysis(self, config: PFCControlLabConfig):
+        revision = self._ttpl_input_revision
+        displayed_config = self.control_lab_view.control_lab._config()
         def calculate():
             engineering = build_pfc_engineering_v3(config)
             analysis = engineering.smart_control.analysis
@@ -261,7 +335,7 @@ class PFCMainWindow(QMainWindow):
                 line_cycle=line,
                 line_angle_deg=config.power_stage.line_angle_deg,
             )
-            return _TTPLCalculation((analysis, line, switching), engineering)
+            return _TTPLCalculation((analysis, line, switching), engineering, revision, displayed_config)
 
         self._run_worker(
             "正在建立 TTPL 双环、AC 周期、过零与开关工作点…",
@@ -272,6 +346,9 @@ class PFCMainWindow(QMainWindow):
     def _ttpl_ready(self, result):
         try:
             if isinstance(result, _TTPLCalculation):
+                if result.input_revision is not None and not self._ttpl_context_current(
+                        result.displayed_config, result.input_revision):
+                    return
                 engineering = result.engineering
                 result = result.legacy_result
             else:
@@ -285,6 +362,10 @@ class PFCMainWindow(QMainWindow):
             # AC/switching, exact H(z) and shared-ngspice all consume this exact
             # analysis result; no downstream stage recreates the controller.
             self.control_lab_view.set_result(result, engineering_v3=engineering)
+            if hasattr(self.control_lab_view, "device_loss_view"):
+                self.control_lab_view.device_loss_view.set_line_cycle(engineering.line_cycle)
+            if hasattr(self.control_lab_view, "cap_thermal_view"):
+                self.control_lab_view.cap_thermal_view.set_line_cycle(engineering.line_cycle)
             self.control_lab_view.ac_performance_view.set_result(result, engineering_v3=engineering)
             self.control_lab_view.switching_validation_view.set_result(result, engineering_v3=engineering)
             analysis, line, _ = result
@@ -312,8 +393,18 @@ class PFCMainWindow(QMainWindow):
         )
         show_v3_diagnostics(self.control_lab_view, self.engineering_result)
 
+    def _invalidate_switched_consumers(self) -> None:
+        workbench = self.control_lab_view
+        workbench.device_loss_view.set_switched_cycle(None)
+        workbench.cap_thermal_view.set_switched_cycle(None)
+
     def run_ttpl_shared_ngspice(self, analysis, scenario, simulation) -> None:
         """Run the circuit-level TTPL path from the frozen exact-H(z) contract."""
+        spice_view = self.control_lab_view.ngspice_closed_loop_view
+        simulation_revision = spice_view.input_revision
+        self._invalidate_switched_consumers()
+        revision = self._ttpl_input_revision
+        displayed_config = self.control_lab_view.control_lab._config()
         def calculate():
             handoff = build_pfc_control_handoff(analysis)
             return run_ttpl_shared_closed_loop(
@@ -326,12 +417,18 @@ class PFCMainWindow(QMainWindow):
         self._run_worker(
             "正在运行 TTPL shared-ngspice：Exact H(z) → PWM → 四开关功率级…",
             calculate,
-            self._ttpl_ngspice_ready,
+            lambda result: self._ttpl_ngspice_ready(result)
+            if self._ttpl_context_current(displayed_config, revision)
+            and simulation_revision == spice_view.input_revision
+            and result.config == analysis.config else None,
         )
 
     def _ttpl_ngspice_ready(self, result) -> None:
         try:
             self.control_lab_view.ngspice_closed_loop_view.set_simulation_result(result)
+            source = self.control_lab_view.ngspice_closed_loop_view.switched_cycle
+            self.control_lab_view.device_loss_view.set_switched_cycle(source)
+            self.control_lab_view.cap_thermal_view.set_switched_cycle(source)
             m = result.metrics
             self.statusBar().showMessage(
                 f"TTPL shared-ngspice 完成: Vbus={m.final_bus_voltage_v:.3f} V, "
@@ -339,6 +436,7 @@ class PFCMainWindow(QMainWindow):
                 f"duty={m.duty_min:.4f}..{m.duty_max:.4f}"
             )
         except Exception:
+            self._invalidate_switched_consumers()
             self._worker_error("TTPL shared-ngspice 结果绘图/GUI 更新失败\n" + traceback.format_exc())
 
     def run_vienna_analysis(self, config: ViennaControlLabConfig):

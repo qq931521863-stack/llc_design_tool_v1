@@ -1,19 +1,19 @@
 # Power Design Toolkit
 
-> **Open-source power electronics CAE toolkit for LLC, PFC, FRA, digital control, C99 code generation and switching verification.**
+> **Open-source power electronics CAE toolkit for power-stage design, LLC, PFC, FRA, digital control, C99 code generation and switching verification.**
 
-LLC · DAB TPS · Totem-Pole PFC · Vienna / Two-Level PFC · SRF / DDSRF / DSOGI PLL · Multi-harmonic PR · Magnetics · FRA · C99 · ngspice · Web / MCP
+Power Stage Designer · LLC · DAB TPS · Totem-Pole PFC · Vienna / Two-Level PFC · SRF / DDSRF / DSOGI PLL · Multi-harmonic PR · Magnetics · FRA · C99 · ngspice · Web / MCP
 
 [![Build & Test](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/build-release.yml)
 [![ngspice Smoke](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml/badge.svg)](https://github.com/yangshuai2022-star/power-design-toolkit/actions/workflows/ngspice-smoke.yml)
 ![Python](https://img.shields.io/badge/Python-%3E%3D3.10-blue)
-![Version](https://img.shields.io/badge/version-9.8.1-informational)
+![Version](https://img.shields.io/badge/version-9.9.0-informational)
 [![GitHub Release](https://img.shields.io/github/v/release/yangshuai2022-star/power-design-toolkit)](https://github.com/yangshuai2022-star/power-design-toolkit/releases/latest)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 
 Power Design Toolkit is an engineering-oriented power-electronics design and digital-control platform. It connects **power-stage design, component/loss screening, multi-fidelity models, measured FRA data, exact discrete controller H(z), stability analysis, C99 code generation, firmware-correlated switching co-simulation and Agent/API access** in one codebase.
 
-**Current release: [v9.8.1](https://github.com/yangshuai2022-star/power-design-toolkit/releases/tag/v9.8.1)** — actual Smart Control output headroom, traceable conditional/multi-operating-point evidence, and saved LLC/TTPL control sessions. Verified Windows x64 and macOS arm64 packages are available; see [Install and run](#8-install-and-run).
+**v9.9.0 source / release preparation:** Power Stage Designer, shared-waveform LLC/PFC analysis and session/export safeguards. Native Windows/macOS package verification and publication are pending. The published [v9.8.1 binary baseline](https://github.com/yangshuai2022-star/power-design-toolkit/releases/tag/v9.8.1) predates these additions; see [Install and run](#8-install-and-run) for source installation and release targets.
 
 ## Current capabilities
 
@@ -21,6 +21,7 @@ One toolkit connects power-stage design, magnetics, loss estimation, voltage/cur
 
 | Module | Implemented capabilities | Workspace / documentation |
 |---|---|---|
+| **Power Stage Designer** | 19 direct periodic stage models, existing LLC HB/FB integration, component-linked voltage/current and total/AC RMS, target-driven parameter suggestions, analog loops, calculators, corner scans and reproducible projects/reports | Power Stage Designer; [scope and feature matrix](docs/PSD_FEATURE_MATRIX.md) |
 | **LLC resonant converter** | FHA, multi-harmonic HB, switched time-domain analysis, gain/ZVS maps, primary/SR device libraries, magnetics, digital voltage control, interleaving and optional ngspice correlation | LLC Design; [model hierarchy](docs/LLC_MODELING.md) |
 | **DAB TPS** | Operating-point sweeps, periodic L / L+Cp solutions, power/backflow/capacitor stress, PWM counts, automatic calculation on point selection and 10 fps periodic replay | DAB TPS; [model conventions](docs/DAB_TPS_AND_THREE_PHASE_DQ.md) |
 | **DAB digital control and optimization** | PI→Pcmd→TPS→Vout small-signal model, discrete Bode/poles, reference/load steps, controller import/C99, constrained optimization and quantized-candidate checks | DAB → Voltage Loop / TPS Optimization; [engineering notes (Chinese)](docs/engineering-expansion.md#dab-电压环与约束优化) |
@@ -34,11 +35,11 @@ One toolkit connects power-stage design, magnetics, loss estimation, voltage/cur
 | **FRA and measured tuning** | Bode100/SIMPLIS/CSV import, existing-controller de-embedding, Fc/PM/GM/Ms/Mt, automatic design, measured PI tuning map and MATLAB/Python research exports | FRA Loop Designer; [measured tuning map](docs/FRA_TUNING_MAP.md) |
 | **Web / Agent** | FastAPI/Web and MCP interfaces backed by shared deterministic kernels | [Web](docs/WEB_DEPLOYMENT.md) / [MCP](docs/AGENT_MCP.md); desktop additions do not automatically add API coverage |
 
-**Source and binary releases:** This page describes the `main` source tree. Check the corresponding Release notes for features included in a binary package. The latest additions provide software models and data-based validation; they do not establish hardware closed-loop or high-voltage validation. New DAB and three-phase features primarily target desktop/Python use. C99 exports provide controller/PLL reference functions without board-specific PWM/ADC drivers.
+**Source and binary releases:** This page describes the `main` source tree. Check the corresponding Release notes for features included in a binary package. The latest additions provide software models and data-based validation; they do not establish hardware closed-loop or high-voltage validation. Power Stage Designer, DAB and three-phase additions primarily target desktop/Python use; new Web/MCP coverage is not implied. C99 exports provide controller/PLL reference functions without board-specific PWM/ADC drivers.
 
 **Latest engineering additions:** [Detailed notes, limitations and reproduction (Chinese)](docs/engineering-expansion.md) · [Control validation](docs/benchmarks/control_validation.json) · [Independent magnetic-model test](docs/benchmarks/magnetic_ai.json) · [Optimization comparison](docs/benchmarks/dab_optimization.json) · [Regression scope (Chinese)](docs/benchmarks/regression.md)
 
-**Latest reliability audit:** Fixed stale controller exports, out-of-order PFC results, DAB Cp linearization/discrete-model consistency, and LLC three-phase waveform rendering. Each workspace shows **Author: 杨帅 / Yang Shuai**, email and WeChat in the existing upper-right toolbar row. The launcher opens maximized with all six entries visible together. See [findings, verification and remaining limits](docs/UI_ALGORITHM_AUDIT.md).
+**Latest reliability audit:** Fixed stale controller exports, out-of-order PFC results, DAB Cp linearization/discrete-model consistency, and LLC three-phase waveform rendering. Each workspace shows **Author: 杨帅 / Yang Shuai**, email and WeChat in the existing upper-right toolbar row. The maximized launcher now also includes Power Stage Designer. See [the earlier UI audit](docs/UI_ALGORITHM_AUDIT.md) and [current PSD/shared-consumer validation](docs/PSD_VALIDATION_REPORT.md).
 
 The project is built around four rules:
 
@@ -58,6 +59,8 @@ PFC inductor results provide measured complex-impedance fitting and SPICE export
 See [Multi-harmonic PR and magnetics](docs/MULTI_PR_AND_MAGNETICS.md).
 
 ![Power Design Toolkit workspace launcher](docs/assets/power-design-toolkit-overview.png)
+
+*Launcher image from the v9.8.1 baseline; the source launcher additionally includes Power Stage Designer.*
 
 ---
 
@@ -112,12 +115,13 @@ The first maintained reference case is [`LLC_400V_53V_3kW`](reference_designs/LL
 
 ---
 
-## 2. Five engineering workspaces
+## 2. Six engineering workspaces
 
-The desktop launcher opens five independent workspaces while preserving state during switching.
+The desktop launcher opens six independent workspaces while preserving state during switching, plus Guided System Design.
 
 | Workspace | Main purpose | Typical outputs |
 | --- | --- | --- |
+| **Power Stage Designer** | General converter stages, component-linked schematics/waveforms, analog-loop design and engineering calculators | Periodic voltage/current, peak/average/total and AC RMS, L/Lm/turns-ratio suggestions, Type II/III R/C values, margins, explicit corner extrema, project JSON, waveform CSV and printable HTML |
 | **LLC Design** | Resonant tank, operating region, Q/ZVS, magnetics, primary/SR devices, interleaving, waveforms, small signal and digital voltage loop | Lr/Cr/Lm, gain map, device/loss comparison, stress data, FHA/HB/TD comparison, Gvf(s/z), exact H(z), PM/GM, shared-ngspice closed-loop verification |
 | **DAB TPS** | TPS operating points, sampled voltage-loop design and constrained optimization | D1/D2/D3, periodic playback, L/L+Cp waveforms, stresses, Pcmd→Vout model, Bode/poles, closed-loop steps, PWM-verified candidates, coefficients/C99 and JSON/CSV; ZVS remains UNKNOWN |
 | **PFC Design** | TTPL, three-phase two-level dq and Vienna | Topology-specific current/voltage control, PLL comparisons, sizing/stress/loss, PF/THD, Bode, coefficients/C99; shared-ngspice closed loop currently for TTPL |
@@ -131,6 +135,28 @@ generate the grid and evaluate error, never as controller feedback. Both
 three-phase topologies provide carrier-reconstructed stress/loss analysis and
 an independent PLL comparison experiment. See [model contracts](docs/DAB_TPS_AND_THREE_PHASE_DQ.md)
 and [the current expansion](docs/engineering-expansion.md).
+
+### Power Stage Designer: specification → waveform → loop → report
+
+Open **Power Stage Designer** from the launcher, or run `python -m power_stage_design`. Start with Buck, Boost or Flyback, edit the operating point, then click a physical schematic component to inspect its own voltage/current and stress statistics. The stage solver, component view, CSV and HTML report use the same calculated result.
+
+- **Direct stages:** Buck, Boost, inverting Buck-Boost, Fly-Buck, two-switch Buck-Boost, SEPIC, ZETA, Ćuk, Flyback, two-switch Flyback, QR Flyback, active-clamp Forward, Forward, two-switch Forward, Half Bridge, Push-Pull, Full Bridge, phase-shifted Full Bridge and series-capacitor Buck. LLC Half Bridge and Full Bridge open the existing LLC engine with the selected bridge identity.
+- **Declared physical domains:** Buck/Boost/Flyback support ideal periodic CCM/BCM/DCM with finite diode drop. Other stages retain their individual reset, load, ripple, commutation and conduction-mode restrictions; the topology name does not imply every operating mode. QR includes positive valleys and the first zero-voltage clamp with constant node capacitance; PSFB includes the declared diode-secondary DCM/BCM extension. Neither establishes exact TI controller-policy equivalence or hardware ZVS.
+- **Parameter suggestions:** explicit ripple/duty/reflected-voltage targets produce L/Lm/turns-ratio proposals as applicable. Preview the achieved values, explicitly apply, and recompute. Saved provenance retains targets and achieved values. These are single-operating-point suggestions; scan corners separately. Automatic bridge sizing is limited to its declared CCM domain.
+- **Analog loops:** Buck VMC with Type II/III is the starting workflow. The complete calculator provides six strict-CCM plants: Buck VMC and peak-CMC Buck, Boost, inverting Buck-Boost, Forward and Flyback. Five physical compensation networks cover Type II, transconductance Type II, Type III, isolated Type II with Zener clamp, and isolated Type II with inner loop. Target Fc/PM synthesis reanalyzes the realized R/C values; finite amplifier, optocoupler and slope-compensation assumptions remain explicit. This analog analysis does not imply digital ADC/computation-delay qualification.
+- **Toolbox:** FET loss screening, load-step capacitance, capacitor current sharing, AC/DC bulk and hold-up capacitance, RCD/RC snubbers, preferred-value dividers, analog/GPIO output scaling, unit conversion, and LC/π filters with damping. Toolbox parameters have their own JSON save/open and result exports. Desktop capacitor sharing is single-frequency; explicit harmonic spectra are a Python feature. The published bulk-capacitor RMS approximation is not thermal-validated periodic RMS.
+- **Corner scans:** explicit Vin/load/component-tolerance combinations evaluate the same compensator, with per-metric worst-point identities. Unscanned regions and unknown total losses remain unverified.
+- **Reproducibility:** project JSON preserves full-precision inputs, model/controller/device snapshots, suggestions and scan requests. Reopening validates and recomputes; saved hashes or historical results are not fresh evidence. Input changes, stale asynchronous results and modal export races invalidate obsolete output. Export the current waveform CSV or printable HTML report, including matching loop and corner results.
+
+**Related LLC/PFC/control fixes:** LLC HB/FB component selection now links primary/SR devices, windings and tank/output components to the same waveform result. Accepted periodic TD waveforms feed semiconductor, magnetic, capacitor and damping calculations only for the matching converged operating point. PFC can use one qualified signed switched line-cycle source for PF/THD, device/capacitor losses, thermal screening and exports; incomplete PWM coverage cannot silently become full-period thermal evidence. Selected-device/bank overlays remain separate from the simulated circuit and require an electrical rerun after component changes. LLC SPICE dead-time current paths and PFC signed-current feedback were also repaired. Exact H(z)/FRA sessions preserve leading-zero delays and full-precision coefficients; stale analysis/candidate/export results are rejected across the existing workspaces.
+
+**Acceptance boundary:** the register contains 33 top-level stage/tool items: 30 verified within their declared software/model scope and three partial items, two-switch Buck-Boost, QR Flyback and PSFB, whose exact TI executable strategies/domains remain unverified. The 11 nested loop plant/network items and six enhancements are counted separately. Missing device/thermal data, nonlinear commutation, measured FRA and hardware validation are not inferred from passing software tests. Native Windows/macOS validation of this PSD update remains pending.
+
+See the [feature matrix](docs/PSD_FEATURE_MATRIX.md), [validation report](docs/PSD_VALIDATION_REPORT.md) and [development status](docs/PSD_DEVELOPMENT_STATUS.md) for the supported domains, independent checks and remaining gates.
+
+![Power Stage Designer showing the Buck schematic, Q1 waveforms and RMS statistics](docs/screenshots/power_stage_designer.png)
+
+*Actual Linux/offscreen Qt capture after opening and recomputing the included [Buck + VMC loop project](examples/power_stage_design/buck-loop.json); the stage waveform tab is shown. This is not a native Windows/macOS package test.*
 
 ### DAB: operating point → controller → Vout
 
@@ -469,6 +495,8 @@ analytical model
 
 Passing an earlier stage is evidence, not permission to skip a later stage.
 
+The tested PSD/shared-consumer source checkpoint `bfc8bd9` completed the full ten-package Linux regression with **2,864 passed, one explicit long-test skip and two existing expected failures**, including process teardown. The skipped long real-PFC GUI case was run separately on the same production code and exited successfully. Installed-wheel CLI/resources and real offscreen Qt save/reopen/recompute/report checks also passed. These are checkpoint-specific software results, not a claim that a later release build, native Windows/macOS package or hardware has passed. See [PSD validation](docs/PSD_VALIDATION_REPORT.md).
+
 ### Magnetic and optimization benchmarks
 
 | Independent check | Result | Scope |
@@ -493,16 +521,16 @@ Start with:
 
 ## 8. Install and run
 
-### Binary packages (recommended for end users)
+### Binary packages
 
-Download the complete [v9.8.1 release](https://github.com/yangshuai2022-star/power-design-toolkit/releases/tag/v9.8.1), or check [GitHub Releases](https://github.com/yangshuai2022-star/power-design-toolkit/releases/latest) for a newer complete release. Choose the platform ZIP under **Assets**, not GitHub's source-code archives. Python is not required for these packages.
+**v9.9.0 is pending native package verification and publication.** The links below are intended release assets, not a claim that downloads are already available. Use the source instructions for the new features, or the published [v9.8.1 release](https://github.com/yangshuai2022-star/power-design-toolkit/releases/tag/v9.8.1) for the earlier binary baseline. Once published, choose the platform ZIP under **Assets**, not GitHub's source-code archives. Python is not required for binary packages.
 
-| Asset | Platform / launch path after extraction |
+| Target asset (pending) | Platform / launch path after extraction |
 | --- | --- |
-| [PowerDesignTool-Windows-x64.zip](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.8.1/PowerDesignTool-Windows-x64.zip) | Windows 11 x64 — open `PowerDesignTool/PowerDesignTool.exe`; keep the extracted folder intact |
-| [PowerDesignTool-macOS-arm64.zip](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.8.1/PowerDesignTool-macOS-arm64.zip) | macOS Apple Silicon — open `PowerDesignTool.app` |
+| [PowerDesignTool-Windows-x64.zip](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.9.0/PowerDesignTool-Windows-x64.zip) | Windows 11 x64 — open `PowerDesignTool/PowerDesignTool.exe`; keep the extracted folder intact |
+| [PowerDesignTool-macOS-arm64.zip](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.9.0/PowerDesignTool-macOS-arm64.zip) | macOS Apple Silicon — open `PowerDesignTool.app` |
 
-The release also includes [SHA256SUMS.txt](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.8.1/SHA256SUMS.txt) and frozen-app self-test reports for [Windows](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.8.1/bundle-proof-Windows.json) and [macOS](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.8.1/bundle-proof-macOS.json). Unsigned macOS builds may require approval through Finder **Open** after verifying the source. CI gates are described in [Release process](docs/RELEASE.md); they establish software startup/resource evidence, not hardware sign-off. Optional shared-ngspice verification still requires a separate `libngspice` installation.
+The planned release assets also include [SHA256SUMS.txt](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.9.0/SHA256SUMS.txt) and frozen-app self-test reports for [Windows](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.9.0/bundle-proof-Windows.json) and [macOS](https://github.com/yangshuai2022-star/power-design-toolkit/releases/download/v9.9.0/bundle-proof-macOS.json). Unsigned macOS builds may require approval through Finder **Open** after verifying the source. CI gates are described in [Release process](docs/RELEASE.md); they establish software startup/resource evidence, not hardware sign-off. Optional shared-ngspice verification still requires a separate `libngspice` installation.
 
 ### Requirements (from source)
 
@@ -536,6 +564,23 @@ Equivalent source-tree entry:
 python -m llc_design gui
 ```
 
+### Power Stage Designer
+
+After the desktop installation above, launch directly:
+
+```bash
+python -m power_stage_design
+```
+
+Open the included Buck + VMC loop example, or recompute its HTML report directly:
+
+```bash
+python -m power_stage_design examples/power_stage_design/buck-loop.json
+python -m power_stage_design examples/power_stage_design/buck-loop.json --report buck-loop-report.html
+```
+
+You can substitute a project saved from the workspace. The installed `power-stage-design` command accepts the same arguments. `--report` requires a saved project and runs without Qt, so the core installation is sufficient for headless report recomputation. This uses PSD project JSON, not an LLC or TTPL session file.
+
 ### Web edition
 
 ```bash
@@ -557,9 +602,11 @@ The MCP server uses the official Python SDK v2 and defaults to local stdio. See 
 ### Development environment
 
 ```bash
-python -m pip install -e ".[dev,gui,web,agent]"
+python -m pip install -e ".[dev,gui,web,agent,research]"
 pytest
 ```
+
+On headless Linux, run GUI regression with `QT_QPA_PLATFORM=offscreen python -m pytest`. Optional live SPICE checks also need ngspice/libngspice; an offscreen run does not qualify a native desktop installer.
 
 ### Optional research and catalog-import tools
 
@@ -584,6 +631,7 @@ vienna-control-lab
 power-control-tools
 power-control-codegen
 power-design-gui
+power-stage-design
 power-design-web
 power-design-mcp
 ```
@@ -663,6 +711,7 @@ CI also produces the same screenshot as an artifact; the README should only embe
 ## 12. Repository layout
 
 ```text
+power_stage_design/    Periodic power stages, schematics, analog loops, toolbox, projects/reports
 dab_design/            DAB TPS, constrained optimization, sampled voltage control and GUI
 llc_design/            LLC engineering, magnetics catalog/validation, control, GUI, reports
 pfc_design/            TTPL/Vienna/two-level dq, PLLs, stress/loss, control and GUI
@@ -688,6 +737,9 @@ docs/                  Maintained engineering documentation and benchmark eviden
 Start here instead of reading historical version notes:
 
 - [Documentation index](docs/README.md)
+- [Power Stage Designer feature matrix](docs/PSD_FEATURE_MATRIX.md)
+- [Power Stage Designer validation report](docs/PSD_VALIDATION_REPORT.md)
+- [Power Stage Designer development status](docs/PSD_DEVELOPMENT_STATUS.md)
 - [Magnetics, DAB, PLL and three-phase expansion](docs/engineering-expansion.md)
 - [DAB / two-level dq conventions](docs/DAB_TPS_AND_THREE_PHASE_DQ.md)
 - [Multi-harmonic quasi-PR and magnetic modeling](docs/MULTI_PR_AND_MAGNETICS.md)
@@ -712,12 +764,14 @@ The application also contains an offline **Help / F1** system in the workspaces,
 
 ## 14. Language support
 
-Desktop UI/help currently supports:
+The existing LLC/PFC/control/FRA desktop UI/help supports:
 
 - English
 - Simplified Chinese
 - Japanese
 - Korean
+
+The new Power Stage Designer forms currently use primarily Simplified Chinese with stable English topology/tool identifiers; complete translation coverage is not yet claimed.
 
 Engineering identifiers such as `Bode`, `H(z)`, `C99`, `Kp`, `PM`, `GM`, `FRA` and component/model names intentionally remain stable across languages.
 

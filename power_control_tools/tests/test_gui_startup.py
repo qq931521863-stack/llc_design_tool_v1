@@ -344,10 +344,8 @@ def test_auto_design_power_template_applies_as_exact_hz(monkeypatch):
 
     assert window.new_kind.currentData() == EXACT_CONTROLLER
     applied = window._new_structure_controller()
-    # The GUI transfers coefficients as 12-significant-digit text, so the
-    # round-trip is exact to roughly 1e-11 relative precision.
-    np.testing.assert_allclose(applied.b, power.normalized().b, rtol=1e-10)
-    np.testing.assert_allclose(applied.a, power.normalized().a, rtol=1e-10)
+    # The accepted candidate is transferred with full round-trip precision.
+    assert applied == power.normalized()
     assert applied.sample_rate_hz == 50_000.0
 
     dialog.close()

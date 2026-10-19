@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable
+from dataclasses import asdict, dataclass, replace
+import math
+import hashlib
+import json
+
+import numpy as np
+from typing import TYPE_CHECKING, Iterable
+
+if TYPE_CHECKING:
+    from ..analysis.types import LLCModelResult
 
 from ..core.engineering import (
     EnvelopeEvaluation,
@@ -21,7 +29,7 @@ from ..magnetics.transformer import (TransformerDesign, TransformerLoss,
                                      design_transformer)
 from .capacitors import (BusCapacitorResult, ResonantCapacitorResult,
                          bus_capacitor_result, output_capacitor_result,
-                         resonant_capacitor_result)
+                         resonant_capacitor_result, capacitor_results_from_waveform)
 from .devices import DeviceDatabase
 from .primary_bridge import PrimaryBridgeLoss, primary_bridge_loss
 from .synchronous_rectifier import (SynchronousRectifierLoss,
@@ -41,10 +49,29 @@ class OperatingPointLoss:
     auxiliary_w: float
     total_loss_w: float
     efficiency: float
+    semiconductor_source: str = "FHA_OPERATING_POINT"
+    semiconductor_frequency_hz: float | None = None
+    magnetic_source: str = "FHA_RECONSTRUCTED_WAVEFORM"
+    capacitor_source: str = "FHA_RECONSTRUCTED_WAVEFORM"
+    passive_frequency_hz: float | None = None
+    commutation_source: str = "FHA_OPERATING_POINT_APPROXIMATION"
+    loss_waveform_sha256: str | None = None
 
     @property
     def label(self) -> str:
         return f"{self.operating_point.vbus_v:.0f}V_{self.operating_point.load_fraction*100:.0f}pct"
+
+    def component_sources(self) -> dict[str, str]:
+        """Source of each component's numerical inputs, not a validity grade."""
+        return {
+            "semiconductor_current": self.semiconductor_source,
+            "transformer": self.magnetic_source,
+            "resonant_inductor": self.magnetic_source,
+            "resonant_capacitor": self.capacitor_source,
+            "output_capacitor": self.capacitor_source,
+            "commutation": self.commutation_source,
+            "auxiliary": "EMPIRICAL_POWER_ESTIMATE",
+        }
 
     def breakdown(self) -> dict[str, float]:
         """Non-overlapping system loss buckets used for totals and plots."""
@@ -156,6 +183,121 @@ class LLCSystemAnalyzer:
             device_coss_f=primary.coss_er_f,
             zvs_level=zvs_level,
         )
+
+    def with_time_domain_losses(
+        self, analysis: SystemAnalysis, results: Iterable[LLCModelResult],
+        *, output_voltage_tolerance_v: float = 0.05,
+    ) -> SystemAnalysis:
+        """Apply accepted TD semiconductor and passive inputs to an existing result.
+
+        Semiconductor currents/frequency, capacitor ESR/ripple, and magnetic
+        flux/current harmonics consume the supplied arrays. Existing material,
+        winding and thermal models remain approximations. Commutation/ZVS and
+        hardware synthesis/feasibility retain their original FHA assumptions.
+        Every requested point must be present, matching and converged. The
+        output must also meet the requested voltage (default TD trim tolerance
+        0.05 V); periodic convergence alone does not prove regulation.
+        """
+        from ..analysis.types import FidelityLevel
+        from .waveform_loss import (
+            bridge_loss_with_provenance,
+            rectifier_loss_with_provenance,
+        )
+
+        if not math.isfinite(output_voltage_tolerance_v) or output_voltage_tolerance_v <= 0:
+            raise ValueError("output-voltage tolerance must be finite and positive")
+        supplied = tuple(results)
+        if not supplied:
+            raise ValueError("time-domain loss requested without any model results")
+        points = list(analysis.operating_points)
+        seen: set[tuple[float, float]] = set()
+        for result in supplied:
+            request = result.request
+            if request.spec != analysis.spec:
+                raise ValueError("time-domain loss input does not match the system specification")
+            if request.output_voltage_target_v != analysis.spec.vout_v:
+                raise ValueError("time-domain output target does not match the system specification")
+            if result.fidelity != FidelityLevel.SWITCHED_TIME_DOMAIN:
+                raise ValueError("time-domain loss requires a switched time-domain result")
+            if not result.convergence.converged or not math.isfinite(result.convergence.residual_norm):
+                raise ValueError("time-domain loss refused: solver did not converge")
+            if not math.isclose(result.metrics.switching_frequency_hz,
+                                result.waveform.switching_frequency_hz, rel_tol=1e-9):
+                raise ValueError("time-domain metric and waveform frequency do not match")
+            if (not math.isfinite(result.metrics.output_voltage_v)
+                    or abs(result.metrics.output_voltage_v - request.output_voltage_target_v)
+                    > output_voltage_tolerance_v):
+                raise ValueError("time-domain loss refused: output regulation target was not met")
+            key = (request.bus_voltage_v, request.load_fraction)
+            if key in seen:
+                raise ValueError("duplicate time-domain loss operating point")
+            seen.add(key)
+            index = next((i for i, point in enumerate(points)
+                          if (point.operating_point.vbus_v,
+                              point.operating_point.load_fraction) == key), None)
+            if index is None:
+                raise ValueError(f"time-domain loss operating point {key} is absent from system analysis")
+            point = points[index]
+            primary = bridge_loss_with_provenance(
+                analysis.spec, analysis.tank, point.operating_point,
+                self.device_db.get_primary(analysis.spec.primary_device),
+                waveform=result.waveform, td_converged=True,
+            ).legacy
+            sr = rectifier_loss_with_provenance(
+                analysis.spec, point.operating_point,
+                self.device_db.get_sr(analysis.spec.sr_device),
+                waveform=result.waveform, td_converged=True,
+            ).legacy
+            assert sr is not None  # the selected path is synchronous rectification
+            transformer = analysis.transformer.loss(
+                analysis.spec, point.operating_point, waveform=result.waveform, td_converged=True)
+            inductor = analysis.resonant_inductor.loss(
+                analysis.spec, point.operating_point, waveform=result.waveform, td_converged=True)
+            cr, co = capacitor_results_from_waveform(
+                analysis.spec, point.operating_point, result.waveform, td_converged=True)
+            if abs(float(np.mean(result.waveform.signal("v_output").values))
+                   - request.output_voltage_target_v) > output_voltage_tolerance_v:
+                raise ValueError("time-domain waveform output regulation target was not met")
+            total = (primary.total_w + sr.total_w + transformer.total_w + inductor.total_w
+                     + cr.loss_w + co.capacitor_loss_w + point.auxiliary_w)
+            identity = hashlib.sha256()
+            identity.update(json.dumps(asdict(request), sort_keys=True, default=str).encode())
+            identity.update(repr((request.bus_voltage_v, request.load_fraction,
+                                  result.waveform.model_name,
+                                  result.waveform.switching_frequency_hz)).encode())
+            identity.update(np.asarray(result.waveform.time_s, dtype="<f8").tobytes())
+            for signal_key in sorted(result.waveform.signals):
+                identity.update(signal_key.encode())
+                identity.update(result.waveform.signal(signal_key).unit.encode())
+                identity.update(np.asarray(result.waveform.signal(signal_key).values, dtype="<f8").tobytes())
+            pout = point.operating_point.pout_w
+            points[index] = replace(
+                point, primary=primary, synchronous_rectifier=sr,
+                transformer=transformer, resonant_inductor=inductor,
+                resonant_capacitor=cr, output_capacitor=co,
+                magnetic_source="TIME_DOMAIN_WAVEFORM_IGSE_LITZ",
+                capacitor_source="TIME_DOMAIN_WAVEFORM_CONSTANT_ESR",
+                passive_frequency_hz=result.waveform.switching_frequency_hz,
+                loss_waveform_sha256=identity.hexdigest(),
+                total_loss_w=total, efficiency=pout / (pout + total),
+                semiconductor_source="TIME_DOMAIN_WAVEFORM",
+                semiconductor_frequency_hz=result.waveform.switching_frequency_hz,
+            )
+        note = (
+            "Selected semiconductor currents/frequency, capacitor constant-ESR/ripple, and magnetic "
+            "iGSE/current-harmonic inputs use converged ideal TD waveforms. "
+            "All waveform-derived losses use the final complete cycle; supplied cycles must repeat within 1 ppm. "
+            "Transformer flux uses Lm*Im/(Np*Ae), retaining model DC offset; sampled volt-second balance "
+            "must be within 1 ppm and Faraday cross-check within dt*total_variation(V). "
+            "Physical remanence/nonlinear saturation is unknown; iGSE has no DC-bias loss correction. "
+            f"AC winding increments retain harmonics 1..{analysis.spec.litz_max_harmonic}; "
+            "AC copper above that cutoff is unmodeled. "
+            "Material/geometry/thermal parameters remain engineering estimates; "
+            "commutation/ZVS and hardware feasibility remain FHA-based. "
+            "Auxiliary power remains empirical; this is not hardware sign-off."
+        )
+        return replace(analysis, operating_points=tuple(points),
+                       warnings=tuple(dict.fromkeys((*analysis.warnings, note))))
 
     def analyze(self, spec: LLCDesignSpec,
                 work_points: Iterable[tuple[float, float]] | None = None,
@@ -271,6 +413,7 @@ class LLCSystemAnalyzer:
         # using the Level-2 charge-balance definition (does not change feasibility).
         try:
             import math as _math
+
             from ..core.zvs_margin import evaluate_zvs_margin
             worst_label = None
             worst_margin = float("inf")

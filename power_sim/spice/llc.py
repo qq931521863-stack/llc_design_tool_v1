@@ -2,14 +2,18 @@
 
 V1 targets correlation with the existing Python switched solver while keeping
 the SPICE network numerically well posed.  The correlation model therefore uses
-ideal controlled primary switches plus small, explicit physical parasitics:
+ideal controlled primary switches with memoryless antiparallel diodes plus
+small, explicit physical parasitics:
 resonant-cap ESR, resonant-inductor DCR, transformer winding resistance and
 finite leakage through the coupled-inductor coefficient.  These are not vendor
 MOSFET/Coss/Qrr/SR models and must not be presented as such.
+Explicit high-value tank-node shunts provide numerical conditioning; they are
+not measured transformer insulation or core-loss parameters.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 from llc_design.core.spec import LLCDesignSpec, PrimaryTopology
 from llc_design.core.tank import TankDesign
@@ -45,6 +49,13 @@ class LLCSpiceConfig:
     secondary_bleeder_ohm: float = 1e6
     initial_output_v: float | None = None
 
+    # Necessary reverse-current paths while both switches of a leg are off.
+    # These are generic exponential clamps, not a selected MOSFET's body-diode
+    # data. Cjo and Tt are zero: this model cannot predict Coss, Qrr or ZVS.
+    body_diode_is_a: float = 1e-9
+    body_diode_rs_ohm: float = 10e-3
+    tank_node_shunt_ohm: float = 1e8
+
     def validate(self, spec: LLCDesignSpec) -> None:
         if self.switching_frequency_hz <= 0.0:
             raise ValueError("switching_frequency_hz must be positive")
@@ -73,6 +84,10 @@ class LLCSpiceConfig:
                 raise ValueError(f"{name} must be positive")
         if self.diode_is_a <= 0.0 or self.diode_rs_ohm <= 0.0 or self.diode_cjo_f < 0.0:
             raise ValueError("invalid rectifier diode model")
+        for name in ("body_diode_is_a", "body_diode_rs_ohm", "tank_node_shunt_ohm"):
+            value = getattr(self, name)
+            if not isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and positive")
 
 
 def _s(value: float) -> str:
@@ -143,6 +158,14 @@ def build_ideal_llc_circuit(spec: LLCDesignSpec, tank: TankDesign, config: LLCSp
             "cr_esr_ohm": spec.resonant_cap_esr_ohm,
             "primary_winding_r_ohm": config.primary_winding_r_ohm,
             "secondary_winding_r_ohm": config.secondary_winding_r_ohm,
+            "primary_reverse_conduction_model": "generic_memoryless_antiparallel_diode",
+            "body_diode_is_a": config.body_diode_is_a,
+            "body_diode_rs_ohm": config.body_diode_rs_ohm,
+            "body_diode_cjo_f": 0.0,
+            "body_diode_tt_s": 0.0,
+            "primary_device_model_source": "ideal_correlation_approximation_not_vendor_data",
+            "tank_node_shunt_ohm": config.tank_node_shunt_ohm,
+            "tank_node_shunt_purpose": "numerical_conditioning_not_measured_component_data",
         },
     )
 
@@ -163,6 +186,12 @@ def build_ideal_llc_circuit(spec: LLCDesignSpec, tank: TankDesign, config: LLCSp
             SpiceElement("SAL", ElementKind.SWITCH, ("A", "0", "G_AL", "0"), model=switch_model),
             SpiceElement("SBH", ElementKind.SWITCH, ("BUS", "B", "G_BH", "0"), model=switch_model),
             SpiceElement("SBL", ElementKind.SWITCH, ("B", "0", "G_BL", "0"), model=switch_model),
+            # Anode -> cathode, antiparallel to each switch's drain -> source.
+            # Bleeders alone cannot carry tank current during deadtime.
+            SpiceElement("DAH", ElementKind.DIODE, ("A", "BUS"), model="DBODY"),
+            SpiceElement("DAL", ElementKind.DIODE, ("0", "A"), model="DBODY"),
+            SpiceElement("DBH", ElementKind.DIODE, ("B", "BUS"), model="DBODY"),
+            SpiceElement("DBL", ElementKind.DIODE, ("0", "B"), model="DBODY"),
             SpiceElement("RBA", ElementKind.RESISTOR, ("A", "0"), _s(config.bridge_bleeder_ohm)),
             SpiceElement("RBB", ElementKind.RESISTOR, ("B", "0"), _s(config.bridge_bleeder_ohm)),
 
@@ -193,11 +222,24 @@ def build_ideal_llc_circuit(spec: LLCDesignSpec, tank: TankDesign, config: LLCSp
         ]
     )
 
+    # At tiny adaptive timesteps the two bounding inductors leave these tank
+    # nodes almost floating. Explicit shunts bound the matrix conditioning
+    # without XSPICE-only .options rshunt or invented winding capacitance. At
+    # 400 V each default 100 Mohm shunt dissipates only 1.6 mW; their current and
+    # dissipation remain visible in the IR and in independent energy checks.
+    for node in ("LR_IN", "N_LR", "CR_IN", "PRI", "PRI_W"):
+        circuit.add(SpiceElement(f"RNUM_{node}", ElementKind.RESISTOR,
+                                 (node, "0"), _s(config.tank_node_shunt_ohm)))
+
     circuit.models.extend(
         [
             (
                 f".model {switch_model} SW(Ron={_s(config.switch_ron_ohm)} "
                 f"Roff={_s(config.switch_roff_ohm)} Vt=2.5 Vh=0.1)"
+            ),
+            (
+                f".model DBODY D(Is={_s(config.body_diode_is_a)} N=1 "
+                f"Rs={_s(config.body_diode_rs_ohm)} Cjo=0 Tt=0)"
             ),
             (
                 f".model DRECT D(Is={_s(config.diode_is_a)} N=1 "

@@ -10,11 +10,12 @@ does not claim vendor-accurate Coss/Qrr/switching-loss/ringing behaviour.
 """
 from __future__ import annotations
 
+import math
 from bisect import bisect_right
 from dataclasses import dataclass
-import math
 
 from pfc_design.control import PFCPowerStageConfig
+from pfc_design.control.config import LoadModel
 
 from .ir import CircuitIR, ElementKind, SpiceElement
 
@@ -41,6 +42,8 @@ class TTPLSpiceConfig:
     diode_cjo_f: float = 0.0
     bleeder_ohm: float = 10e6
     initial_bus_voltage_v: float | None = None
+    load_model: LoadModel = LoadModel.RESISTIVE
+    constant_power_floor_v: float = 25.0
 
     @classmethod
     def from_power_stage(cls, stage: PFCPowerStageConfig, *, input_phase_deg: float = 90.0) -> "TTPLSpiceConfig":
@@ -57,6 +60,7 @@ class TTPLSpiceConfig:
             input_phase_deg=float(input_phase_deg),
             deadtime_s=float(stage.deadtime_s),
             initial_bus_voltage_v=float(stage.bus_voltage_v),
+            load_model=LoadModel(stage.load_model),
         )
 
     def validate(self) -> None:
@@ -74,10 +78,12 @@ class TTPLSpiceConfig:
             "diode_is_a": self.diode_is_a,
             "diode_rs_ohm": self.diode_rs_ohm,
             "bleeder_ohm": self.bleeder_ohm,
+            "constant_power_floor_v": self.constant_power_floor_v,
         }
         for name, value in positive.items():
             if value <= 0.0:
                 raise ValueError(f"{name} must be positive")
+        LoadModel(self.load_model)
         if self.boost_dcr_ohm < 0.0 or self.bus_cap_esr_ohm < 0.0:
             raise ValueError("PFC DCR/ESR cannot be negative")
         if self.deadtime_s < 0.0 or self.zero_cross_voltage_v < 0.0:
@@ -107,6 +113,7 @@ class DutyTimeline:
 
     def __init__(self, initial_duty: float, *, initial_time_s: float = 0.0):
         self._segments = [DutySegment(float(initial_time_s), self._clip(initial_duty))]
+        self._starts = [float(initial_time_s)]
 
     @staticmethod
     def _clip(value: float) -> float:
@@ -117,8 +124,7 @@ class DutyTimeline:
         return tuple(self._segments)
 
     def duty_at(self, time_s: float) -> float:
-        starts = [segment.start_time_s for segment in self._segments]
-        index = max(0, bisect_right(starts, float(time_s)) - 1)
+        index = max(0, bisect_right(self._starts, float(time_s)) - 1)
         return self._segments[index].duty
 
     def set_duty(self, time_s: float, duty: float) -> None:
@@ -129,10 +135,12 @@ class DutyTimeline:
             raise ValueError("duty commands must be appended in nondecreasing time order")
         if abs(t - last.start_time_s) <= 1e-15:
             self._segments[-1] = DutySegment(t, value)
+            self._starts[-1] = t
         elif math.isclose(value, last.duty, rel_tol=0.0, abs_tol=1e-15):
             return
         else:
             self._segments.append(DutySegment(t, value))
+            self._starts.append(t)
 
 
 class TTPLGateScheduler:
@@ -254,6 +262,7 @@ def build_ttpl_pfc_circuit(config: TTPLSpiceConfig) -> CircuitIR:
             "fsw_hz": config.switching_frequency_hz,
             "boost_l_h": config.boost_inductance_h,
             "bus_c_f": config.bus_capacitance_f,
+            "load_model": LoadModel(config.load_model).value,
         },
     )
     circuit.extend(
@@ -265,22 +274,38 @@ def build_ttpl_pfc_circuit(config: TTPLSpiceConfig) -> CircuitIR:
             _external_gate("VGHFL", "G_HF_L"),
             _external_gate("VGLFP", "G_LF_P"),
             _external_gate("VGLFN", "G_LF_N"),
-            SpiceElement("SHFH", ElementKind.SWITCH, ("BUS", "SW", "G_HF_H", "0"), model="SWPFC"),
-            SpiceElement("SHFL", ElementKind.SWITCH, ("SW", "0", "G_HF_L", "0"), model="SWPFC"),
-            SpiceElement("SLFP", ElementKind.SWITCH, ("BUS", "NEUTRAL", "G_LF_P", "0"), model="SWPFC"),
-            SpiceElement("SLFN", ElementKind.SWITCH, ("NEUTRAL", "0", "G_LF_N", "0"), model="SWPFC"),
+            SpiceElement("VSHFH", ElementKind.VOLTAGE_SOURCE, ("BUS", "S_HFH_IN"), "0"),
+            SpiceElement("SHFH", ElementKind.SWITCH, ("S_HFH_IN", "SW", "G_HF_H", "0"), model="SWPFC"),
+            SpiceElement("VSHFL", ElementKind.VOLTAGE_SOURCE, ("SW", "S_HFL_IN"), "0"),
+            SpiceElement("SHFL", ElementKind.SWITCH, ("S_HFL_IN", "0", "G_HF_L", "0"), model="SWPFC"),
+            SpiceElement("VSLFP", ElementKind.VOLTAGE_SOURCE, ("BUS", "S_LFP_IN"), "0"),
+            SpiceElement("SLFP", ElementKind.SWITCH, ("S_LFP_IN", "NEUTRAL", "G_LF_P", "0"), model="SWPFC"),
+            SpiceElement("VSLFN", ElementKind.VOLTAGE_SOURCE, ("NEUTRAL", "S_LFN_IN"), "0"),
+            SpiceElement("SLFN", ElementKind.SWITCH, ("S_LFN_IN", "0", "G_LF_N", "0"), model="SWPFC"),
             # Antiparallel diode paths are required during deadtime/zero crossing.
-            SpiceElement("DHFH", ElementKind.DIODE, ("SW", "BUS"), model="DPFC"),
-            SpiceElement("DHFL", ElementKind.DIODE, ("0", "SW"), model="DPFC"),
-            SpiceElement("DLFP", ElementKind.DIODE, ("NEUTRAL", "BUS"), model="DPFC"),
-            SpiceElement("DLFN", ElementKind.DIODE, ("0", "NEUTRAL"), model="DPFC"),
-            SpiceElement("RCBUS", ElementKind.RESISTOR, ("BUS", "C_INT"), _s(max(config.bus_cap_esr_ohm, 1e-6))),
+            SpiceElement("VDHFH", ElementKind.VOLTAGE_SOURCE, ("SW", "D_HFH_IN"), "0"),
+            SpiceElement("DHFH", ElementKind.DIODE, ("D_HFH_IN", "BUS"), model="DPFC"),
+            SpiceElement("VDHFL", ElementKind.VOLTAGE_SOURCE, ("0", "D_HFL_IN"), "0"),
+            SpiceElement("DHFL", ElementKind.DIODE, ("D_HFL_IN", "SW"), model="DPFC"),
+            SpiceElement("VDLFP", ElementKind.VOLTAGE_SOURCE, ("NEUTRAL", "D_LFP_IN"), "0"),
+            SpiceElement("DLFP", ElementKind.DIODE, ("D_LFP_IN", "BUS"), model="DPFC"),
+            SpiceElement("VDLFN", ElementKind.VOLTAGE_SOURCE, ("0", "D_LFN_IN"), "0"),
+            SpiceElement("DLFN", ElementKind.DIODE, ("D_LFN_IN", "NEUTRAL"), model="DPFC"),
+            SpiceElement("VSCAP", ElementKind.VOLTAGE_SOURCE, ("BUS", "C_ESR_IN"), "0"),
+            SpiceElement("RCBUS", ElementKind.RESISTOR, ("C_ESR_IN", "C_INT"), _s(max(config.bus_cap_esr_ohm, 1e-6))),
             SpiceElement("CBUS", ElementKind.CAPACITOR, ("C_INT", "0"), _s(config.bus_capacitance_f)),
-            SpiceElement("RLOAD", ElementKind.RESISTOR, ("BUS", "0"), _s(load_ohm)),
+            SpiceElement("VSLOAD", ElementKind.VOLTAGE_SOURCE, ("BUS", "LOAD_IN"), "0"),
             SpiceElement("RSWBLEED", ElementKind.RESISTOR, ("SW", "0"), _s(config.bleeder_ohm)),
             SpiceElement("RNBLEED", ElementKind.RESISTOR, ("NEUTRAL", "0"), _s(config.bleeder_ohm)),
         ]
     )
+    if config.load_model == LoadModel.CONSTANT_POWER:
+        # Same explicit low-voltage regularization as the averaged plant. The
+        # nonlinear load is part of the circuit, never postprocessed as Rload.
+        circuit.add(SpiceElement("BLOAD", ElementKind.RAW,
+            raw_line=f"BLOAD LOAD_IN 0 I={_s(config.output_power_w)}/max(V(LOAD_IN),{_s(config.constant_power_floor_v)})"))
+    else:
+        circuit.add(SpiceElement("RLOAD", ElementKind.RESISTOR, ("LOAD_IN", "0"), _s(load_ohm)))
     circuit.models.extend(
         [
             f".model SWPFC SW(Ron={_s(config.switch_ron_ohm)} Roff={_s(config.switch_roff_ohm)} Vt=2.5 Vh=0.1)",
@@ -289,7 +314,9 @@ def build_ttpl_pfc_circuit(config: TTPLSpiceConfig) -> CircuitIR:
     )
     circuit.directives.extend(
         [
-            ".options method=gear reltol=3e-4 abstol=1e-7 vntol=1e-5 gmin=1e-10",
+            # Ideal diode/switch commutations require a converged nonlinear device
+            # solution; loose tolerances can accept stale diode linearizations.
+            ".options method=gear reltol=1e-6 abstol=1e-10 vntol=1e-8 gmin=1e-10",
             f".ic V(BUS)={_s(initial_bus)} V(C_INT)={_s(initial_bus)}",
         ]
     )
@@ -305,7 +332,9 @@ def build_ttpl_pfc_circuit(config: TTPLSpiceConfig) -> CircuitIR:
             "v(g_lf_p)",
             "v(g_lf_n)",
             "i(lboost)",
-            "i(vac)",
+            "i(vac)", "v(c_int)", "i(vscap)", "i(vsload)",
+            "i(vshfh)", "i(vshfl)", "i(vslfp)", "i(vslfn)",
+            "i(vdhfh)", "i(vdhfl)", "i(vdlfp)", "i(vdlfn)",
         ]
     )
     return circuit

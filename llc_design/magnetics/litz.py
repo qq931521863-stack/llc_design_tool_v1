@@ -318,7 +318,7 @@ def layered_litz_stack_loss(
     results: dict[str, WindingLossBreakdown] = {}
     for label in labels:
         item = accum[label]
-        dc = float(item["dc"])
+        dc = sum(s.current_rms_total**2 * s.rdc_ohm for s in spectra if s.layer.label == label)
         skin = float(item["skin"])
         prox = float(item["prox"])
         bundle = float(item["bundle"])

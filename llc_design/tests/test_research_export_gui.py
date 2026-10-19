@@ -280,7 +280,7 @@ def pfc_analyses():
 
 
 @pytest.mark.parametrize("language,suffix", [("matlab", ".m"), ("python", ".py")])
-def test_llc_view_exports_last_completed_analysis_until_replaced(
+def test_llc_view_invalidates_edits_and_exports_recomputed_current_analysis(
     language, suffix, desktop_qapp, export_ui, llc_analyses, monkeypatch, tmp_path,
 ):
     from llc_design.gui.widgets.digital_loop_view import DigitalLoopView
@@ -303,10 +303,29 @@ def test_llc_view_exports_last_completed_analysis_until_replaced(
 
         view.kp.setValue(view.kp.value() * 1.5)
         view.sample_us.setValue(view.sample_us.value() + 1)
-        assert view.result is original
+        assert view.result is None
+        assert view.research_export.analysis is None
+        assert not view.research_export.matlab_button.isEnabled()
+        assert not view.research_export.python_button.isEnabled()
+        assert not view.codegen_button.isEnabled()
+        # Keep the prior file as an explicitly historical artifact. Neither a
+        # disabled button nor a direct callback may silently overwrite it.
+        historical = ("% " if language == "matlab" else "# ") + (
+            "historical exported snapshot; not the edited current design\n" + expected
+        )
+        path.write_text(historical, encoding="utf-8")
         getattr(view.research_export, f"{language}_button").click()
-        assert path.read_text(encoding="utf-8") == expected
+        view.research_export._export(language)
+        assert path.read_text(encoding="utf-8") == historical
 
+        from llc_design.control.analysis import build_small_signal_analysis
+        from llc_design.control.digital_loop import build_digital_loop_analysis
+
+        options = view._analysis_options()
+        small = build_small_signal_analysis(original.small_signal.spec, **options["small_signal"])
+        updated = build_digital_loop_analysis(small, **options["loop"])
+        assert updated.controller_config.kp == view.kp.value()
+        assert updated.controller.sample_time_s == pytest.approx(view.sample_us.value() * 1e-6)
         view.set_busy(True)
         assert not view.research_export.matlab_button.isEnabled()
         assert not view.research_export.python_button.isEnabled()
@@ -325,7 +344,7 @@ def test_llc_view_exports_last_completed_analysis_until_replaced(
 
 @pytest.mark.parametrize("language,suffix", [("matlab", ".m"), ("python", ".py")])
 @pytest.mark.parametrize("loop", ["both", "current", "voltage"])
-def test_pfc_view_exports_last_completed_analysis_until_replaced(
+def test_pfc_view_invalidates_edits_and_exports_recomputed_current_analysis(
     language, suffix, loop, desktop_qapp, export_ui, pfc_analyses, monkeypatch, tmp_path,
 ):
     from pfc_design.gui.control_lab_view import PFCControlLabView
@@ -360,10 +379,27 @@ def test_pfc_view_exports_last_completed_analysis_until_replaced(
         view.current_ctrl["kp"].setValue(view.current_ctrl["kp"].value() * 1.5)
         view.voltage_ctrl["kp"].setValue(view.voltage_ctrl["kp"].value() * 1.5)
         view.inductance.setValue(view.inductance.value() + 1)
-        assert view.result[0] is original
+        assert view.result is None
+        assert panel.analysis is None
+        assert not panel.matlab_button.isEnabled()
+        assert not panel.python_button.isEnabled()
+        assert not view.codegen_button.isEnabled()
+        historical = ("% " if language == "matlab" else "# ") + (
+            "historical exported snapshot; not the edited current design\n" + expected
+        )
+        path.write_text(historical, encoding="utf-8")
         getattr(panel, f"{language}_button").click()
-        assert path.read_text(encoding="utf-8") == expected
+        panel._export(language)
+        assert path.read_text(encoding="utf-8") == historical
 
+        from pfc_design.control import build_pfc_control_lab_analysis
+
+        current_config = view._config()
+        updated = build_pfc_control_lab_analysis(current_config)
+        assert updated.config == current_config
+        assert updated.config.current_controller.kp == view.current_ctrl["kp"].value()
+        assert updated.config.voltage_controller.kp == view.voltage_ctrl["kp"].value()
+        assert updated.config.power_stage.boost_inductance_h == pytest.approx(view.inductance.value() * 1e-6)
         view.set_busy(True)
         assert not panel.matlab_button.isEnabled()
         assert not panel.python_button.isEnabled()
@@ -375,6 +411,118 @@ def test_pfc_view_exports_last_completed_analysis_until_replaced(
         assert new_expected != expected
         getattr(panel, f"{language}_button").click()
         assert path.read_text(encoding="utf-8") == new_expected
+    finally:
+        view.close()
+        desktop_qapp.processEvents()
+
+
+@pytest.mark.parametrize("kind", ["llc", "pfc"])
+@pytest.mark.parametrize("language,suffix", [("matlab", ".m"), ("python", ".py")])
+@pytest.mark.parametrize("refill", [False, True])
+def test_input_invalidation_inside_save_dialog_cancels_obsolete_export(
+    kind, language, suffix, refill, panel_factory, stub_export, monkeypatch, tmp_path,
+):
+    panel = panel_factory(kind)
+    original = SimpleNamespace(marker="previous input snapshot")
+    current = SimpleNamespace(marker="recomputed edited input snapshot")
+    panel.set_analysis(original)
+    path = tmp_path / ("must_not_write_old_snapshot" + suffix)
+
+    def edit_inputs_during_dialog(*args, **kwargs):
+        panel.set_analysis(None)
+        if refill:
+            # Even a fast new calculation cannot revive the previous click.
+            panel.set_analysis(current)
+        return str(path), ""
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", edit_inputs_during_dialog)
+    getattr(panel, f"{language}_button").click()
+    assert not path.exists()
+    assert stub_export == []
+    assert panel.analysis is (current if refill else None)
+
+    # A deliberate new click can export the newly computed, identified result.
+    panel.set_analysis(current)
+    _save_to(monkeypatch, path)
+    getattr(panel, f"{language}_button").click()
+    expected_loop = "both" if kind == "pfc" else None
+    assert stub_export == [(kind, current, expected_loop)]
+    assert path.read_text(encoding="utf-8") == (
+        f"{language}: {kind} / {expected_loop} / {current.marker}\n"
+    )
+
+
+def test_pfc_c99_direct_callback_while_busy_does_not_open_dialog(
+    desktop_qapp, export_ui, pfc_analyses, monkeypatch,
+):
+    from pfc_design.gui.control_lab_view import PFCControlLabView
+
+    view = PFCControlLabView()
+    dialogs = []
+    try:
+        view.result = (pfc_analyses[0], None, None)
+        view.set_busy(True)
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a: dialogs.append(a) or "")
+        view._generate_c99()
+        assert dialogs == []
+        assert not view.codegen_button.isEnabled()
+    finally:
+        view.close()
+        desktop_qapp.processEvents()
+
+
+@pytest.mark.parametrize("mutation", ["busy", "edit", "edit_then_refill"])
+def test_pfc_c99_modal_change_cancels_old_click_then_exports_current_coefficients(
+    mutation, desktop_qapp, export_ui, pfc_analyses, monkeypatch, tmp_path,
+):
+    import pfc_design.gui.control_lab_view as module
+    from pfc_design.control import build_pfc_control_lab_analysis
+
+    view = module.PFCControlLabView()
+    calls = []
+    issues = []
+    monkeypatch.setattr(module, "show_operation_issue", lambda *a, **k: issues.append((a, k)))
+    generate = module.generate_ttpl_control_code
+
+    def observe_actual_generator(analysis, directory):
+        calls.append(analysis)
+        return generate(analysis, directory)
+
+    monkeypatch.setattr(module, "generate_ttpl_control_code", observe_actual_generator)
+    try:
+        # Isolate the export consumer using a real completed transfer analysis;
+        # AC convergence/waveform producer tests are separate, not mocked here.
+        view.result = (pfc_analyses[0], None, None)
+        view.set_busy(False)
+        old_directory = tmp_path / "old-click"
+
+        def change_during_dialog(*_args):
+            if mutation == "busy":
+                view.set_busy(True)
+            else:
+                view.inductance.setValue(view.inductance.value() + 1)
+                if mutation == "edit_then_refill":
+                    recalculated = build_pfc_control_lab_analysis(view._config())
+                    view.result = (recalculated, None, None)
+            return str(old_directory)
+
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", change_during_dialog)
+        view._generate_c99()
+        assert calls == []
+        assert issues == []
+        assert not old_directory.exists()
+
+        config = view._config()
+        current = build_pfc_control_lab_analysis(config)
+        view.result = (current, None, None)
+        view.set_busy(False)
+        new_directory = tmp_path / "current-click"
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_: str(new_directory))
+        view._generate_c99()
+        assert calls == [current]
+        assert issues == []
+        assert calls[0].config == config
+        assert list((new_directory / "ttpl_control_generated").glob("*.h"))
     finally:
         view.close()
         desktop_qapp.processEvents()

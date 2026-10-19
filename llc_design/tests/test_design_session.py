@@ -4,6 +4,7 @@ import copy
 import json
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 
 from llc_design.control.analysis import build_small_signal_analysis
@@ -127,6 +128,44 @@ def test_arrays_preserve_dtype_shape_and_exact_bits(dtype):
     assert restored.dtype == values.dtype
     assert restored.shape == values.shape
     assert restored.tobytes() == values.tobytes()
+
+
+@pytest.mark.parametrize("annotation", [
+    np.ndarray,
+    np.ndarray[tuple[int, ...], np.dtype[np.float64]],
+    NDArray[np.float64],
+], ids=["bare-array", "expanded-array", "numpy-typed-alias"])
+def test_controller_array_annotation_variants_preserve_strict_roundtrip(monkeypatch, annotation):
+    from llc_design.control import design_session
+
+    hints = dict(design_session._HINTS["DigitalTransferFunction"])
+    hints.update(numerator=annotation, denominator=annotation)
+    monkeypatch.setitem(design_session._HINTS, "DigitalTransferFunction", hints)
+    controller = DigitalTransferFunction(
+        np.array([-0.0, 0.12345678901234567, -0.013]),
+        np.array([1.0, -0.6]), 20e-6,
+    )
+    payload = encode_model(controller)
+    restored = decode_model(strict_json_loads(json.dumps(payload)))
+    for field in ("numerator", "denominator"):
+        before, after = getattr(controller, field), getattr(restored, field)
+        assert type(after) is np.ndarray
+        assert after.dtype == before.dtype and after.shape == before.shape
+        assert after.tobytes() == before.tobytes()
+
+    # Supporting the new annotation must not admit constructor-coercible data.
+    for bad in ([0.1], (0.1,)):
+        malformed = copy.deepcopy(payload)
+        malformed["fields"]["numerator"] = encode_model(bad)
+        with pytest.raises(SessionFormatError, match="numerator has the wrong type"):
+            decode_model(malformed)
+
+    class ArraySubclass(np.ndarray):
+        pass
+
+    object.__setattr__(controller, "numerator", controller.numerator.view(ArraySubclass))
+    with pytest.raises(SessionFormatError, match="numerator has the wrong type"):
+        encode_model(controller)
 
 
 def test_tuple_enum_and_copy_preservation(small_signal):

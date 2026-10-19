@@ -1,13 +1,20 @@
 """TTPL DC-bus capacitor-bank and semiconductor thermal design page."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSplitter,
@@ -15,8 +22,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFontDatabase
 
 from pfc_design.engineering import (
     CapacitorBankDesignConfig,
@@ -29,7 +34,6 @@ from pfc_design.engineering import (
     design_bus_capacitor_bank,
     solve_ttpl_semiconductor_thermal,
 )
-
 
 _CAP_PRESETS: dict[str, CapacitorUnitSpec] = {
     "Generic 450 V / 470 uF": CapacitorUnitSpec(
@@ -76,6 +80,8 @@ class TTPLCapacitorThermalView(QWidget):
     ) -> None:
         super().__init__(parent)
         self.design = design
+        self.line_cycle = None
+        self.switched_cycle = None
         self.database = database or PFCDeviceDatabase()
         self.cap_result: CapacitorBankResult | None = None
         self.thermal_result: TTPLThermalResult | None = None
@@ -92,6 +98,11 @@ class TTPLCapacitorThermalView(QWidget):
         hint.setStyleSheet("color:#667085;")
         header.addWidget(hint)
         header.addStretch(1)
+        self.source = QComboBox()
+        self.source.addItem("Sizing sine screen", "sizing")
+        self.source.addItem("Last closed-loop AC result", "closed_loop")
+        self.source.addItem("Accepted switched circuit cycle", "switching")
+        header.addWidget(self.source)
         self.run_all_button = QPushButton("Run Capacitor + Thermal")
         header.addWidget(self.run_all_button)
         root.addLayout(header)
@@ -109,8 +120,14 @@ class TTPLCapacitorThermalView(QWidget):
         self.tabs.addTab(self._build_thermal_page(), "Semiconductor Thermal")
         root.addWidget(self.tabs, 1)
 
+        self.source.currentIndexChanged.connect(self.run_all)
         self.run_all_button.clicked.connect(self.run_all)
         self.cap_run_button.clicked.connect(self.run_capacitor)
+        self.cap_export_button.clicked.connect(self._export_capacitor)
+        for field in (self.cap_c, self.cap_v, self.cap_esr, self.cap_ripple,
+                      self.cap_rated_temp, self.cap_life, self.cap_rth,
+                      self.cap_v_derating, self.cap_i_derating, self.cap_ambient):
+            field.valueChanged.connect(self._invalidate_capacitor)
         self.thermal_run_button.clicked.connect(self.run_thermal)
         self.cap_preset.currentIndexChanged.connect(self._apply_cap_preset)
         self._apply_cap_preset()
@@ -173,6 +190,9 @@ class TTPLCapacitorThermalView(QWidget):
         left_layout.addWidget(design_group)
         self.cap_run_button = QPushButton("Auto Size Capacitor Bank")
         left_layout.addWidget(self.cap_run_button)
+        self.cap_export_button = QPushButton("Export Capacitor JSON")
+        self.cap_export_button.setEnabled(False)
+        left_layout.addWidget(self.cap_export_button)
         left_layout.addStretch(1)
 
         self.cap_summary = QPlainTextEdit()
@@ -284,11 +304,57 @@ class TTPLCapacitorThermalView(QWidget):
         self.design = result
         self.run_all()
 
+    def set_line_cycle(self, result) -> None:
+        self.line_cycle = result
+        if self.source.currentData() == "closed_loop":
+            self.run_all()
+
+    def set_switched_cycle(self, result) -> None:
+        self.switched_cycle = result
+        if self.source.currentData() == 'switching':
+            self.run_all()
+
+    def _selected_switched_cycle(self):
+        if self.source.currentData() != 'switching':
+            return None
+        if self.switched_cycle is None:
+            raise ValueError('Run the shared-ngspice circuit and obtain a qualified converged cycle first')
+        return self.switched_cycle
+
+    def _selected_line_cycle(self):
+        if self.source.currentData() != "closed_loop":
+            return None
+        if self.line_cycle is None:
+            raise ValueError("Run closed-loop AC analysis before selecting its capacitor/thermal results")
+        return self.line_cycle
+
     def run_all(self) -> None:
         self.run_capacitor()
         self.run_thermal()
 
+    def _invalidate_capacitor(self, *_args) -> None:
+        self.cap_result = None
+        self.cap_export_button.setEnabled(False)
+        self.cap_summary.setPlainText("Capacitor inputs changed; rerun the bank calculation.")
+
+    def _export_capacitor(self) -> None:
+        result = self.cap_result
+        if result is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export capacitor current and heating", "pfc_capacitor_bank.json", "JSON (*.json)")
+        # A modal file chooser can process new inputs/results. Never export an
+        # invalidated or replaced result under the current screen's identity.
+        if not path or self.cap_result is not result:
+            return
+        try:
+            Path(path).write_text(json.dumps(result.as_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        except (OSError, TypeError, ValueError) as exc:
+            QMessageBox.warning(self, "Export capacitor current and heating", str(exc))
+
     def run_capacitor(self) -> None:
+        self.cap_result = None
+        self.cap_export_button.setEnabled(False)
         if self.design is None:
             self.cap_summary.setPlainText("Run Power Stage / Sizing first.")
             return
@@ -308,12 +374,40 @@ class TTPLCapacitorThermalView(QWidget):
                 ripple_current_derating=self.cap_i_derating.value(),
                 ambient_temperature_c=self.cap_ambient.value(),
             )
-            result = design_bus_capacitor_bank(self.design, unit, config)
+            result = design_bus_capacitor_bank(self.design, unit, config,
+                                               line_cycle=self._selected_line_cycle(),
+                switched_cycle=self._selected_switched_cycle())
         except Exception as exc:
+            self.cap_result = None
             self.cap_summary.setPlainText(f"Capacitor design failed: {exc}")
             return
         self.cap_result = result
+        self.cap_export_button.setEnabled(True)
         warnings = "\n".join(f"  - {item}" for item in result.warnings)
+        ripple = result.capacitor_ripple
+        partial = ripple is not None and not ripple.complete
+        reconstruction = ""
+        if ripple is not None:
+            reconstruction = (
+                f"Averaged Irms       : {ripple.averaged_current_rms_a:.3f} A\n"
+                f"Known PWM Irms      : {ripple.known_switching_current_rms_a:.3f} A\n"
+                f"CCM coverage        : {100.0 * (1.0 - ripple.unresolved_samples / len(ripple.valid_sample_mask)):.2f}% "
+                f"({ripple.unresolved_samples} unresolved samples)\n"
+                f"Current model       : {'PARTIAL; complete RMS unknown' if partial else 'local CCM PWM reconstruction'}\n"
+                f"Averaged ESR loss   : {result.bank_averaged_esr_loss_w:.3f} W\n"
+                f"Known PWM ESR loss  : {result.bank_known_switching_esr_loss_w:.3f} W\n"
+            )
+        if result.switched_cycle is not None:
+            moments = result.switched_cycle.capacitor_pwm_moments()
+            reconstruction = (f"Source identity     : {result.switched_cycle.source_identity}\n"
+                f"PWM-mean ESR loss   : {result.bank_averaged_esr_loss_w:.6f} W\n"
+                f"Within-PWM ESR loss : {result.bank_known_switching_esr_loss_w:.6f} W\n"
+                f"Direct I² mean      : {moments['total_mean_square_a2']:.6f} A²\n")
+        hotspot_text = (f"Unknown; partial-model estimate {result.partial_model_hotspot_c:.2f} °C"
+                        if partial else f"{result.estimated_hotspot_c:.2f} °C")
+        life_text = ("Unknown (unresolved switching current)" if partial else
+                     f"{result.estimated_life_h:.0f} h / {result.estimated_life_years:.2f} years")
+        ripple_check = "UNKNOWN" if result.ripple_current_ok is None else ("PASS" if result.ripple_current_ok else "FAIL")
         self.cap_summary.setPlainText(
             "TTPL DC-BUS CAPACITOR BANK\n"
             + "=" * 74
@@ -322,17 +416,19 @@ class TTPLCapacitorThermalView(QWidget):
             + f"Bank topology       : {result.series_count}S x {result.parallel_count}P = {result.total_count} capacitors\n"
             + f"Actual Cbank        : {result.bank_capacitance_uf:.1f} uF\n"
             + f"Bank ESR            : {result.bank_esr_ohm*1e3:.3f} mOhm\n"
-            + f"Bank ripple Irms    : {result.bank_ripple_current_rms_a:.3f} A\n"
+            + f"Current source      : {result.waveform_source}\n"
+            + f"Known-model Irms    : {result.bank_ripple_current_rms_a:.3f} A\n"
+            + reconstruction
             + f"Per-cap voltage     : {result.per_cap_voltage_v:.2f} V\n"
             + f"Per-cap ripple      : {result.per_cap_ripple_current_rms_a:.3f} A\n"
             + f"Per-cap ESR loss    : {result.per_cap_esr_loss_w:.3f} W\n"
-            + f"Total ESR loss      : {result.bank_esr_loss_w:.3f} W\n"
-            + f"Estimated hot-spot  : {result.estimated_hotspot_c:.2f} °C\n"
-            + f"Estimated life      : {result.estimated_life_h:.0f} h / {result.estimated_life_years:.2f} years\n"
-            + f"Predicted 2xline dV : {result.predicted_bus_ripple_pp_v:.3f} Vpp\n"
+            + f"Known-model ESR loss: {result.bank_esr_loss_w:.3f} W\n"
+            + f"Estimated hot-spot  : {hotspot_text}\n"
+            + f"Estimated life      : {life_text}\n"
+            + f"{'Projected switching' if result.switched_cycle is not None else 'Averaged bus dV'} : {result.predicted_bus_ripple_pp_v:.3f} Vpp\n"
             + f"Capacitance check   : {'PASS' if result.capacitance_ok else 'FAIL'}\n"
             + f"Voltage derating    : {'PASS' if result.voltage_ok else 'FAIL'}\n"
-            + f"Ripple derating     : {'PASS' if result.ripple_current_ok else 'FAIL'}\n\n"
+            + f"Ripple derating     : {ripple_check}\n\n"
             + "MODEL / VALIDATION WARNINGS\n"
             + warnings
         )
@@ -363,8 +459,11 @@ class TTPLCapacitorThermalView(QWidget):
                 slow,
                 workpoint=str(self.thermal_workpoint.currentData()),
                 config=config,
+                line_cycle=self._selected_line_cycle(),
+                switched_cycle=self._selected_switched_cycle(),
             )
         except Exception as exc:
+            self.thermal_result = None
             self.thermal_summary.setPlainText(f"Thermal solve failed: {exc}")
             return
         self.thermal_result = result
@@ -376,12 +475,17 @@ class TTPLCapacitorThermalView(QWidget):
             + f"Workpoint           : {result.workpoint} / {result.vin_rms_v:.2f} Vrms\n"
             + f"HF device           : {result.hf_device.part_number} ({result.hf_device.technology})\n"
             + f"Slow-leg device     : {result.slow_device.part_number} ({result.slow_device.technology})\n"
-            + f"HF active loss      : {result.active_device_loss_w:.3f} W\n"
-            + f"HF SR loss          : {result.sr_device_loss_w:.3f} W\n"
-            + f"Slow loss / device  : {result.slow_device_loss_each_w:.3f} W\n"
-            + f"Tj active           : {result.active_junction_temperature_c:.2f} °C\n"
-            + f"Tj SR               : {result.sr_junction_temperature_c:.2f} °C\n"
-            + f"Tj slow             : {result.slow_junction_temperature_c:.2f} °C\n"
+            + f"Waveform source     : {result.waveform_source}\n"
+            + f"Source identity     : {result.source_identity or 'n/a (sizing/averaged source)'}\n"
+            + ("Thermal power scope : modeled/known terms; generic memoryless diode, no explicit Qrr recovery model\n" if result.source_identity else "")
+            + f"HF upper loss / Tj  : {result.hf_upper_device_loss_w:.3f} W / {result.hf_upper_junction_temperature_c:.2f} °C\n"
+            + f"HF lower loss / Tj  : {result.hf_lower_device_loss_w:.3f} W / {result.hf_lower_junction_temperature_c:.2f} °C\n"
+            + f"LF upper loss / Tj  : {result.slow_upper_device_loss_w:.3f} W / {result.slow_upper_junction_temperature_c:.2f} °C\n"
+            + f"LF lower loss / Tj  : {result.slow_lower_device_loss_w:.3f} W / {result.slow_lower_junction_temperature_c:.2f} °C\n"
+            + f"HF active role sum : {result.active_device_loss_w:.3f} W (not one fixed device)\n"
+            + f"HF SR role sum     : {result.sr_device_loss_w:.3f} W (not one fixed device)\n"
+            + f"Measured diode HF/LF: {result.hf_loss.diode_conduction_w:.6f} / {result.slow_loss.diode_conduction_w:.6f} W (included in physical totals; separate from channel-role sums)\n"
+            + f"Tj equation residual: {result.temperature_residual_c:.6f} °C\n"
             + f"Converged           : {'YES' if result.converged else 'NO'} in {result.iterations} iterations\n"
             + f"Thermal limit       : {'PASS' if result.thermal_ok else 'FAIL'}\n"
             + f"VDS / current       : {'PASS' if result.electrical_ok else 'FAIL'}\n"

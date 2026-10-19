@@ -4,16 +4,23 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
-from pathlib import Path
 import textwrap
 import zipfile
+from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SHA = "bc969ab377d4b029cce351f3a38146d3e2a7659c"
 RECOVERY = ROOT / ".github/workflows/complete-v981-release.yml"
-ORIGINAL = ROOT / ".github/workflows/build-release.yml"
+# Recovery checks out SOURCE_SHA, not the current release's evolving workflow.
+# Exact bytes from bc969ab:.github/workflows/build-release.yml, retained so a
+# shallow checkout can test the historical contract without network or Git.
+ORIGINAL = Path(__file__).with_name("fixtures") / "build-release-v981.yml"
+
+
+def test_original_workflow_fixture_is_immutable():
+    assert hashlib.sha256(ORIGINAL.read_bytes()).hexdigest() == "a9c1ed4f742a22d6f103678c16979876ff6fadfa863fe4cae0d8fd8823ec3d99"
 
 
 def _step(text: str, heading: str) -> str:

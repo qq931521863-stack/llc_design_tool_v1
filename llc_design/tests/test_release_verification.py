@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from pathlib import Path
+import math
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -16,13 +17,34 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
-def _child(tmp_path, *, exit_code=0, report=True, delay=0, **overrides):
+def _proof(**overrides):
     payload = {
-        "success": True, "version": "9.4.1", "frozen": True, "platform": sys.platform,
-        "workspaces": ["llc", "pfc", "control", "fra", "dab"],
-        "guided_design": True, "brand_taxonomy_sha256": "a" * 64,
+        "proof_schema": 2, "success": True, "version": "9.4.1", "frozen": True, "platform": sys.platform,
+        "workspaces": ["llc", "pfc", "control", "fra", "dab", "power_stage"],
+        "guided_design": True, "power_stage_designer": True, "brand_taxonomy_sha256": "a" * 64,
+        "power_stage_launcher_entry": True, "power_stage_toolbox_filter": True,
+        "power_stage_design_id": "a" * 20, "power_stage_model_revision": "psd-piecewise-2",
+        "power_stage_cases": {},
+        "power_stage_buck_vmc": {"control_mode": "vmc", "frequency_points": 1600,
+                                 "roundtrip_identical": True, "plotted_curves": 4,
+                                 "max_plant_relative_error": 0.0},
     }
+    for topology, identity, duty, ripple, average, voltage in (
+        ("T01", "a", 5 / 12, 7 * (5 / 12) / 4.7, 3, 12),
+        ("T02", "b", 0.5, 1.2, 4, 48), ("T09", "c", 0.5, 0.24, 0.5, 96),
+    ):
+        payload["power_stage_cases"][topology] = {
+            "design_id": identity * 20, "mode": "CCM", "project_roundtrip": True,
+            "report_consistency": True, "duty": duty, "inductor_ripple_pp_a": ripple,
+            "switch_rms_a": math.sqrt(duty * (average ** 2 + ripple ** 2 / 12)),
+            "switch_voltage_v": voltage,
+        }
     payload.update(overrides)
+    return payload
+
+
+def _child(tmp_path, *, exit_code=0, report=True, delay=0, **overrides):
+    payload = _proof(**overrides)
     script = tmp_path / "child.py"
     script.write_text(
         "import json, os, pathlib, sys, time\n"
@@ -63,7 +85,7 @@ def test_hung_child_times_out(tmp_path):
 
 @pytest.mark.parametrize("overrides", [
     {"success": False}, {"version": "9.4.0"}, {"frozen": False},
-    {"workspaces": ["llc"]}, {"guided_design": False},
+    {"workspaces": ["llc"]}, {"guided_design": False}, {"power_stage_designer": False},
     {"brand_taxonomy_sha256": "b" * 64}, {"platform": "wrong"},
 ])
 def test_incomplete_or_wrong_bundle_report_is_rejected(tmp_path, overrides):
@@ -84,7 +106,8 @@ def test_publish_waits_for_both_platforms_and_stages_draft():
     assert "uploaded digest mismatch" in publish
 
 
-def _archive_gate(tmp_path, monkeypatch, *, missing_mac=False, wrong_taxonomy=False, windows_backslash=False):
+def _archive_gate(tmp_path, monkeypatch, *, missing_mac=False, wrong_taxonomy=False,
+                  windows_backslash=False, proof_overrides=None, extra_asset=False):
     import hashlib
     import textwrap
     import zipfile
@@ -93,19 +116,22 @@ def _archive_gate(tmp_path, monkeypatch, *, missing_mac=False, wrong_taxonomy=Fa
     digest = hashlib.sha256(taxonomy).hexdigest()
     (tmp_path / "engineering_data").mkdir()
     (tmp_path / "engineering_data/brand_taxonomy.json").write_bytes(taxonomy)
+    (tmp_path / "packaging").mkdir()
+    (tmp_path / "packaging/verify_bundle.py").write_bytes((ROOT / "packaging/verify_bundle.py").read_bytes())
     (tmp_path / "pyproject.toml").write_text('[project]\nversion="9.4.1"\n')
     (tmp_path / "CHANGELOG.md").write_text('# Changelog\n\n## 9.4.1 — test\nFix\n\n## 9.4.0 — test\nFeatures\n', encoding="utf-8")
     (tmp_path / "release").mkdir()
+    if extra_asset:
+        (tmp_path / "release/private-test-archive.zip").write_bytes(b"must not be published")
     for runner, platform, name, exe in (
         ("Windows", "win32", "PowerDesignTool-Windows-x64.zip", "PowerDesignTool/PowerDesignTool.exe"),
         ("macOS", "darwin", "PowerDesignTool-macOS-arm64.zip", "PowerDesignTool.app/Contents/MacOS/PowerDesignTool"),
     ):
         if missing_mac and runner == "macOS":
             continue
-        proof = {"success": True, "frozen": True, "version": "9.4.1", "platform": platform,
-                 "guided_design": True, "workspaces": ["llc", "pfc", "control", "fra", "dab"],
-                 "brand_taxonomy_sha256": digest}
-        (tmp_path / f"release/bundle-proof-{runner}.json").write_text(json.dumps(proof))
+        proof = _proof(platform=platform, brand_taxonomy_sha256=digest)
+        proof.update(proof_overrides or {})
+        (tmp_path / f"release/bundle-proof-{runner}.json").write_text(json.dumps(proof), encoding="utf-8")
         with zipfile.ZipFile(tmp_path / "release" / name, "w") as bundle:
             bundle.writestr(exe.replace("/", "\\") if windows_backslash and runner == "Windows" else exe, b"fixture executable, not a real bundle")
             bundle.writestr("root\\engineering_data\\brand_taxonomy.json" if windows_backslash and runner == "Windows" else "root/engineering_data/brand_taxonomy.json", b"wrong" if wrong_taxonomy else taxonomy)
@@ -124,7 +150,7 @@ def test_archive_gate_accepts_both_complete_packages(tmp_path, monkeypatch):
 
 
 def test_archive_gate_rejects_partial_release(tmp_path, monkeypatch):
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(AssertionError, match="missing release assets"):
         _archive_gate(tmp_path, monkeypatch, missing_mac=True)
 
 

@@ -301,9 +301,15 @@ def install_closed_loop_verification(host) -> ClosedLoopVerificationView:
                 f"load={spice_cfg.load_fraction*100:.1f}%"
             )
 
+        def calculate():
+            return run_worker_payload(dict(options), library_path)
+
+        # This worker returns a tuple but still owns the actual digital H(z).
+        # The host must reject its result and error after controller edits.
+        calculate._llc_digital_request = True
         host._run_worker(
             "正在运行 shared-ngspice Exact H(z) + FM LUT 数字闭环验证…",
-            lambda: run_worker_payload(dict(options), library_path),
+            calculate,
             ready,
         )
 

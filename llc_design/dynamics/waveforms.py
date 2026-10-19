@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Mapping
 
 import numpy as np
-from numpy.typing import NDArray
 import pandas as pd
+from numpy.typing import NDArray
 
 from .plant import DynamicPhasorModel, DynamicPhasorSteadyState, LLCPlantInputs
 
@@ -24,6 +24,7 @@ class SignalStatistics:
 
     average: float
     rms: float
+    ac_rms: float
     minimum: float
     maximum: float
     peak_to_peak: float
@@ -80,6 +81,7 @@ class WaveformBundle:
                 "frequency_hz": s.frequency_hz,
                 "average": s.average,
                 "rms": s.rms,
+                "ac_rms": s.ac_rms,
                 "minimum": s.minimum,
                 "maximum": s.maximum,
                 "peak_to_peak": s.peak_to_peak,
@@ -154,6 +156,7 @@ def signal_statistics(
     return SignalStatistics(
         average=average,
         rms=rms,
+        ac_rms=float(np.sqrt(np.mean((array - average)**2))),
         minimum=minimum,
         maximum=maximum,
         peak_to_peak=maximum - minimum,

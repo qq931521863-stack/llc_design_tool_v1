@@ -31,6 +31,7 @@ class ExportResearchPanel(QWidget):
             raise ValueError("Unsupported research export kind")
         self.kind = kind
         self.analysis = None
+        self._invalidation_revision = 0
         self._busy = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -61,6 +62,8 @@ class ExportResearchPanel(QWidget):
         self._update_enabled()
 
     def set_analysis(self, analysis) -> None:
+        if analysis is None:
+            self._invalidation_revision += 1
         self.analysis = analysis
         self.status.setText(
             "导出最后完成的分析快照；未重新分析的输入修改与未应用候选不包含在内。"
@@ -83,6 +86,7 @@ class ExportResearchPanel(QWidget):
         if self.analysis is None or self._busy:
             return
         analysis = self.analysis
+        revision = self._invalidation_revision
         suffix = ".m" if language == "matlab" else ".py"
         loop = self.loop_selector.currentData() if self.kind == "pfc" else "voltage"
         filename, _ = QFileDialog.getSaveFileName(
@@ -90,7 +94,10 @@ class ExportResearchPanel(QWidget):
             f"{self.kind}_{loop}_research{suffix}",
             "MATLAB (*.m)" if language == "matlab" else "Python (*.py)",
         )
-        if not filename:
+        # A valid clicked snapshot may survive a newer completion, but an
+        # explicit input invalidation cancels this export even if a new result
+        # arrives before the nested file-dialog event loop returns.
+        if not filename or self._busy or revision != self._invalidation_revision:
             return
         try:
             snapshot = (

@@ -9,6 +9,8 @@ from typing import Iterable
 from ..core.operating_point import LLCOperatingPoint
 from ..core.spec import LLCDesignSpec
 from ..core.tank import TankDesign
+from ..dynamics.periodic_samples import PeriodicSamples, periodic_samples
+from ..dynamics.waveforms import WaveformBundle
 from .core import CoreDatabase, CoreSpec
 from .litz import (LitzWire, StackLayer, dc_resistance_ohm,
                    distribute_turns, harmonic_rms_spectrum,
@@ -100,10 +102,14 @@ class ResonantInductorDesign:
         }
 
     def _loss_at_temperature(self, spec: LLCDesignSpec, op: LLCOperatingPoint,
-                             temperature_c: float):
-        time, current, b = resonant_inductor_waveforms(
-            op, self.inductance_h, self.turns, self.core.ae_m2,
-            spec.magnetic_waveform_samples)
+                             temperature_c: float, samples: PeriodicSamples | None = None):
+        if samples is None:
+            time, current, b = resonant_inductor_waveforms(
+                op, self.inductance_h, self.turns, self.core.ae_m2,
+                spec.magnetic_waveform_samples)
+        else:
+            time, current = samples.time_s, samples.signals["i_resonant"]
+            b = self.inductance_h * current / (self.turns * self.core.ae_m2)
         b_peak = float(max(abs(b.min()), abs(b.max())))
         b_peak_min = b_peak * self.core.ae_m2 / self.core.amin_m2
         p_core = self.core.core_loss_waveform_w(time, b, temperature_c)
@@ -125,11 +131,19 @@ class ResonantInductorDesign:
         return (p_core, with_gap, gap_loss, b_peak, b_peak_min,
                 self.core.loss_range_warnings(op.switching_frequency_hz, b_peak))
 
-    def loss(self, spec: LLCDesignSpec, op: LLCOperatingPoint) -> ResonantInductorLoss:
+    def loss(self, spec: LLCDesignSpec, op: LLCOperatingPoint, *,
+             waveform: WaveformBundle | None = None,
+             td_converged: bool | None = None) -> ResonantInductorLoss:
+        samples = None
+        if waveform is not None:
+            samples = periodic_samples(waveform, {"i_resonant": "A"}, td_converged)
+            op = replace(op, switching_frequency_hz=samples.frequency_hz)
+        elif td_converged is not None:
+            raise ValueError("time-domain inductor loss requested without waveform")
         temperature = max(spec.winding_temperature_c, spec.ambient_temperature_c)
         last = None
         for _ in range(spec.magnetic_thermal_max_iterations):
-            last = self._loss_at_temperature(spec, op, temperature)
+            last = self._loss_at_temperature(spec, op, temperature, samples)
             p_core, copper, *_ = last
             predicted = spec.ambient_temperature_c + (
                 p_core + copper.total_w) * spec.resonant_inductor_rth_k_per_w
@@ -141,7 +155,7 @@ class ResonantInductorDesign:
             temperature = updated
         assert last is not None
         p_core, copper, gap_loss, b_peak, b_peak_min, warnings = self._loss_at_temperature(
-            spec, op, temperature)
+            spec, op, temperature, samples)
         total = p_core + copper.total_w
         return ResonantInductorLoss(
             core_w=p_core, copper_w=copper.total_w, total_w=total,

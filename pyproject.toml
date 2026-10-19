@@ -1,7 +1,7 @@
 [project]
 name = "power-design-toolkit"
-version = "9.8.1"
-description = "Open-source power electronics CAE toolkit for LLC, PFC, FRA, digital control, C99 code generation and switching verification"
+version = "9.9.0"
+description = "Open-source power electronics CAE toolkit for power-stage design, LLC, PFC, FRA, digital control, C99 code generation and switching verification"
 license = {text = "GPL-3.0-only"}
 requires-python = ">=3.10"
 dependencies = [
@@ -29,6 +29,7 @@ pfc-control-lab = "pfc_design.control_cli:cli"
 vienna-control-lab = "pfc_design.vienna_cli:cli"
 power-control-codegen = "power_codegen.cli:cli"
 power-design-gui = "llc_design.gui.app:run_gui"
+power-stage-design = "power_stage_design.__main__:main"
 power-design-web = "webapp.app:run"
 power-design-mcp = "power_agent.mcp_server:main"
 llc-design = "llc_design.__main__:cli"
@@ -41,14 +42,15 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["dab_design*", "pfc_design*", "llc_design*", "power_codegen*", "power_control_tools*", "power_sim*", "power_agent*", "webapp*", "backend*"]
+include = ["power_stage_design*", "dab_design*", "pfc_design*", "llc_design*", "power_codegen*", "power_control_tools*", "power_sim*", "power_agent*", "webapp*", "backend*", "engineering_data*"]
 exclude = ["*.output*", "*.__pycache__*"]
 
 [tool.setuptools.package-data]
+"engineering_data" = ["*.json"]
 "pfc_design.data" = ["*.json"]
 "llc_design.data" = ["*.json", "*.jpg"]
 "webapp" = ["static/*"]
 
 [tool.pytest.ini_options]
-testpaths = ["dab_design/tests", "pfc_design/tests", "llc_design/tests", "power_codegen/tests", "power_control_tools/tests", "power_sim/tests", "power_agent/tests", "webapp/tests", "backend/tests"]
+testpaths = ["power_stage_design/tests", "dab_design/tests", "pfc_design/tests", "llc_design/tests", "power_codegen/tests", "power_control_tools/tests", "power_sim/tests", "power_agent/tests", "webapp/tests", "backend/tests"]
 addopts = "-q"

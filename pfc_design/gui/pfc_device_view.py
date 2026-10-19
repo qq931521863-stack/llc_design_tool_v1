@@ -1,6 +1,7 @@
 """PFC MOSFET library editor and TTPL semiconductor loss comparison UI."""
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -20,9 +21,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -34,8 +35,10 @@ from pfc_design.engineering import (
     compare_ttpl_devices,
 )
 from pfc_design.gui.pfc_loss_summary import PFCDeviceLossRollup
-from power_control_tools.part_validation import format_missing, missing_pfc_mosfet_loss_parameters
-
+from power_control_tools.part_validation import (
+    format_missing,
+    missing_pfc_mosfet_loss_parameters,
+)
 
 _NUMERIC_FIELDS = (
     ("vds_max", "VDS max", " V", 1.0, 1.0, 5000.0, 1),
@@ -370,6 +373,8 @@ class TTPLDeviceLossView(QWidget):
         super().__init__(parent)
         self.database = database or PFCDeviceDatabase()
         self.design = design
+        self.line_cycle = None
+        self.switched_cycle = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -379,6 +384,11 @@ class TTPLDeviceLossView(QWidget):
         header.addWidget(title)
         header.addStretch(1)
 
+        self.source = QComboBox()
+        self.source.addItem("Sizing sine screen", "sizing")
+        self.source.addItem("Last closed-loop AC result", "closed_loop")
+        self.source.addItem("Accepted switched circuit cycle", "switching")
+        header.addWidget(self.source)
         self.workpoint = QComboBox()
         self.workpoint.addItem("Low line", "low")
         self.workpoint.addItem("Nominal", "nominal")
@@ -400,11 +410,15 @@ class TTPLDeviceLossView(QWidget):
         self.refresh_button = QPushButton("Refresh Compare")
         header.addWidget(self.library_button)
         header.addWidget(self.refresh_button)
+        self.export_button = QPushButton("Export Compare JSON")
+        self.export_button.clicked.connect(self._export_comparison)
+        header.addWidget(self.export_button)
         root.addLayout(header)
 
         self.note = QLabel(
             "HF comparison assumes the same MOSFET is used for active and synchronous devices in the fast half-bridge. "
-            "Built-in part data are screening inputs only; Eon/Eoff are linearly scaled in V/I and Coss may overlap datasheet switching energy."
+            "Built-in part data are screening inputs only; Eon/Eoff are linearly scaled in V/I and Coss may overlap datasheet switching energy. "
+            "Closed-loop losses use the accepted averaged cycle with CCM triangular ripple; switching-resolved zero crossing remains unverified."
         )
         self.note.setWordWrap(True)
         root.addWidget(self.note)
@@ -443,7 +457,7 @@ class TTPLDeviceLossView(QWidget):
                 "Pgate",
                 "Total",
                 "VDS",
-                "ID",
+                "ID", "Measured diode",
             ]
         )
         self.slow_table = self._table(
@@ -456,7 +470,7 @@ class TTPLDeviceLossView(QWidget):
                 "Pgate",
                 "Total",
                 "VDS",
-                "ID",
+                "ID", "Measured diode", "Psw", "PCoss",
             ]
         )
         tabs.addTab(self.hf_table, "HF Half-Bridge")
@@ -465,6 +479,7 @@ class TTPLDeviceLossView(QWidget):
 
         self.refresh_button.clicked.connect(self.refresh)
         self.library_button.clicked.connect(self._open_library)
+        self.source.currentIndexChanged.connect(self.refresh)
         self.workpoint.currentIndexChanged.connect(self.refresh)
         self.tj.valueChanged.connect(self.refresh)
         self.deadtime.valueChanged.connect(self.refresh)
@@ -501,6 +516,17 @@ class TTPLDeviceLossView(QWidget):
         self.design = result
         self.refresh()
 
+    def set_line_cycle(self, result) -> None:
+        """Keep the exact accepted AC result; selection stays explicitly opt-in."""
+        self.line_cycle = result
+        if self.source.currentData() == "closed_loop":
+            self.refresh()
+
+    def set_switched_cycle(self, result) -> None:
+        self.switched_cycle = result
+        if self.source.currentData() == 'switching':
+            self.refresh()
+
     def _open_library(self) -> None:
         dialog = PFCDeviceLibraryDialog(self.database, self)
         dialog.exec()
@@ -512,6 +538,7 @@ class TTPLDeviceLossView(QWidget):
         self._update_rollup()
 
     def refresh(self, *_args) -> None:
+        self.export_button.setEnabled(False)
         if self.design is None:
             self.summary.setText("Run Power Stage / Sizing first.")
             self.hf_table.setRowCount(0)
@@ -522,6 +549,14 @@ class TTPLDeviceLossView(QWidget):
             self._last_comparison = None
             return
         try:
+            use_closed_loop = self.source.currentData() == "closed_loop"
+            use_switching = self.source.currentData() == 'switching'
+            self.deadtime.setEnabled(not use_switching)
+            self.reverse_drop.setEnabled(not use_switching)
+            if use_switching and self.switched_cycle is None:
+                raise ValueError('Run the shared-ngspice circuit and obtain a qualified converged cycle first')
+            if use_closed_loop and self.line_cycle is None:
+                raise ValueError("Run closed-loop AC analysis before selecting its device losses")
             comparison = compare_ttpl_devices(
                 self.design,
                 self.database,
@@ -530,16 +565,26 @@ class TTPLDeviceLossView(QWidget):
                 deadtime_s=self.deadtime.value() * 1e-9,
                 reverse_drop_v=self.reverse_drop.value(),
                 voltage_derating=self.derating.value(),
+                line_cycle=self.line_cycle if use_closed_loop else None,
+                switched_cycle=self.switched_cycle if use_switching else None,
             )
         except Exception as exc:
             self.summary.setText(f"Device comparison failed: {exc}")
+            self._last_comparison = None
+            self.hf_table.setRowCount(0)
+            self.slow_table.setRowCount(0)
+            self.hf_pick.clear()
+            self.slow_pick.clear()
+            self.rollup_text.setPlainText(f"No valid device loss result: {exc}")
             return
 
         self._last_comparison = comparison
+        self.note.setText('Switched source: direct signed physical branch I² and measured generic diode V*I; selected-device edge/Rds loss overlays do not rerun the generic circuit. Gate and diode paths include zero-crossing. Totals include modeled/known terms only; Qrr/recovery is unmodeled (not zero hardware loss). Built-in device data remain unverified.' if use_switching else 'Sizing/averaged source: CCM triangular ripple; zero-cross switching current can be unresolved. Built-in device data remain unverified.')
+        self.export_button.setEnabled(True)
         self.summary.setText(
             f"Vin={comparison.vin_rms_v:.2f} Vrms · Vbus={comparison.design.spec.bus_voltage_v:.1f} V · "
             f"Pout={comparison.design.spec.output_power_w/1000:.3f} kW · fs={comparison.design.spec.switching_frequency_hz/1e3:.2f} kHz · "
-            f"Tj={comparison.junction_temperature_c:.1f} °C · user library={self.database.user_path}"
+            f"Tj={comparison.junction_temperature_c:.1f} °C · source={comparison.waveform_source} · user library={self.database.user_path}"
         )
 
         self.hf_table.setRowCount(len(comparison.hf_devices))
@@ -562,6 +607,7 @@ class TTPLDeviceLossView(QWidget):
                 f"{loss.total_w:.3f} W",
                 "PASS" if loss.voltage_ok else "FAIL",
                 "PASS" if loss.current_ok else "FAIL",
+                f"{loss.diode_conduction_w:.6f}",
             )
             for col, value in enumerate(values):
                 self.hf_table.setItem(row, col, QTableWidgetItem(value))
@@ -583,12 +629,26 @@ class TTPLDeviceLossView(QWidget):
                 f"{loss.total_w:.3f} W",
                 "PASS" if loss.voltage_ok else "FAIL",
                 "PASS" if loss.current_ok else "FAIL",
+                f"{loss.diode_conduction_w:.6f}", f"{loss.switching_w:.6f}", f"{loss.coss_w:.6f}",
             )
             for col, value in enumerate(values):
                 self.slow_table.setItem(row, col, QTableWidgetItem(value))
             self.slow_pick.addItem(f"{d.part_number} · {loss.total_w:.3f} W", loss)
         self.slow_pick.blockSignals(False)
         self._update_rollup()
+
+    def _export_comparison(self) -> None:
+        comparison = self._last_comparison
+        if comparison is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export current device comparison", "pfc_device_comparison.json", "JSON (*.json)")
+        if path and self._last_comparison is comparison:
+            try:
+                Path(path).write_text(json.dumps(comparison.as_dict(),
+                                                ensure_ascii=False, indent=2), encoding="utf-8")
+            except (OSError, TypeError, ValueError) as exc:
+                QMessageBox.warning(self, "Export current device comparison", str(exc))
 
     def _update_rollup(self, *_args) -> None:
         comparison = self._last_comparison
@@ -603,6 +663,11 @@ class TTPLDeviceLossView(QWidget):
             hf=hf,
             slow=slow,
             inductor_self_loss_w=self._inductor_self_loss_w,
+            waveform_source=comparison.waveform_source,
+            capacitor_current_rms_a=comparison.capacitor_current_rms_a,
+            capacitor_ripple=comparison.capacitor_ripple,
+            power_factor=comparison.power_factor,
+            thd_percent=comparison.thd_percent,
         )
         self.rollup_text.setPlainText(rollup.format_text())
 

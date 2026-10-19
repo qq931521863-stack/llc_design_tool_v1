@@ -19,12 +19,14 @@ from PySide6.QtWidgets import (
 )
 
 from ...analysis.types import MultiFidelityAnalysis
+from ...i18n import t
 
 
 class ModelComparisonView(QWidget):
     """Work-point controls and tabular FHA/HB/TD error presentation."""
 
     analysis_requested = Signal(dict)
+    loss_report_requested = Signal()
 
     HEADERS = (
         "模型",
@@ -46,6 +48,8 @@ class ModelComparisonView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.analysis: MultiFidelityAnalysis | None = None
+        self._loss_report_available = False
+        self._busy = False
         layout = QVBoxLayout(self)
 
         controls = QHBoxLayout()
@@ -79,15 +83,25 @@ class ModelComparisonView(QWidget):
         self.hb_samples.setValue(1024)
         controls.addWidget(self.hb_samples)
 
+        controls.addStretch(1)
+        layout.addLayout(controls)
+        actions = QHBoxLayout()
         self.include_td = QCheckBox("运行分段时域参考")
         self.include_td.setChecked(True)
-        controls.addWidget(self.include_td)
+        actions.addWidget(self.include_td)
+        self.apply_td_losses = QCheckBox("将收敛 TD 波形用于当前点损耗")
+        self.apply_td_losses.setToolTip(t("TD 波形驱动器件、磁件与电容损耗；材料/热模型仍为工程估算，换流/ZVS 与选型约束保持 FHA"))
+        actions.addWidget(self.apply_td_losses)
         self.run_button = QPushButton("运行 FHA / HB / TD 对比")
         self.run_button.clicked.connect(
             lambda: self.analysis_requested.emit(self.options()))
-        controls.addWidget(self.run_button)
-        controls.addStretch(1)
-        layout.addLayout(controls)
+        actions.addWidget(self.run_button)
+        self.loss_report_button = QPushButton("导出当前 TD 损耗报告")
+        self.loss_report_button.setEnabled(False)
+        self.loss_report_button.clicked.connect(self.loss_report_requested.emit)
+        actions.addWidget(self.loss_report_button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
 
         note = QLabel(
             "FHA 用于快速设计；HB 对整流换相与高次谐波自洽求解；"
@@ -118,13 +132,23 @@ class ModelComparisonView(QWidget):
             "max_harmonic": maximum,
             "hb_samples": self.hb_samples.value(),
             "include_time_domain": self.include_td.isChecked(),
+            "apply_td_losses": self.apply_td_losses.isChecked(),
         }
 
     def set_nominal_work_point(self, vbus_v: float) -> None:
         self.vbus.setValue(vbus_v)
 
+    def set_loss_report_available(self, available: bool) -> None:
+        self._loss_report_available = available
+        self.loss_report_button.setEnabled(available and not self._busy)
+
     def set_busy(self, busy: bool) -> None:
+        self._busy = busy
         self.run_button.setEnabled(not busy)
+        for widget in (self.vbus, self.load_percent, self.max_harmonic,
+                       self.hb_samples, self.include_td, self.apply_td_losses):
+            widget.setEnabled(not busy)
+        self.loss_report_button.setEnabled(self._loss_report_available and not busy)
 
     @staticmethod
     def _item(value: str) -> QTableWidgetItem:

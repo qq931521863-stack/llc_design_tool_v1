@@ -96,6 +96,7 @@ class FRATuningMapWindow(QMainWindow):
         super().__init__(parent)
         self.setWindowTitle("FRA 实测迭代调参 · Kp × Ti")
         self.resize(1500, 950)
+        self._session_generation = 0
         self.session = Session()
         self.predictions = []
         root = QWidget(); self.setCentralWidget(root)
@@ -135,6 +136,7 @@ class FRATuningMapWindow(QMainWindow):
             self.add_scan(dialog.scan)
 
     def add_scan(self, scan):
+        self._session_generation += 1
         self.session.add(scan)
         self.sync_selector()
         self.refresh()
@@ -148,12 +150,24 @@ class FRATuningMapWindow(QMainWindow):
 
     def select_scan(self, index):
         if 0 <= index < len(self.session.scans):
+            if index != self.session.current_index:
+                self._session_generation += 1
             self.session.current_index = index
             self.refresh()
 
     def targets_changed(self):
+        self._session_generation += 1
         self.session.targets = Targets(self.fc.value(), self.pm.value(), self.gm.value())
         self.refresh()
+
+    def closeEvent(self, event):
+        self._session_generation += 1
+        super().closeEvent(event)
+
+    def _session_unchanged(self, session, generation, document):
+        # Scans and their arrays are mutable; identity alone cannot own an action.
+        return (generation == self._session_generation and self.session is session
+                and self.session.to_json() == document)
 
     def metric_text(self, scan):
         m = metrics(scan, targets=self.session.targets)
@@ -236,21 +250,26 @@ class FRATuningMapWindow(QMainWindow):
         self.canvas.draw_idle()
 
     def save_session(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Save FRA session", "fra-session.json", "JSON (*.json)")
-        if path:
-            try:
-                Path(path).write_text(self.session.to_json(), encoding="utf-8")
-            except (ValueError, OSError) as exc:
-                QMessageBox.warning(self, "Save failed", str(exc))
+        try:
+            session, generation = self.session, self._session_generation
+            document = session.to_json()
+            path, _ = QFileDialog.getSaveFileName(self, "Save FRA session", "fra-session.json", "JSON (*.json)")
+            if path and self._session_unchanged(session, generation, document):
+                Path(path).write_text(document, encoding="utf-8")
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, "Save failed", str(exc))
 
     def open_session(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open FRA session", "", "JSON (*.json)")
-        if not path:
-            return
         try:
+            session, generation = self.session, self._session_generation
+            document = session.to_json()
+            path, _ = QFileDialog.getOpenFileName(self, "Open FRA session", "", "JSON (*.json)")
+            if not path or not self._session_unchanged(session, generation, document):
+                return
             loaded = Session.from_json(Path(path).read_text(encoding="utf-8"))
         except (ValueError, OSError, KeyError, TypeError) as exc:
             QMessageBox.warning(self, "Open failed", str(exc)); return
+        self._session_generation += 1
         self.session = loaded
         for w, value in ((self.fc, loaded.targets.crossover_hz), (self.pm, loaded.targets.phase_margin_deg), (self.gm, loaded.targets.gain_margin_db)):
             w.blockSignals(True); w.setValue(value); w.blockSignals(False)
@@ -259,9 +278,12 @@ class FRATuningMapWindow(QMainWindow):
     def export_current(self):
         if not self.session.current:
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export measured scan", "fra-measured.csv", "CSV (*.csv)")
-        if path:
-            try:
-                Path(path).write_text(export_scan_csv(self.session.current), encoding="utf-8")
-            except OSError as exc:
-                QMessageBox.warning(self, "Export failed", str(exc))
+        try:
+            session, generation = self.session, self._session_generation
+            document = session.to_json()
+            content = export_scan_csv(session.current)
+            path, _ = QFileDialog.getSaveFileName(self, "Export measured scan", "fra-measured.csv", "CSV (*.csv)")
+            if path and self._session_unchanged(session, generation, document):
+                Path(path).write_text(content, encoding="utf-8")
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, "Export failed", str(exc))

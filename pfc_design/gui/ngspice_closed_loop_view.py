@@ -4,9 +4,12 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
+    QComboBox,
     QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
@@ -18,8 +21,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
 
 from pfc_design.control import PFCControlLabAnalysis, build_pfc_control_handoff
 from power_sim.spice import (
@@ -34,6 +35,7 @@ class TTPLNgSpiceClosedLoopView(QWidget):
     """Configure and visualize the exact-H(z) TTPL shared-ngspice path."""
 
     run_requested = Signal(object, object, object)
+    inputs_changed = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -41,6 +43,8 @@ class TTPLNgSpiceClosedLoopView(QWidget):
         self.result: TTPLSharedNgSpiceResult | None = None
         self.library: str | None = None
         self._busy = False
+        self.input_revision = 0
+        self.switched_cycle = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -83,6 +87,17 @@ class TTPLNgSpiceClosedLoopView(QWidget):
         self.run_button.clicked.connect(self._run)
         self.check_engine_button.clicked.connect(self._refresh_status)
         self._refresh_status()
+        for control in (self.duration_ms, self.phase_deg, self.max_step_us, self.output_step_us,
+                        self.timeout_s, self.vref_initial, self.vref_final, self.step_ms):
+            control.valueChanged.connect(self._inputs_changed)
+        self.record_history.currentIndexChanged.connect(self._inputs_changed)
+
+    def _inputs_changed(self, *_):
+        self.input_revision += 1
+        self.result = self.switched_cycle = None
+        self.summary.setPlainText('Simulation inputs changed; rerun the circuit. Previous switching consumer source invalidated.')
+        self.figure.clear(); self.canvas.draw_idle()
+        self.inputs_changed.emit()
 
     @staticmethod
     def _spin(lo: float, hi: float, decimals: int, value: float, suffix: str = "") -> QDoubleSpinBox:
@@ -101,17 +116,22 @@ class TTPLNgSpiceClosedLoopView(QWidget):
 
         sim_group = QGroupBox("Shared-ngspice transient")
         form = QFormLayout(sim_group)
-        self.duration_ms = self._spin(0.05, 100.0, 3, 0.50, " ms")
+        self.duration_ms = self._spin(0.05, 2000.0, 3, 0.50, " ms")
         self.phase_deg = self._spin(-360.0, 360.0, 2, 90.0, " deg")
         self.max_step_us = self._spin(0.0, 10.0, 4, 0.0, " us")
         self.output_step_us = self._spin(0.0, 20.0, 4, 0.0, " us")
-        self.timeout_s = self._spin(1.0, 600.0, 1, 120.0, " s")
+        self.timeout_s = self._spin(1.0, 3600.0, 1, 120.0, " s")
+        self.record_history = QComboBox()
+        self.record_history.addItem("Last 3 native line cycles",3)
+        self.record_history.addItem("Full native transient",None)
+        self.record_history.setToolTip("The circuit and controller always run continuously from the declared initial state. This only limits retained electrical records; all control commands remain recorded.")
         for label, widget in (
             ("Duration", self.duration_ms),
             ("Input phase at t=0", self.phase_deg),
             ("Max timestep (0=auto)", self.max_step_us),
             ("Output step (0=auto)", self.output_step_us),
             ("Wall timeout", self.timeout_s),
+            ("Electrical record", self.record_history),
         ):
             form.addRow(label, widget)
         layout.addWidget(sim_group)
@@ -166,6 +186,7 @@ class TTPLNgSpiceClosedLoopView(QWidget):
             self.run_button.setEnabled(True)
 
     def set_analysis(self, analysis: PFCControlLabAnalysis) -> None:
+        self._inputs_changed()
         self.analysis = analysis
         self.vref_initial.setValue(analysis.config.power_stage.bus_voltage_v)
         self.vref_final.setValue(analysis.config.power_stage.bus_voltage_v)
@@ -192,11 +213,15 @@ class TTPLNgSpiceClosedLoopView(QWidget):
             output_step_s=output_step,
             max_step_s=max_step,
             wall_timeout_s=self.timeout_s.value(),
+            retain_line_cycles=self.record_history.currentData(),
         )
         self.run_requested.emit(self.analysis, scenario, simulation)
 
     def set_simulation_result(self, result: TTPLSharedNgSpiceResult) -> None:
-        self.result = result
+        from pfc_design.engineering.switched_cycle import observe_switched_cycle
+        self.result = self.switched_cycle = None
+        observed = observe_switched_cycle(result)
+        self.result, self.switched_cycle = result, observed
         metrics = result.metrics
         pf_text = "n/a (run >= 1 line cycle)" if metrics.power_factor is None else f"{metrics.power_factor:.6f}"
         pin_text = "n/a" if metrics.real_input_power_w is None else f"{metrics.real_input_power_w:.2f} W"
@@ -209,7 +234,7 @@ class TTPLNgSpiceClosedLoopView(QWidget):
             + f"Controller redigitized : {result.metadata.get('controller_re_discretized')}\n"
             + f"Final Vbus             : {metrics.final_bus_voltage_v:.4f} V\n"
             + f"Tail Vbus ripple       : {metrics.bus_ripple_pp_v:.4f} Vpp\n"
-            + f"Peak |IL|              : {metrics.peak_inductor_current_a:.4f} A\n"
+            + f"Retained-record |IL|pk : {metrics.peak_inductor_current_a:.4f} A\n"
             + f"Iin RMS                : {irms_text}\n"
             + f"Pin                     : {pin_text}\n"
             + f"PF                      : {pf_text}\n"
@@ -219,6 +244,17 @@ class TTPLNgSpiceClosedLoopView(QWidget):
             + "MODEL BOUNDARY\n"
             + str(result.metadata.get("nonlinear_controller_semantics", ""))
         )
+        source = self.switched_cycle
+        self.summary.appendPlainText(
+            f"\nSWITCHING SOURCE: {source.convergence['status']}\n"
+            f"Identity: {source.source_identity}\n"
+            f"Actual load: {result.metadata.get('load_model')}\n"
+            f"Native horizon: {result.metadata.get('native_stop_time_s',result.vectors['time'][-1]):.17g} s; requested {result.metadata['simulation']['duration_s']:.17g} s\n"
+            f"Retained electrical start: {result.metadata.get('retained_raw_start_s',0):.9g} s (continuous simulation from t=0)\n"
+            f"Direct capacitor RMS: {source.capacitor_current_rms_a:.6f} A\n"
+            f"KCL bus/SW residual: {source.kcl_bus_peak_error_a:.3e} / {source.kcl_switch_peak_error_a:.3e} A\n"
+            f"Qualification: {source.convergence}\n"
+            'Only a complete converged device-law/energy-qualified cycle can feed device/capacitor/thermal pages. Generic circuit and unverified selected-device data remain screening assumptions.')
         self._plot(result)
         self.status.setText("Shared-ngspice run completed. Exact H(z) coefficient identity was checked before simulation.")
 

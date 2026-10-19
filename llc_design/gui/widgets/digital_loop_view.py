@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -77,10 +77,13 @@ class DigitalLoopView(QWidget):
     """PI/PIF/2P2Z, FM LUT, sensing and complete open-loop analysis."""
 
     analysis_requested = Signal(dict)
+    inputs_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.result: DigitalLoopAnalysis | None = None
+        self.input_revision = 0
+        self._busy = False
         self._bode_cursor: BodeCursor | None = None
         self._cursor_frequency_hz: float | None = None
 
@@ -180,6 +183,37 @@ class DigitalLoopView(QWidget):
         self.inspector_toggle.toggled.connect(self._toggle_inspector)
 
         self._show_parameter_page("controller", update_diagram=True)
+        # Only engineering inputs belong to this lifetime. Navigation, display
+        # selection, cursor motion and zoom must preserve a completed analysis.
+        for widget in self.parameter_stack.findChildren(QWidget):
+            if isinstance(widget, (QDoubleSpinBox, QSpinBox)):
+                widget.valueChanged.connect(self.invalidate_analysis)
+            elif isinstance(widget, QComboBox):
+                widget.currentIndexChanged.connect(self.invalidate_analysis)
+            elif isinstance(widget, QCheckBox):
+                widget.toggled.connect(self.invalidate_analysis)
+            elif isinstance(widget, QPlainTextEdit) and not widget.isReadOnly():
+                widget.textChanged.connect(self.invalidate_analysis)
+        self.external_controller_check.toggled.connect(self.invalidate_analysis)
+        self.codegen_button.setEnabled(False)
+
+    def invalidate_analysis(self, *_args) -> None:
+        """Retire all consumers immediately, including queued worker results."""
+        self.input_revision += 1
+        self.result = None
+        self.research_export.set_analysis(None)
+        self.codegen_button.setEnabled(False)
+        self.text.clear()
+        self.loop_chain_text.clear()
+        self.cursor_status.clear()
+        self.phase_budget_label.clear()
+        self._cursor_frequency_hz = None
+        if self._bode_cursor is not None:
+            self._bode_cursor.disconnect()
+            self._bode_cursor = None
+        self.figure.clear()
+        self.canvas.draw_idle()
+        self.inputs_changed.emit()
 
     def _open_diagram_fullscreen(self) -> None:
         """Open a large vector copy of the control chain for focused inspection."""
@@ -741,15 +775,18 @@ class DigitalLoopView(QWidget):
             f"已联动：{self._external_controller_label} | Fs={fs/1e3:.3f} kHz | "
             f"H(z) 系数直接用于 LLC 小信号闭环"
         )
+        # Same-Fs, same-checkbox replacement still changes the actual b/a.
+        self.invalidate_analysis()
 
     def set_nominal_work_point(self, vbus_v: float) -> None:
         self.vbus.setValue(vbus_v)
 
     def set_busy(self, busy: bool) -> None:
+        self._busy = busy
         self.run_button.setEnabled(not busy)
         self.research_export.set_busy(busy)
         if hasattr(self, "codegen_button"):
-            self.codegen_button.setEnabled(not busy)
+            self.codegen_button.setEnabled(not busy and self.result is not None)
 
     def _controller_config(self, sample_time_s: float):
         kind = self.controller_kind.currentData()
@@ -772,20 +809,21 @@ class DigitalLoopView(QWidget):
             a1=self.a1.value(), a2=self.a2.value(), **common)
 
     def _generate_c99(self) -> None:
-        if self.result is None:
+        if self.result is None or self._busy:
             QMessageBox.information(self, t("C99 代码生成"), t("请先建立 / 更新完整数字电压环。"))
             return
+        analysis = self.result
         directory = QFileDialog.getExistingDirectory(self, "选择 LLC C99 输出目录")
-        if not directory:
+        if not directory or self.result is not analysis or self._busy:
             return
         try:
-            if self.result.controller_config is None:
+            if analysis.controller_config is None:
                 tf = ToolDigitalTransferFunction(
-                    tuple(float(v) for v in self.result.controller.numerator),
-                    tuple(float(v) for v in self.result.controller.denominator),
-                    1.0 / self.result.controller.sample_time_s,
-                    name=self.result.controller.name,
-                    source=self.result.controller_source,
+                    tuple(float(v) for v in analysis.controller.numerator),
+                    tuple(float(v) for v in analysis.controller.denominator),
+                    1.0 / analysis.controller.sample_time_s,
+                    name=analysis.controller.name,
+                    source=analysis.controller_source,
                 )
                 exported = export_c99_filter(tf, Path(directory), prefix="LLC_VLOOP")
                 verification = verify_c99_filter(tf, exported)
@@ -796,7 +834,7 @@ class DigitalLoopView(QWidget):
                 )
                 QMessageBox.information(self, t("C99 代码生成完成"), detail)
                 return
-            result = generate_llc_control_code(self.result, Path(directory) / "llc_control_generated")
+            result = generate_llc_control_code(analysis, Path(directory) / "llc_control_generated")
         except Exception as exc:
             show_operation_issue(self, t("C99 代码生成失败"), str(exc), critical=False)
             return
@@ -873,6 +911,7 @@ class DigitalLoopView(QWidget):
         }
 
     def _request(self) -> None:
+        self.invalidate_analysis()
         try:
             self.analysis_requested.emit(self._analysis_options())
         except Exception as exc:
@@ -884,7 +923,10 @@ class DigitalLoopView(QWidget):
         self.external_controller_status.setText(
             f"闭环控制器来源：{result.controller_source} | C(z)={result.controller.name}"
         )
-        self.pcmd.setValue(result.fm_operating_point.command_pu)
+        # This displays the solved operating point; it is not a user edit.
+        with QSignalBlocker(self.pcmd):
+            self.pcmd.setValue(result.fm_operating_point.command_pu)
+        self.codegen_button.setEnabled(not self._busy)
         self._cursor_frequency_hz = result.margins_nominal_delay.critical_gain_crossover_hz
         self.refresh()
 

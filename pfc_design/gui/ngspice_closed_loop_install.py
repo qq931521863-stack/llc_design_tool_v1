@@ -13,6 +13,7 @@ def install_ttpl_ngspice_closed_loop_stage(pfc_window) -> TTPLNgSpiceClosedLoopV
     workbench.ngspice_closed_loop_view = view
     workbench.tabs.addTab(view, "8. Closed-Loop Verification")
     view.run_requested.connect(pfc_window.run_ttpl_shared_ngspice)
+    view.inputs_changed.connect(pfc_window._invalidate_switched_consumers)
     return view
 
 

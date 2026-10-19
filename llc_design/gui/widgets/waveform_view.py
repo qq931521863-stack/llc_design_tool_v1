@@ -8,7 +8,10 @@ independent from the waveform engine.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from typing import ClassVar
+
+import pyqtgraph as pg
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -22,12 +25,17 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-import pyqtgraph as pg
 from shiboken6 import isValid
 
 from ...dynamics.waveforms import WaveformBundle
 
 pg.setConfigOptions(antialias=True)
+
+
+class _WorkPointSpinBox(QDoubleSpinBox):
+    """Keep IEEE double input precision without padding ordinary values with zeros."""
+    def textFromValue(self, value):
+        return str(value)
 
 
 class WaveformView(QWidget):
@@ -36,6 +44,8 @@ class WaveformView(QWidget):
     fast_requested = Signal(dict)
     harmonic_requested = Signal(dict)
     detailed_requested = Signal(dict)
+    inputs_changed = Signal()
+    export_requested = Signal()
 
     GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
@@ -96,13 +106,22 @@ class WaveformView(QWidget):
         ),
     )
 
-    COMPONENT_GROUP_INDEX = {
-        "bridge": 1,
-        "lr": 1,
-        "cr": 1,
-        "transformer": 2,
-        "sr": 5,
-        "output": 3,
+    COMPONENT_SIGNALS: ClassVar[dict[str, tuple[str, ...]]] = {
+        "bus": ("v_leg_a", "v_leg_b", "v_bridge"),
+        "bridge": ("v_bridge", "i_resonant"),
+        "lr": ("v_resonant_inductor", "i_resonant"),
+        "cr": ("v_resonant_cap", "i_resonant"),
+        "lm": ("v_transformer_primary", "i_magnetizing"),
+        "primary": ("v_transformer_primary", "i_primary_load"),
+        "secondary": ("v_transformer_secondary", "i_transformer_secondary"),
+        "transformer": ("v_transformer_primary", "i_transformer_primary",
+                        "v_transformer_secondary", "i_transformer_secondary"),
+        "co": ("v_output_cap_internal", "i_output_cap"),
+        "load": ("v_output", "i_load_output"),
+        "output": ("v_output", "i_output_cap", "i_load_output"),
+        "sr": ("v_rectified", "i_rectified"),
+        **{f"q{i}": (f"vds_q{i}", f"ids_q{i}") for i in range(1, 5)},
+        **{f"sr{i}": (f"vds_sr{i}", f"ids_sr{i}") for i in range(1, 5)},
     }
 
     def __init__(self, parent=None):
@@ -112,20 +131,25 @@ class WaveformView(QWidget):
         self._cursor_a_lines: list[pg.InfiniteLine] = []
         self._cursor_b_lines: list[pg.InfiniteLine] = []
         self._cursor_guard = False
+        self.selected_component = ""
+        self.primary_topology = "FULL_BRIDGE"
+        self.solver = "fast"
+        self._exact_work_point = {}
+        self.component_context = {}
 
         layout = QVBoxLayout(self)
         controls = QHBoxLayout()
         controls.addWidget(QLabel("工作点母线"))
-        self.vbus = QDoubleSpinBox()
+        self.vbus = _WorkPointSpinBox()
         self.vbus.setRange(20.0, 2000.0)
-        self.vbus.setDecimals(2)
+        self.vbus.setDecimals(17)
         self.vbus.setValue(400.0)
         self.vbus.setSuffix(" V")
         controls.addWidget(self.vbus)
         controls.addWidget(QLabel("负载"))
-        self.load_percent = QDoubleSpinBox()
+        self.load_percent = _WorkPointSpinBox()
         self.load_percent.setRange(1.0, 150.0)
-        self.load_percent.setDecimals(1)
+        self.load_percent.setDecimals(17)
         self.load_percent.setValue(100.0)
         self.load_percent.setSuffix(" %")
         controls.addWidget(self.load_percent)
@@ -136,15 +160,26 @@ class WaveformView(QWidget):
         self.fast_button = QPushButton("快速 EDF 波形")
         self.harmonic_button = QPushButton("多谐波 HB 波形")
         self.detail_button = QPushButton("详细分段波形")
-        self.fast_button.clicked.connect(lambda: self.fast_requested.emit(self.work_point()))
-        self.harmonic_button.clicked.connect(
-            lambda: self.harmonic_requested.emit(self.work_point()))
-        self.detail_button.clicked.connect(lambda: self.detailed_requested.emit(self.work_point()))
+        self.fast_button.clicked.connect(lambda: self._request("fast"))
+        self.harmonic_button.clicked.connect(lambda: self._request("harmonic"))
+        self.detail_button.clicked.connect(lambda: self._request("detailed"))
         controls.addWidget(self.fast_button)
         controls.addWidget(self.harmonic_button)
         controls.addWidget(self.detail_button)
         controls.addStretch(1)
         layout.addLayout(controls)
+        source_row = QHBoxLayout()
+        self.source_label = QLabel("尚无当前工况结果；修改输入后请重新计算。")
+        self.source_label.setWordWrap(True)
+        source_row.addWidget(self.source_label, 1)
+        self.export_button = QPushButton("导出当前波形与报告")
+        self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self.export_requested)
+        source_row.addWidget(self.export_button)
+        layout.addLayout(source_row)
+        self.component_label = QLabel("器件：波形组；损耗与约束仅可引用同工况的独立分析。")
+        self.component_label.setWordWrap(True)
+        layout.addWidget(self.component_label)
 
         cursor_controls = QHBoxLayout()
         cursor_controls.addWidget(QLabel("游标 A"))
@@ -176,10 +211,10 @@ class WaveformView(QWidget):
         graphics_scroll.setWidget(self.graphics)
         layout.addWidget(graphics_scroll, 1)
 
-        self.statistics = QTableWidget(0, 12)
+        self.statistics = QTableWidget(0, 13)
         self.statistics.setHorizontalHeaderLabels(
             [
-                "信号", "单位", "频率", "平均", "RMS", "最小", "最大",
+                "信号", "单位", "频率", "平均", "总 RMS", "AC RMS", "最小", "最大",
                 "峰峰值", "绝对峰值", "峰值因数", "基波 RMS", "THD",
             ]
         )
@@ -190,18 +225,62 @@ class WaveformView(QWidget):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.statistics)
 
-        self.group_combo.currentIndexChanged.connect(self.refresh)
+        self.group_combo.currentIndexChanged.connect(self._group_changed)
+        self.vbus.valueChanged.connect(lambda: self._work_point_changed("vbus_v"))
+        self.load_percent.valueChanged.connect(lambda: self._work_point_changed("load_fraction"))
         self.cursor_a_us.valueChanged.connect(self._cursor_spin_changed)
         self.cursor_b_us.valueChanged.connect(self._cursor_spin_changed)
 
     def work_point(self) -> dict[str, float]:
         return {
-            "vbus_v": self.vbus.value(),
-            "load_fraction": self.load_percent.value() / 100.0,
+            "vbus_v": self._exact_work_point.get("vbus_v", self.vbus.value()),
+            "load_fraction": self._exact_work_point.get("load_fraction", self.load_percent.value() / 100.0),
         }
 
     def set_nominal_work_point(self, vbus_v: float) -> None:
-        self.vbus.setValue(vbus_v)
+        self.set_work_point({"vbus_v": vbus_v, "load_fraction": 1.0})
+
+    def set_work_point(self, work_point: dict) -> None:
+        self._exact_work_point = dict(work_point)
+        with QSignalBlocker(self.vbus), QSignalBlocker(self.load_percent):
+            self.vbus.setValue(work_point["vbus_v"])
+            self.load_percent.setValue(work_point["load_fraction"] * 100)
+        self._work_point_changed()
+
+    def _work_point_changed(self, key=None) -> None:
+        if key is not None:
+            self._exact_work_point.pop(key, None)
+        self.invalidate()
+        self.inputs_changed.emit()
+
+    def invalidate(self) -> None:
+        self.bundle = None
+        self.component_context = {}
+        self.export_button.setEnabled(False)
+        self.source_label.setText("当前输入尚未计算，旧波形与导出已失效；请重新计算。")
+        self.refresh()
+
+    def _request(self, solver: str) -> None:
+        changed = self.solver != solver
+        self.solver = solver
+        if changed:
+            self._work_point_changed()
+        else:
+            self.invalidate()
+        {"fast": self.fast_requested, "harmonic": self.harmonic_requested,
+         "detailed": self.detailed_requested}[solver].emit(self.work_point())
+
+    def request_current(self) -> None:
+        self._request(self.solver)
+
+    def set_primary_topology(self, topology) -> None:
+        self.primary_topology = getattr(topology, "value", topology)
+        if self.primary_topology == "HALF_BRIDGE" and self.selected_component in {"q3", "q4"}:
+            self.selected_component = ""
+
+    def _group_changed(self, *_args) -> None:
+        self.selected_component = ""
+        self.refresh()
 
     def set_busy(self, busy: bool) -> None:
         self.fast_button.setEnabled(not busy)
@@ -210,6 +289,16 @@ class WaveformView(QWidget):
 
     def set_bundle(self, bundle: WaveformBundle) -> None:
         self.bundle = bundle
+        self.export_button.setEnabled(True)
+        metadata = bundle.metadata
+        self.source_label.setText(
+            f"来源：{bundle.model_name} | {metadata.get('vbus_v', self.vbus.value()):g} V | "
+            f"负载 {100 * float(metadata.get('load_fraction', self.load_percent.value()/100)):g}% | "
+            f"fs={bundle.switching_frequency_hz/1000:.6g} kHz | "
+            f"请求 {str(metadata.get('request_identity', '未附来源身份'))[:16]}\n"
+            + "；".join(bundle.warnings)
+            + ("\n使用冻结等效电气输入重算；保存的来源不恢复 TD 损耗验证权限。"
+               if "plant_inputs" in metadata else ""))
         if len(bundle.time_s):
             start = float(bundle.time_s[0] * 1e6)
             stop = float(bundle.time_s[-1] * 1e6)
@@ -218,15 +307,18 @@ class WaveformView(QWidget):
         self.refresh()
 
     def select_component(self, key: str) -> None:
-        index = self.COMPONENT_GROUP_INDEX.get(key)
-        if index is not None:
-            self.group_combo.setCurrentIndex(index)
+        if key in self.COMPONENT_SIGNALS:
+            self.selected_component = key
+            self.refresh()
 
     def _selected_keys(self) -> tuple[str, ...]:
         if self.bundle is None:
             return ()
-        _, keys = self.GROUPS[self.group_combo.currentIndex()]
-        return tuple(key for key in keys if key in self.bundle.signals)
+        keys = self.COMPONENT_SIGNALS.get(self.selected_component)
+        if keys is None:
+            _, keys = self.GROUPS[self.group_combo.currentIndex()]
+        return tuple(key for key in keys if key in self.bundle.signals and not (
+            self.primary_topology == "HALF_BRIDGE" and key.endswith(("_q3", "_q4"))))
 
     def _cursor_spin_changed(self) -> None:
         if self._cursor_guard:
@@ -270,14 +362,28 @@ class WaveformView(QWidget):
         )
 
     def refresh(self) -> None:
-        self.graphics.clear()
+        evidence = self.component_context.get(self.selected_component, {})
+        self.component_label.setText(
+            f"器件：{self.selected_component or self.group_combo.currentText()} | "
+            + evidence.get("summary", "损耗/约束：无同源计算，不能引用其他工况。"))
         self.statistics.setRowCount(0)
         self._plots.clear()
         self._cursor_a_lines.clear()
         self._cursor_b_lines.clear()
+        # A caller may legitimately close the graphics child before its owner.
+        # Clear result authority above, but never touch its deleted Qt scene.
+        if not isValid(self.graphics) or self.graphics.closed or not isValid(self.graphics.ci):
+            return
+        self.graphics.clear()
         if self.bundle is None:
+            self.graphics.setMinimumHeight(0)
+            self.graphics.ci.setGeometry(self.graphics.range)
             return
         keys = self._selected_keys()
+        # QGraphicsLayout retains its last expanded geometry after clear().
+        # Resize the outer scroll child as well, otherwise longer groups clip
+        # silently and selecting a two-trace device retains the old tall layout.
+        self.graphics.setMinimumHeight(20 + 190 * len(keys))
         time_us = self.bundle.time_s * 1e6
         previous: pg.PlotItem | None = None
         for row, key in enumerate(keys):
@@ -290,7 +396,7 @@ class WaveformView(QWidget):
                 plot.setLabel("bottom", "Time", units="µs")
             if previous is not None:
                 plot.setXLink(previous)
-            plot.plot(time_us, signal.values, pen=pg.mkPen(width=3.0))
+            plot.plot(time_us, signal.values, pen=pg.mkPen("#1769aa", width=2.2))
             line_a = pg.InfiniteLine(
                 pos=self.cursor_a_us.value(), angle=90, movable=(row == 0),
                 pen=pg.mkPen((30, 120, 220), width=1.4), label="A" if row == 0 else None,
@@ -320,6 +426,7 @@ class WaveformView(QWidget):
                 f"{stats.frequency_hz/1e3:.7g} kHz",
                 f"{stats.average:.8g}",
                 f"{stats.rms:.8g}",
+                f"{stats.ac_rms:.8g}",
                 f"{stats.minimum:.8g}",
                 f"{stats.maximum:.8g}",
                 f"{stats.peak_to_peak:.8g}",
@@ -332,4 +439,5 @@ class WaveformView(QWidget):
                 item = QTableWidgetItem(value)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.statistics.setItem(table_row, column, item)
+        self.graphics.ci.setGeometry(self.graphics.range)
         self._update_cursor_measurement()

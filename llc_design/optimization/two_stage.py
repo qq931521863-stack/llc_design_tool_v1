@@ -135,6 +135,18 @@ class TwoStageLLCOptimizer:
                         {}, True, "FHA↔TD MODEL_VALIDITY FAIL",
                     ))
                     continue
+                try:
+                    td_results = [point.td for point in report.points]
+                    if any(result is None for result in td_results):
+                        raise ValueError("Stage-B time-domain result is missing")
+                    analysis = self.analyzer.with_time_domain_losses(analysis, td_results)
+                except ValueError as exc:
+                    verified.append(VerifiedCandidate(
+                        spec, analysis, env_status, ModelValidity.UNKNOWN, None,
+                        analysis.worst_loss.total_loss_w, analysis.minimum_efficiency.efficiency,
+                        {}, True, f"TD loss unavailable: {exc}",
+                    ))
+                    continue
 
             primary = self.analyzer.device_db.get_primary(spec.primary_device)
             worst_zvs = None

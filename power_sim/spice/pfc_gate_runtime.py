@@ -14,9 +14,9 @@ separate hardware-fidelity layer.
 """
 from __future__ import annotations
 
+import math
 from bisect import bisect_right
 from dataclasses import dataclass
-import math
 
 from .pfc import DutyTimeline, TTPLSpiceConfig
 
@@ -49,14 +49,15 @@ class TTPLCommutationTimeline:
             )
         ]
 
+        self._starts = [0.0]
+
     @property
     def segments(self) -> tuple[TTPLCommutationSegment, ...]:
         return tuple(self._segments)
 
     def command_at(self, time_s: float) -> TTPLCommutationSegment:
         t = float(time_s)
-        starts = [segment.start_time_s for segment in self._segments]
-        index = max(0, bisect_right(starts, t) - 1)
+        index = max(0, bisect_right(self._starts, t) - 1)
         return self._segments[index]
 
     def set_command(
@@ -82,6 +83,7 @@ class TTPLCommutationTimeline:
             raise ValueError("commutation commands must be appended in nondecreasing time order")
         if abs(t - last.start_time_s) <= 1e-15:
             self._segments[-1] = new
+            self._starts[-1] = t
         elif (
             new.state_code == last.state_code
             and new.lf_state == last.lf_state
@@ -91,6 +93,7 @@ class TTPLCommutationTimeline:
             return
         else:
             self._segments.append(new)
+            self._starts.append(t)
 
 
 class TTPLFirmwareGateScheduler:

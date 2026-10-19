@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 from functools import lru_cache
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -53,12 +54,15 @@ def _candidate(view, margins):
     return view.selected_point
 
 
-def _llc_window(monkeypatch):
+def _llc_window(monkeypatch, pending_workers=None):
     from llc_design.core.spec import LLCDesignSpec
     from llc_design.gui.main_window import LLCMainWindow
     from llc_design.gui.solution_map_install import install_llc_solution_map
     window = LLCMainWindow(LLCDesignSpec())
-    monkeypatch.setattr(window, "_run_worker", lambda label, function, callback: callback(function()))
+    if pending_workers is None:
+        monkeypatch.setattr(window, "_run_worker", lambda label, function, callback: callback(function()))
+    else:
+        window.thread_pool = SimpleNamespace(start=pending_workers.append)
     view = install_llc_solution_map(window)
     window._digital_loop_ready(_llc_analysis())
     return window, view
@@ -140,19 +144,35 @@ def test_llc_candidate_apply_and_next_run_keep_exact_controller_and_spice(app, m
 
 
 def test_llc_input_edits_and_inflight_changes_invalidate_candidate(app, monkeypatch):
-    window, view = _llc_window(monkeypatch)
+    pending = []
+    window, view = _llc_window(monkeypatch, pending_workers=pending)
     original = window.digital_loop_analysis
     _candidate(view, original.margins_nominal_delay)
+    before_controller = window.digital_loop_view._analysis_options()["loop"]["controller_config"]
     window.digital_loop_view.adc_r.setValue(window.digital_loop_view.adc_r.value() + 1)
     assert not view.sources
     assert not view.apply_button.isEnabled()
     view._apply_selected()
-    assert window.digital_loop_analysis is original
-    window.digital_loop_view.set_busy(True)
+    assert window.digital_loop_analysis is None
+    assert window.digital_loop_view.result is None
+    assert window.digital_loop_view.research_export.analysis is None
+    assert window.digital_loop_view._analysis_options()["loop"]["controller_config"] == before_controller
+    # Retain the real FunctionWorker and revision-bound delivery path. Only
+    # scheduling is controlled so the input edit deterministically precedes delivery.
+    window.digital_loop_view.request_analysis()
+    assert len(pending) == 1
+    worker = pending.pop()
+    completed = worker.function()
     window.fields["output_capacitance_f"].setValue(window.fields["output_capacitance_f"].value() + 1)
-    window._digital_loop_ready(original)
+    worker.signals.result.emit(completed)
+    worker.signals.finished.emit()
+    assert window.digital_loop_analysis is None
+    assert window.digital_loop_view.result is None
+    assert window.digital_loop_view.research_export.analysis is None
     assert not view.sources
-    assert "during analysis" in view.details.toPlainText()
+    assert not window.digital_loop_view.codegen_button.isEnabled()
+    assert not window._active_workers
+    assert "Discarded result: power-stage inputs changed" in window.log_text.toPlainText()
     window.close()
 
 
@@ -251,7 +271,11 @@ def test_llc_guided_reedit_preserves_exact_pi_at_new_sample_rate(app, monkeypatc
                          controller=replace(definition.controller, design_mode="auto",
                                             target_crossover_hz=3.0, target_phase_margin_deg=93.0))
     apply_definition_to_llc_window(window, definition)
-    assert window.digital_loop_analysis.controller_config is adopted
+    assert window.digital_loop_analysis is None
+    pending_controller = window.digital_loop_view._solution_map_current_controller()
+    assert pending_controller.kp == adopted.kp
+    assert pending_controller.ti_s == adopted.ti_s
+    assert pending_controller.sample_time_s == 1 / sample_rate
     window.digital_loop_view.request_analysis()
     rebuilt = window.digital_loop_analysis
     assert rebuilt.controller_config.kp == adopted.kp
@@ -510,6 +534,15 @@ def test_llc_spec_save_load_clears_hidden_field_stale_candidates_and_cancel_pres
         assert not view._retained_sources
         assert not view.apply_button.isEnabled()
         view._apply_selected()
-        assert window.digital_loop_analysis is original
+        assert window.digital_loop_analysis is None
+        assert window.digital_loop_view.research_export.analysis is None
+        # The existing controller input survives; only its stale plant result
+        # is retired. A real rebuild must use the restored hidden plant value.
+        window.digital_loop_view.request_analysis()
+        rebuilt = window.digital_loop_analysis
+        assert rebuilt is not None and rebuilt is not original
+        assert rebuilt.small_signal.spec.resonant_cap_esr_ohm == 0.04
+        np.testing.assert_array_equal(rebuilt.controller.numerator, original.controller.numerator)
+        np.testing.assert_array_equal(rebuilt.controller.denominator, original.controller.denominator)
     finally:
         window.close()

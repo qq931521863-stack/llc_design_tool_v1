@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pfc_design.engineering.capacitor_ripple import PFCCapacitorRipple
 
 from pfc_design.engineering.device_loss import TTPLHFDeviceLoss, TTPLSlowDeviceLoss
 
@@ -13,6 +17,11 @@ class PFCDeviceLossRollup:
     hf: TTPLHFDeviceLoss
     slow: TTPLSlowDeviceLoss
     inductor_self_loss_w: float | None = None
+    waveform_source: str = "ideal_sizing_half_cycle"
+    capacitor_current_rms_a: float | None = None
+    power_factor: float | None = None
+    thd_percent: float | None = None
+    capacitor_ripple: PFCCapacitorRipple | None = None
 
     def hf_buckets(self) -> dict[str, float]:
         return {
@@ -21,6 +30,7 @@ class PFCDeviceLossRollup:
             "hf_sr_conduction_w": self.hf.sr_conduction_w,
             "hf_sr_switching_w": self.hf.sr_switching_w,
             "hf_deadtime_reverse_w": self.hf.deadtime_reverse_w,
+            "hf_measured_diode_w": self.hf.diode_conduction_w,
             "hf_coss_w": self.hf.coss_w,
             "hf_gate_drive_w": self.hf.gate_drive_w,
         }
@@ -29,6 +39,9 @@ class PFCDeviceLossRollup:
         return {
             "slow_conduction_w": self.slow.conduction_w,
             "slow_gate_drive_w": self.slow.gate_drive_w,
+            "slow_measured_diode_w": self.slow.diode_conduction_w,
+            "slow_switching_w": self.slow.switching_w,
+            "slow_coss_w": self.slow.coss_w,
         }
 
     def device_subtotal_w(self) -> float:
@@ -51,6 +64,7 @@ class PFCDeviceLossRollup:
             "PFC DEVICE LOSS ROLLUP (TTPL)",
             "=" * 72,
             f"Work point : {self.workpoint} @ Vin={self.vin_rms_v:.3g} Vrms",
+            f"Waveform source : {self.waveform_source}",
             "",
             "Counting notes (do not multiply these rows again):",
             "  HF half-bridge: active+SR conduction/switching already cover both",
@@ -77,8 +91,26 @@ class PFCDeviceLossRollup:
         lines.append(f"{'Slow leg subtotal':<32} {self.slow.total_w:12.5f}")
         lines.extend([
             "",
-            f"{'Semiconductor system total':<32} {self.system_device_total_w():12.5f}",
+            f"{('Modeled semiconductor subtotal' if self.waveform_source == 'shared_ngspice_signed_switching_cycle' else 'Semiconductor system total'):<32} {self.system_device_total_w():12.5f}",
         ])
+        if self.waveform_source == "shared_ngspice_signed_switching_cycle":
+            lines.extend(["Qrr/recovery: UNMODELED, not zero hardware loss; generic memoryless diode has no stored charge.",
+                          "Selected Eon/Eoff may embed unknown recovery; no extra Qrr term is asserted.",
+                          "THD scope: line harmonic orders 2..25 relative to fundamental; PWM-band distortion excluded."])
+        if self.capacitor_current_rms_a is not None:
+            lines.extend([
+                (f"Signed switching capacitor RMS : {self.capacitor_current_rms_a:.6g} A (direct branch, same identity/time weights)" if self.waveform_source == "shared_ngspice_signed_switching_cycle" else f"Averaged capacitor RMS : {self.capacitor_current_rms_a:.6g} A (HF moments shown separately)"),
+                f"Same-cycle PF / THD : {self.power_factor:.6g} / {self.thd_percent:.6g}%",
+                "Capacitor ESR is excluded from this semiconductor subtotal; see Capacitor / Thermal for the constant-ESR screen.",
+            ])
+        if self.capacitor_ripple is not None:
+            cap = self.capacitor_ripple
+            scope = "local CCM reconstruction" if cap.complete else "PARTIAL model; complete RMS unknown"
+            lines.extend([
+                f"Known-model capacitor RMS : {cap.known_model_current_rms_a:.6g} A ({scope})",
+                f"Known PWM ripple RMS : {cap.known_switching_current_rms_a:.6g} A; unresolved samples: {cap.unresolved_samples}/{len(cap.valid_sample_mask)}",
+                "Local ideal PWM/triangular model; zero-crossing commutation and frequency-dependent ESR require separate evidence.",
+            ])
         if self.inductor_self_loss_w is not None:
             lines.extend([
                 f"{'Inductor-self (component)':<32} {self.inductor_self_loss_w:12.5f}",

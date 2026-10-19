@@ -36,6 +36,7 @@ from power_control_tools.gui.fra_advanced import install_advanced_fra_actions
 from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
 from power_control_tools.gui.main_window import ControlToolsMainWindow
 from power_control_tools.system_definition import SystemTopology
+from power_stage_design.gui import PowerStageMainWindow
 
 
 class _LauncherCard(QFrame):
@@ -202,6 +203,11 @@ class WorkspaceSelectionDialog(QDialog):
         grid.addWidget(control, 1, 0)
         grid.addWidget(fra, 1, 1)
         grid.addWidget(dab, 1, 2)
+        psd = QPushButton("Power Stage Designer · 通用功率级与工具箱")
+        psd.setObjectName("power_stage_designer_button")
+        psd.setMinimumHeight(42)
+        psd.clicked.connect(lambda: self._select("power_stage"))
+        grid.addWidget(psd, 2, 0, 1, 3)
         for column in range(3):
             grid.setColumnStretch(column, 1)
         root.addLayout(grid, 1)
@@ -228,7 +234,7 @@ class WorkspaceSelectionDialog(QDialog):
 class WorkspaceApplicationController:
     """Own top-level windows and switch without destroying user state."""
 
-    def __init__(self, initial_spec: LLCDesignSpec) -> None:
+    def __init__(self, initial_spec: LLCDesignSpec, *, power_stage_window=None) -> None:
         self.llc_window = LLCMainWindow(initial_spec)
         install_device_library(self.llc_window)
         install_closed_loop_verification(self.llc_window)
@@ -239,6 +245,9 @@ class WorkspaceApplicationController:
         self.control_window = ControlToolsMainWindow()
         self.fra_window = FRALoopDesignerWindow()
         install_advanced_fra_actions(self.fra_window)
+        self.power_stage_window = PowerStageMainWindow() if power_stage_window is None else power_stage_window
+        self.power_stage_window.workspace_switch_requested.connect(self._handle_request)
+        self.power_stage_window.open_existing_llc = self._show_psd_llc
         self.active_workspace: str | None = None
         self.llc_window.workspace_switch_requested.connect(self._handle_request)
         self.pfc_window.workspace_switch_requested.connect(self._handle_request)
@@ -275,12 +284,13 @@ class WorkspaceApplicationController:
         self.control_window.hide()
         self.fra_window.hide()
         self.dab_window.hide()
+        self.power_stage_window.hide()
 
     def show_workspace(self, workspace: str) -> None:
         if workspace == "system_modeling":
             self._run_system_modeling(previous=self.active_workspace)
             return
-        if workspace not in {"llc", "pfc", "control", "fra", "dab"}:
+        if workspace not in {"llc", "pfc", "control", "fra", "dab", "power_stage"}:
             raise ValueError(f"unsupported workspace: {workspace}")
         self._hide_all()
         target = {
@@ -289,6 +299,7 @@ class WorkspaceApplicationController:
             "control": self.control_window,
             "fra": self.fra_window,
             "dab": self.dab_window,
+            "power_stage": self.power_stage_window,
         }[workspace]
         self.active_workspace = workspace
         target.showMaximized()
@@ -327,6 +338,13 @@ class WorkspaceApplicationController:
         window = self.llc_window if workspace == "llc" else self.pfc_window
         seed = getattr(window, "guided_system_definition", None)
         self._run_system_modeling(previous=workspace, seed_definition=seed)
+
+    def _show_psd_llc(self, topology: str) -> None:
+        if topology not in {"T20","T21"}:
+            raise ValueError("Expected LLC half/full bridge selection")
+        # Use the original LLC fields/invalidations and solver, not another tank model.
+        self.llc_window.topology.setCurrentIndex(1 if topology=="T20" else 0)
+        self.show_workspace("llc")
 
     def _handle_request(self, workspace: str) -> None:
         if workspace == "home":
