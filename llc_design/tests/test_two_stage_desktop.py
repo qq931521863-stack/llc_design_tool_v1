@@ -457,7 +457,9 @@ def test_actual_legacy_td_report_and_formula_pdf_publish_matching_sources(window
     monkeypatch.setattr(host, "_worker_error", errors.append)
     host._export_td_loss_report(); queue[-1].run()
     assert not errors
-    assert candidate.analysis.nominal.loss_waveform_sha256 in (output / "LLC_calculation_book.md").read_text()
+    report = (output / "LLC_calculation_book.md").read_text(encoding="utf-8")
+    assert "全桥同步整流 V2 磁性损耗计算书" in report
+    assert candidate.analysis.nominal.loss_waveform_sha256 in report
     assert (output / "model_comparison").is_dir()
     host.export_formula_pdf(); queue[-1].run()
     assert not errors and pdf.read_bytes().startswith(b"%PDF") and pdf.stat().st_size > 1000
@@ -491,14 +493,16 @@ def test_real_cli_two_stage_nominal_report_uses_actual_solver(tmp_path):
         "--candidate-rank", "1", "--output", str(output)])
     assert result.exit_code == 0, result.output + repr(result.exception)
     assert "Only nominal-point TD losses" in result.output
-    evidence = json.loads((output / "two_stage_verification.json").read_text())
+    evidence = json.loads((output / "two_stage_verification.json").read_text(encoding="utf-8"))
     assert evidence["request"]["verification_scope"] == "nominal"
     accepted = [row for row in evidence["candidates"] if not row["rejected"]]
     assert len(accepted) == 1 and accepted[0]["candidate_id"] == evidence["selected_candidate_id"]
     sources = accepted[0]["sources"]
     td = [point for point in sources if point["waveform_sha256"]]
     assert len(td) == 1
-    assert td[0]["waveform_sha256"] in (output / "selected_candidate" / "LLC_calculation_book.md").read_text()
+    report = (output / "selected_candidate" / "LLC_calculation_book.md").read_text(encoding="utf-8")
+    assert "全桥同步整流 V2 磁性损耗计算书" in report
+    assert td[0]["waveform_sha256"] in report
     assert (output / "selected_candidate" / "optimization_provenance.json").exists()
     table = pd.read_csv(output / "two_stage_candidates.csv")
     assert table.iloc[0]["td_scope_worst_loss_w"] == pytest.approx(td[0]["total_loss_w"])
@@ -538,7 +542,7 @@ def test_cli_unknown_candidate_produces_evidence_not_fha_fallback(tmp_path, monk
     output = tmp_path / "unknown"
     response = CliRunner().invoke(cli, ["optimize", "--profile", "current", "--two-stage", "--top-n", "1", "--output", str(output)])
     assert response.exit_code != 0 and "No verified candidate" in response.output
-    evidence = json.loads((output / "two_stage_verification.json").read_text())
+    evidence = json.loads((output / "two_stage_verification.json").read_text(encoding="utf-8"))
     assert evidence["selected_candidate_id"] is None
     assert evidence["candidates"][0]["zvs_margin_worst"] is None
     assert not (output / "selected_candidate").exists() and not (output / "best_design").exists()
