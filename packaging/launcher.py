@@ -504,7 +504,8 @@ def _exercise_magnetic_catalog(host, directory, app):
     app.processEvents()
     _require(editor.isVisible(), "Existing PFC workspace did not expose its magnetic editor")
     for widget, value in ((control.vin_rms, 230), (control.vbus, 400),
-                          (control.pout, 1000), (control.fsw, 120), (control.inductance, 200)):
+                          (control.pout, 1000), (control.fsw, 120),
+                          (control.inductance, 200), (control.dcr, 55)):
         widget.setValue(value)
     editor.sync_from_stage()
     editor.target_l.setValue(200)
@@ -562,7 +563,9 @@ def _exercise_magnetic_catalog(host, directory, app):
         def dismiss_acknowledgement():
             modal = QApplication.activeModalWidget()
             if isinstance(modal, QMessageBox):
-                acknowledgements.append(modal.windowTitle() + (": " + modal.detailedText() if modal.detailedText() else ""))
+                acknowledgements.append({"window_title": modal.windowTitle(), "text": modal.text(),
+                    "informative_text": modal.informativeText(), "detailed_text": modal.detailedText(),
+                    "icon": modal.icon().name})
                 modal.accept()
         timer.timeout.connect(dismiss_acknowledgement)
         timer.start(25)
@@ -615,11 +618,24 @@ def _exercise_magnetic_catalog(host, directory, app):
              and document["user_model_declaration"] == declaration,
              "Full PFC project lost source/declaration/input identity")
     acknowledgements = click_with_acknowledgements(editor.apply_button)
-    _require(acknowledgements == ["TTPL 电感参数已应用"]
-             and control.inductance.value() == round(result.l_full_load_peak_uh, control.inductance.decimals())
-             and control.dcr.value() == round(result.rdc_hot_ohm * 1000, control.dcr.decimals()),
-             "Real Apply did not write the calculated L / DCR to the PFC power stage")
     applied = {"inductance_uh": control.inductance.value(), "dcr_mohm": control.dcr.value()}
+    expected_applied = {"inductance_uh": round(result.l_full_load_peak_uh, control.inductance.decimals()),
+                        "dcr_mohm": round(result.rdc_hot_ohm * 1000, control.dcr.decimals())}
+    diagnostics = (f"platform={sys.platform!r}, qt_platform={app.platformName()!r}, "
+                   f"expected={expected_applied!r}, actual={applied!r}, acknowledgements={acknowledgements!r}")
+    _require(applied["inductance_uh"] == expected_applied["inductance_uh"],
+             f"Real Apply inductance mismatch; {diagnostics}")
+    _require(applied["dcr_mohm"] == expected_applied["dcr_mohm"],
+             f"Real Apply DCR mismatch; {diagnostics}")
+    # Qt ignores QMessageBox.setWindowTitle on macOS, including offscreen.
+    # Verify the actual success message and numbers; retain titles as telemetry.
+    expected_message = (f"Boost L = {expected_applied['inductance_uh']:.3f} µH\n"
+        f"DCR(@{result.request.copper_temperature_c:.0f}°C) = {expected_applied['dcr_mohm']:.3f} mΩ\n\n"
+        "已写回功率级参数；建议重新运行 PFC 分析/一键整定。")
+    _require(len(acknowledgements) == 1 and acknowledgements[0]["icon"] == "Information"
+             and acknowledgements[0]["text"] == expected_message
+             and not acknowledgements[0]["informative_text"] and not acknowledgements[0]["detailed_text"],
+             f"Real Apply success acknowledgement mismatch; expected_text={expected_message!r}; {diagnostics}")
     editor.target_l.setValue(210)
     _require(editor.last_result is None and not editor.apply_button.isEnabled()
              and not control.inductor_result_view.figure.axes
@@ -680,7 +696,8 @@ def _exercise_magnetic_catalog(host, directory, app):
             "printed_loss_check": printed_loss_check,
             "curve_samples": {name: len(values) for name, values in arrays.items()},
             "self_loss_identity": loss_identity, "self_loss_w": devices._inductor_self_loss_w,
-            "applied": applied, "real_calculate_and_apply": True, "project_roundtrip": True,
+            "applied": applied, "apply_acknowledgements": acknowledgements,
+            "real_calculate_and_apply": True, "project_roundtrip": True,
             "recomputed_curves_identical": True, "stale_consumers_cleared": True, "report_consistency": True},
         "llc_reference_only": {"record_id": record_id, "apply_disabled": True},
         "supplemental": {"source_case": replay["source_case"], "source_arithmetic_only": True,

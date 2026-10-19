@@ -67,6 +67,68 @@ print(json.dumps(module.load_brand_taxonomy(), sort_keys=True))
             ROOT / 'engineering_data' / name).read_bytes()
 
 
+@pytest.mark.parametrize("fault", [None, "inductance", "dcr", "text", "icon", "details"])
+def test_real_magnetic_apply_checks_values_and_message_without_window_title(tmp_path, fault):
+    """Real solver/button/modal path; only platform metadata or faults are injected."""
+    import importlib.util
+
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    qt = pytest.importorskip('PySide6.QtWidgets')
+    from PySide6.QtCore import QEvent, QObject
+
+    from llc_design.gui.lifetime import dispose_widgets
+    from pfc_design.gui.main_window import PFCMainWindow
+
+    spec = importlib.util.spec_from_file_location('pdt_magnetic_launcher', ROOT / 'packaging/launcher.py')
+    launcher = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(launcher)
+    app = qt.QApplication.instance() or qt.QApplication([])
+    host = PFCMainWindow()
+    control = host.control_lab_view.control_lab
+    seen = []
+
+    class ApplyDialogProbe(QObject):
+        def eventFilter(self, obj, event):
+            if isinstance(obj, qt.QMessageBox) and event.type() == QEvent.Type.Show:
+                # Simulate Qt's documented macOS title suppression, not Apply.
+                qt.QWidget.setWindowTitle(obj, '')
+                seen.append(obj.text())
+                if fault in ('inductance', 'dcr'):
+                    widget = getattr(control, fault)
+                    widget.setValue(widget.value() + 1)
+                elif fault == 'text':
+                    obj.setText('TTPL 电感参数已应用')  # A title alone proves no result.
+                elif fault == 'icon':
+                    obj.setIcon(qt.QMessageBox.Icon.Warning)
+                elif fault == 'details':
+                    obj.setDetailedText('Application failed')
+            return False
+
+    probe = ApplyDialogProbe()
+    app.installEventFilter(probe)
+    host.show()
+    try:
+        if fault is None:
+            proof = launcher._exercise_magnetic_catalog(host, tmp_path, app)
+            pfc = proof['pfc']
+            assert pfc['applied'] == {'inductance_uh': 209.48, 'dcr_mohm': 48.817}
+            acknowledgement, = pfc['apply_acknowledgements']
+            assert acknowledgement['window_title'] == ''
+            assert acknowledgement['text'] == seen[0]
+            assert pfc['real_calculate_and_apply'] and pfc['recomputed_curves_identical']
+            assert pfc['stale_consumers_cleared'] and pfc['report_consistency']
+        else:
+            mismatch = {'inductance': 'inductance', 'dcr': 'DCR'}.get(fault, 'success acknowledgement')
+            with pytest.raises(RuntimeError, match=f'Real Apply {mismatch} mismatch') as error:
+                launcher._exercise_magnetic_catalog(host, tmp_path, app)
+            assert 'expected=' in str(error.value) and 'actual=' in str(error.value)
+            assert 'acknowledgements=' in str(error.value)
+        assert len(seen) == 1
+    finally:
+        app.removeEventFilter(probe)
+        dispose_widgets([host])
+
+
 def test_real_source_packaging_entry_calculates_and_restores_psd(tmp_path):
     pytest.importorskip('PySide6.QtWidgets')
     report = tmp_path / 'source-proof.json'
