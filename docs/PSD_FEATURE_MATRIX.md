@@ -1,5 +1,15 @@
 # Power Stage Designer feature matrix
 
+## Windows larger-font and report evidence (2026-10-19)
+
+Actual Windows run `39334695559` passes 100 whole-control checks at each of 10/12 pt.
+Its remaining preflight failure is a test reading a successful UTF-8 Chinese
+report as cp1252. The test-reader encoding contract is corrected without changing
+product report contents or physical-model coverage. macOS 12 pt still requires
+the independently checked candidate-page layout correction below. Both platforms'
+complete/frozen acceptance remains open; ordinary native flow or large-font
+passes alone do not close that gate.
+
 ## Large-font platform correction (2026-10-19)
 
 The macOS 10 pt whole-control workflow now passes all 100 normal/integrated

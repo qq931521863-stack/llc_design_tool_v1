@@ -1,5 +1,39 @@
 # Power Stage Designer validation report
 
+## Windows UTF-8 report test contract (2026-10-19)
+
+In run `39334695559`, actual Windows 10 pt and 12 pt each complete all 100
+normal/integrated whole-control checks. At 12 pt, Microsoft YaHei UI resolves to
+height 20; frame 1280×720 and minimum 1243×637. The preserved layout artifact is
+SHA-256 verified and all complete-visible-region assertions pass.
+
+The job later stops with **282 passed / 1 failed / 1 skipped**, 1252.20 s, in
+`test_actual_legacy_td_report_and_formula_pdf_publish_matching_sources`. Its real
+TD report export and no-worker-error assertion already pass. The test's implicit
+`read_text()` selects cp1252 and fails at byte 0x90, offset 22, in the UTF-8 Chinese
+title. The production Markdown/JSON writers already explicitly use UTF-8. The
+four affected test reads now state that encoding; waveform identity, candidate
+selection, rejection, loss-table and real PDF assertions are retained.
+
+Reader candidate `f5dafe958c125e42b49b0433d37d2318be438c25` changes only this
+test module. An external QA-only cp1252-default reproduction makes the original
+real failing test red and the explicit-UTF-8 version green (1 passed, 8.26 s).
+Three adjacent real CLI/report/rejection/UNKNOWN cases also pass under the same
+profile (59.45 s), including the exact non-ASCII model-validity failure label.
+All original product/waveform/PDF assertions remain; two Chinese-title assertions
+are added. No encoding shim is committed to the product or native tests.
+The integrated three changed test functions pass in 72.05 s (16 existing chart
+font warnings). Their test module is byte-identical to the reviewed candidate;
+all production and packaging files remain identical to the separately frozen
+`74decea` wheel/Linux qualification source. No whole-source full-suite pass is
+implied by this test/document-only follow-up.
+
+An independent already-generated real TD candidate report reproduces exactly
+the cp1252 error at offset 22. Strict UTF-8 decoding re-encodes to the identical
+7380 bytes and preserves the Chinese title. This establishes the reader contract;
+it does not reinterpret the previous native failed run as success. New actual
+native complete/frozen qualification is still required.
+
 ## Native 12 pt window-height repair (2026-10-19)
 
 [Run 39334695559](https://github.com/yangshuai2022-star/power-design-toolkit/actions/runs/39334695559)
@@ -27,7 +61,8 @@ publication pause and full/frozen gates remain mandatory. See
 [large-font layout evidence and viewing limitation](NATIVE_LARGE_FONT_LAYOUT.md).
 
 Candidate `db413cb1ef834aa554fbfaf0c33a6ae8e3d42b89` passes all nine layout-metrics
-cases on a clean source. The independently audited 796-file snapshot is exact;
+cases on a clean source, plus 52 exact-source cases covering the three complete
+desktop workflows and 43 Two-Stage cases. The independently audited 796-file snapshot is exact;
 19 final targeted cases pass, including cancel/edit/options/newer/close and late
 results. The integrated candidate passes 75 layout/publication/frozen-contract
 cases in 25.44 s. Its two changed files are byte-identical to the reviewed

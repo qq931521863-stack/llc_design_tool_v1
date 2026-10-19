@@ -60,6 +60,15 @@ original sample. Thus this
 larger-font view requires vertical scrolling; it is not evidence that every
 font/screen combination displays a complete plot simultaneously.
 
+## Windows evidence from the same native run
+
+The Windows job on `e9a1199` completes both 10/12 pt normal/integrated workflows,
+100 whole-visible controls at each size. Actual Microsoft YaHei UI 12 pt resolves
+to height 20; the maximized frame is 1280×720, minimum 1243×637. Its later red is
+an unrelated test-side implicit cp1252 read of an already-successful UTF-8 Chinese
+report. Thus the macOS minimum-size failure is not generalized to Windows, and
+the Windows larger-font result is not generalized to complete native qualification.
+
 ## Qualification boundary
 
 The native failed run and its screenshots remain recorded. Controlled Linux

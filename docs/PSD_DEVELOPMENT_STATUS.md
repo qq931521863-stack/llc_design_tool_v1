@@ -1,5 +1,17 @@
 # Power Stage Designer development status
 
+## Windows report-reader follow-up (2026-10-19)
+
+Native `e9a1199` Windows evidence passes both 10 pt and 12 pt, 100 complete controls
+each; the 12 pt frame is 1280×720 and minimum 1243×637 with Microsoft YaHei UI.
+The preflight then stops at a different test (**282 passed / 1 failed / 1 skipped**):
+the real Chinese Markdown export succeeds, but its test reads UTF-8 bytes using
+the Windows default cp1252 codec. The report writer already specifies UTF-8.
+The report-reader correction specifies that same encoding in the four affected
+Markdown/JSON test reads and preserves strict source, waveform and PDF assertions.
+No product report encoding or content changes, and native full/frozen acceptance
+remains pending. The macOS candidate-page fix below is separately required.
+
 ## Large-font candidate-page correction (2026-10-19)
 
 Native run `39334695559` passes macOS 10 pt: 50 complete controls in each of
