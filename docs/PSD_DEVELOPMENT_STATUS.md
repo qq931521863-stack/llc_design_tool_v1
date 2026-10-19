@@ -1,5 +1,39 @@
 # Power Stage Designer development status
 
+## Latest aggregate red and narrow correction (2026-10-19)
+
+The clean `bfb0e54067eebb973811213a671e9906dca0f6c6` full run stopped normally
+with exit 1 after **1353 passed, 1 skipped, 1 failed** of 4140 collected cases.
+Its T15 all-drawn-net test injected a cycle-average source current at each instant,
+even though equal split capacitors on the stiff bus require a pulsed source.
+Independent circuit/ODE review confirms the product currents; the test boundary
+is corrected without changing any net, branch orientation or 2e-7 A tolerance.
+A fixed original-failure point, zero-current off interval, wrong-mean counterexample
+and independent integral check guard against a constant-current pseudo-waveform.
+X12 now explicitly labels its existing DC operating-point input as average current.
+
+The 16 independent vectors cover ordinary/joint CCM, BCM and DCM, two diode drops
+and nominal/near-limit capacitance. This retains the T15 first-order limitation:
+finite split-C midpoint ripple is not fed back into nominal magnetic-state slopes.
+At the allowed ripple boundary the instantaneous nominal-primary power discrepancy
+can approach 5% of the ideal source pulse; cycle-average energy closure is not a
+claim of a fully coupled finite-C transient model. The input-current metric remains
+an average, and device-waveform CSV does not fabricate a source-current trace.
+
+The affected 387-case group and the new actual X12 mean-label/save/export case
+pass. Independent review reran the original T15 all-net case, new source oracle
+and actual X12 consumer (3 pass). A diagnostic remainder subsequently found 14
+missing new shell translations in en/ja/ko (1488 pass, 1 skip, 1 fail); accurate
+translations and actual switch/restore validation are being repaired separately.
+Neither diagnostic segment is a complete-source PASS.
+
+The failed run peaked at 1,836,372 KiB aggregate RSS and ended with zero retained
+native owner/scene/plot/menu/group counts. Its later unexecuted cases are being
+run separately for diagnosis; those results cannot be joined into an aggregate
+PASS. A fresh complete-source run, opt-in long PFC and actual installed/frozen
+qualification remain mandatory. Publication remains paused.
+
+
 ## Active completion extension and lifecycle gate (2026-10-19)
 
 The latest user addition is integrated LLC resonant magnetics: preserve the
@@ -8,12 +42,12 @@ physical winding/flux, loss, thermal, selection, persistence and report consumer
 This is implemented and locally integrated as `c06f1d5`, including coherent APR
 mapping, physical flux, explicit winding feasibility, actual GUI/save/report and
 locked-magnetics optimization. Focused independent physical/TD and 34-step desktop
-acceptance pass; the final merged-source replay, aggregate and artifact gates are
-next. Default seven-harmonic HB passes actual-event-loop replay in under three seconds;
+acceptance pass; five independent physical/identity/boundary/projection/TD-label
+scripts also pass at exact clean bfb0e54. Aggregate and artifact gates remain open. Default seven-harmonic HB passes actual-event-loop replay in under three seconds;
 the earlier qWait-harness timeout is not a product failure. The narrow cooperative
 Cancel/finite total-budget repair now has independent actual HB/TD cancellation,
-close, timeout, invalidation and retry acceptance. Product integration and the
-new-source aggregate/artifact sequence are next; no lowered numerical criteria
+close, timeout, invalidation and retry acceptance. Product integration is committed; the
+new-source aggregate/artifact sequence remains open; no lowered numerical criteria
 or partial-result fallback is used to satisfy a timeout.
 FHA/EDF projection limits and unsupported multiwinding/series-R domains are explicit.
 See the [integrated workflow](magnetics/integrated_llc_workflow.md) and two synthetic

@@ -207,7 +207,7 @@ TOOLS: dict[str, tuple[str, str, list[Field], Callable]] = {
         number("converter_esr_ohm", "CIN/OUT ESR / mΩ", .005, 1e3), number("converter_esl_h", "CIN/OUT ESL / nH", 4e-9, 1e9),
         number("damping_capacitance_f", "阻尼 CD / µF", 68e-6, 1e6), number("damping_resistance_ohm", "阻尼 RD / Ω", .5),
         number("damping_esr_ohm", "CD ESR / mΩ", .025, 1e3), number("damping_esl_h", "CD ESL / nH", 7e-9, 1e9),
-        number("input_voltage_v", "输入电压 / V", 12), number("input_current_a", "输入电流 / A", 1),
+        number("input_voltage_v", "输入电压 / V", 12), number("input_current_a", "输入平均电流 / A", 1),
         number("minimum_frequency_hz", "频响起始频率 / Hz", 10), number("maximum_frequency_hz", "频响终止频率 / MHz", 100e6, 1e-6),
         choice("points", "频率点数", 401, [101, 401, 1001, 4001]),
         number("damping_frequency_hz", "阻尼评估频率 / kHz（空=解RC谐振）", None, 1e-3, True),

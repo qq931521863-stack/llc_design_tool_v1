@@ -221,8 +221,49 @@ def test_model_branch_currents_obey_kcl_at_every_drawn_net(topology):
             residual["PRIMARY_OUT"]+=result.inputs.primary_output_current_a
             residual["GND"]-=result.inputs.primary_output_current_a
         source=result.metrics["input_current_mean_a"]
+        if topology=="T15":
+            # Equal split C and a stiff total bus require a pulsed source.
+            # Unlike the other drawings, there is no independent Cin here
+            # that absorbs the difference from the cycle-average source.
+            source=.5*sum(_value(result.waveforms[key].current_a,fraction)
+                          for key in ("Q1","Q2"))
         residual["VIN"]-=source;residual["GND"]+=source
         assert max(abs(v) for v in residual.values())<2e-7,(topology,fraction,dict(residual))
+
+
+def test_half_bridge_source_is_pulsed_and_its_integral_is_the_reported_mean():
+    result=_result("T15");p=result.inputs
+    current=lambda key,t: _value(result.waveforms[key].current_a,t)
+    source=lambda t: .5*(current("Q1",t)+current("Q2",t))
+    # Independent original-circuit CCM KVL/volt-seconds at the red-test point.
+    # No production duty, statistics or capacitor recurrence supplies the oracle.
+    half_period=.5/p.fsw_hz;primary_pulse=p.vin_v/2
+    secondary_pulse=primary_pulse/p.turns_ratio_np_ns
+    duty=(p.vout_v+p.diode_drop_v)/secondary_pulse
+    slope=(secondary_pulse-p.vout_v-p.diode_drop_v)/p.inductance_h
+    ripple=slope*duty*half_period
+    phase=.040375;time=phase/p.fsw_hz
+    il=p.iout_a-ripple/2+slope*time
+    im=-primary_pulse*duty*half_period/(2*p.magnetizing_inductance_h)+primary_pulse*time/p.magnetizing_inductance_h
+    independent_source=(il/p.turns_ratio_np_ns+im)/2
+    assert independent_source==pytest.approx(.4879686037234042,abs=1e-14)
+    assert source(phase)==pytest.approx(independent_source,abs=1e-13)
+    assert source(.35)==pytest.approx(0.,abs=1e-14)
+    mean=(p.vout_v+p.diode_drop_v)*p.iout_a/p.vin_v
+    assert mean==pytest.approx(.2375,abs=1e-14)
+    # A fabricated constant waveform can pass an integral check, not these two
+    # point checks. Keep the exact old residual as the negative control.
+    assert source(phase)-mean==pytest.approx(.2504686037234042,abs=1e-13)
+    nodes,weights=np.polynomial.legendre.leggauss(5)
+    edges=sorted({s.start_fraction for key in ("Q1","Q2")
+                  for s in result.waveforms[key].current_a.segments}|{1.})
+    integral=sum(w*(b-a)/2*source(a+(node+1)*(b-a)/2)
+                 for a,b in zip(edges,edges[1:]) for node,w in zip(nodes,weights))
+    assert integral==pytest.approx(mean,abs=1e-13)
+    assert result.metrics["input_current_mean_a"]==pytest.approx(integral,abs=1e-13)
+    for t in (phase,.35,.5+phase,.85):
+        assert source(t)==pytest.approx(current("Q1",t)+current("Csplit1",t),abs=1e-13)
+        assert source(t)==pytest.approx(current("Q2",t)+current("Csplit2",t),abs=1e-13)
 
 
 def test_llc_reuses_its_workspace_and_unknown_topology_gets_no_fake_circuit():

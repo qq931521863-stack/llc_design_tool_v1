@@ -1,5 +1,25 @@
 # Power Stage Designer feature matrix
 
+## Latest T15 source-boundary correction (2026-10-19)
+
+T15's equal split-C/stiff-total-bus model requires instantaneous source current
+(Q1+Q2)/2, not the reported input-current cycle mean. An independent 16-vector
+ODE audit confirms source/branch currents and capacitor charge; the aggregate
+all-net test's old external-source oracle was wrong and is corrected. The current
+full-source run is RED (1353 pass, 1 skip, 1 fail), pending complete rerun after
+this repair. No topology/kernel tolerance was relaxed. A subsequent diagnostic-only remainder
+found 14 new shell strings missing from en/ja/ko; translation and actual language
+switch/restore acceptance are being repaired before the fresh aggregate.
+
+T15 remains a first-order nominal-midpoint magnetic model with finite-C ripple
+reconstruction, not a fully coupled finite-C transient simulation. The existing
+10%-peak-to-peak split-cap ripple limit can leave up to approximately 5% on-pulse
+instantaneous nominal-power discrepancy. This declared approximation, asymmetric
+balance/body-diode/leakage domains and other remaining model extensions are not
+silently promoted by the KCL repair. X12's input is explicitly labeled average
+current; its operating-point calculation and imported metric are unchanged.
+
+
 ## Latest acceptance additions and corrections (2026-10-19)
 
 - New user requirement: integrated LLC transformer-leakage resonance is implemented

@@ -67,6 +67,28 @@ def _assert_labels(value):
             _assert_labels(child)
 
 
+def test_filter_current_is_labeled_and_persisted_as_stage_average(widget, app, tmp_path):
+    from power_stage_design.models import DesignInputs
+    from power_stage_design.topologies import calculate_stage
+
+    stage=calculate_stage(DesignInputs("T15",48,5,2,100e3,470e-6,
+        capacitance_f=1e-3,turns_ratio_np_ns=2,diode_drop_v=.7,
+        transfer_capacitance_f=1e-3,magnetizing_inductance_h=1e-3))
+    widget.set_stage_result(stage);widget.select_tool("X12");widget.import_stage()
+    page=widget.pages["X12"]
+    assert page._form.labelForField(page.widgets["input_current_a"]).text()=="输入平均电流 / A"
+    result=widget.calculate()
+    assert result is not None,widget.status.text()
+    # Independent DC operating point, not the T15 source pulse or RMS current.
+    expected=(5+.7)*2/48
+    assert result.inputs["input_current_a"]==pytest.approx(expected,abs=1e-14)
+    state=json.loads(json.dumps(widget.state()))
+    widget.restore_state(state)
+    assert widget.latest_result.inputs["input_current_a"]==pytest.approx(expected,abs=1e-14)
+    path=tmp_path/"filter-average.json";widget.export_to(path)
+    assert json.loads(path.read_text(encoding="utf-8"))["inputs"]["input_current_a"]==pytest.approx(expected,abs=1e-14)
+
+
 @pytest.mark.parametrize("tool_id", TOOL_IDS)
 def test_all_real_tools_show_chinese_results_exact_exports_and_invalidation(widget, app, tmp_path, tool_id):
     from PySide6.QtCore import Qt

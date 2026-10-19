@@ -1,5 +1,46 @@
 # Power Stage Designer validation report
 
+## Latest immutable aggregate and T15 independent diagnosis (2026-10-19)
+
+At clean source `bfb0e54067eebb973811213a671e9906dca0f6c6`, the full 4140-case
+collection stopped at the first failure with **1353 passed, 1 skipped, 1 failed**
+in 1493.54 s. Exit 1, complete JUnit and immediate failure telemetry are retained.
+The failure is `test_model_branch_currents_obey_kcl_at_every_drawn_net[T15]`:
+its external-source boundary used average 0.2375 A at each instant. Independent
+CCM KVL/volt-seconds at phase 0.040375 gives 0.4879686037234042 A, exactly explaining
+the 0.2504686037234042 A VIN/GND residual. Every internal node was already balanced.
+For equal split C on a stiff bus, C1+C2 current is zero and source=(Q1+Q2)/2.
+The narrow test correction retains all nets, signs, samples and the 2e-7 A limit;
+new fixed-point/off-interval/mean-integral checks reject a fabricated flat source.
+
+An independent SciPy event-ODE review, not a copy of production bridge helpers,
+covers 16 combinations of ordinary CCM, joint CCM, BCM, DCM, Vf=0/0.4 V and
+nominal/near-10%-ripple capacitance. Maximum independent current error is 1.943e-16 A;
+all-net residual 2.429e-17 A; capacitor voltage error 2.132e-14 V; Cdv/dt residual
+6.939e-18 A. Source charge and capacitor energy close over the period. GUI/HTML
+preserve the mean-metric identity; device CSV has no pseudo source-current column.
+X12's DC mean is appropriate for its operating point; the label is made explicit.
+
+The energy audit also quantifies an existing model limit, rather than hiding it.
+With midpoint offset delta, exact reconstructed capacitor power is delta*ip and
+KVL primary voltage would be sign*Vin/2-delta. Product magnetic slopes use nominal
+sign*Vin/2, as the visible assumptions state. Corrected accounting closes to
+2.443e-15 W, but this diagnostic is not a coupled magnetic-state solution. Near
+the allowed capacitance limit, nominal instantaneous power differs by up to
+0.140434452 W / 4.9836% of the source pulse in the audit vectors. Average energy
+closure must not be presented as exact finite-C instantaneous dynamics.
+
+Resource evidence for the failed run: peak aggregate RSS 1,836,372 KiB, peak
+parent RSS 955,260 KiB, minimum MemAvailable 4,185,580 KiB. Final native roots,
+scenes, plots, menus and groups are all zero. The separately selected remainder
+is diagnostic only. The affected 387-case group and one additional actual X12 mean-label/persistence/
+export case pass. Independent review reran three narrow source/consumer tests
+with exit 0. The diagnostic remainder then stopped at a separate new-feature
+i18n omission (1488 pass, 1 skip, 1 fail): 14 bound shell strings lack en/ja/ko
+entries. This real consumer omission is being repaired without weakening the
+harvest gate. Complete qualification of the corrected source remains open.
+
+
 ## Latest completion qualification correction (2026-10-19)
 
 Integrated-LLC leakage resonance is locally implemented in `c06f1d5`. Independent
@@ -11,7 +52,9 @@ Independent two-port checks cover 900 complex-load/frequency cases (maximum
 relative error 6.83e-13). Actual regulated TD converged with residual 1.9241e-10;
 physical Bpk 0.0967437178 T and total loss 75.4389136 W independently reconcile
 with port currents and the component ledger. These are model/software tests,
-not measured hardware qualification. Final merged-source replay is still pending.
+not measured hardware qualification. Five independent actual consumer/identity/
+boundary/projection/TD-label scripts subsequently pass at exact clean bfb0e54,
+with unchanged start/end tracked hashes. This does not qualify later source edits.
 
 Author groups of 142, 29, 7 and 55 focused cases passed; these overlap and must
 not be summed. Independent real Qt flow covers 34 checks including exact input
