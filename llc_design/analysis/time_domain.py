@@ -103,6 +103,7 @@ def _simulate(
     steady: DynamicPhasorSteadyState,
     config: TimeDomainConfig,
     samples_per_cycle: int,
+    checkpoint=None,
 ) -> WaveformBundle:
     return simulate_switched_steady_state(
         model,
@@ -117,6 +118,7 @@ def _simulate(
             use_periodic_shooting=config.use_periodic_shooting,
             shooting_max_evaluations=config.shooting_max_evaluations,
         ),
+        checkpoint=checkpoint,
     )
 
 
@@ -126,6 +128,7 @@ def solve_time_domain(
     *,
     system_analysis: SystemAnalysis | None = None,
     tank: TankDesign | None = None,
+    checkpoint=None,
 ) -> LLCModelResult:
     """Solve the highest-fidelity ideal-switching model currently in V8.1.
 
@@ -134,6 +137,8 @@ def solve_time_domain(
     belong to the later V8 parasitic-aware layer.
     """
 
+    if checkpoint is not None:
+        checkpoint()
     request.validate()
     cfg = config or TimeDomainConfig(
         samples_per_cycle=max(128, min(request.samples_per_cycle, 512)),
@@ -166,18 +171,19 @@ def solve_time_domain(
         return model.solve_steady_state(
             LLCPlantInputs(frequency_hz, request.bus_voltage_v, 0.0),
             operating_point=operating_point,
+            checkpoint=checkpoint,
         )
 
     def simulate_steady(
         steady_state: DynamicPhasorSteadyState,
     ) -> WaveformBundle:
-        candidate = _simulate(model, steady_state, cfg, cfg.samples_per_cycle)
+        candidate = _simulate(model, steady_state, cfg, cfg.samples_per_cycle, checkpoint)
         if (
             candidate.metadata.get("converged") != "True"
             and cfg.retry_samples_per_cycle != cfg.samples_per_cycle
         ):
             retry = _simulate(
-                model, steady_state, cfg, cfg.retry_samples_per_cycle)
+                model, steady_state, cfg, cfg.retry_samples_per_cycle, checkpoint)
             if retry.metadata.get("converged") == "True":
                 candidate = retry
         return candidate
@@ -195,6 +201,7 @@ def solve_time_domain(
             minimum_frequency_hz=spec.minimum_frequency_hz,
             maximum_frequency_hz=spec.maximum_frequency_hz,
             operating_point=operating_point,
+            checkpoint=checkpoint,
         )
         cache: dict[float, tuple[DynamicPhasorSteadyState, WaveformBundle]] = {}
 
@@ -202,6 +209,8 @@ def solve_time_domain(
             frequency_hz: float,
         ) -> tuple[DynamicPhasorSteadyState, WaveformBundle]:
             nonlocal frequency_evaluations
+            if checkpoint is not None:
+                checkpoint()
             frequency_hz = float(frequency_hz)
             for existing, result in cache.items():
                 if abs(existing - frequency_hz) <= max(1e-6, 1e-10 * frequency_hz):

@@ -307,7 +307,11 @@ class MultiHarmonicLLCSolver:
         config: HarmonicBalanceConfig | None = None,
         *,
         tank: TankDesign | None = None,
+        checkpoint=None,
     ):
+        self._checkpoint = checkpoint
+        if checkpoint is not None:
+            checkpoint()
         request.validate()
         self.request = request
         self.config = config or HarmonicBalanceConfig(
@@ -452,6 +456,8 @@ class MultiHarmonicLLCSolver:
             float,
             tuple[float, ...],
         ]:
+            if self._checkpoint is not None:
+                self._checkpoint()
             load_phasors, output_voltage = self._unpack_state(unknowns, count)
             load_current = np.real(load_phasors[:, None] * basis).sum(axis=0)
             if exact_projection:
@@ -746,6 +752,8 @@ class MultiHarmonicLLCSolver:
         current_previous = previous
         final: HarmonicBalanceNativeSolution | None = None
         for maximum_harmonic in orders:
+            if self._checkpoint is not None:
+                self._checkpoint()
             current = self._solve_order(
                 frequency_hz, maximum_harmonic, current_previous)
             relative_change = (
@@ -797,6 +805,8 @@ class MultiHarmonicLLCSolver:
             return min(cache.items(), key=lambda item: abs(item[0] - frequency_hz))[1]
 
         def solve_frequency(frequency_hz: float) -> HarmonicBalanceNativeSolution:
+            if self._checkpoint is not None:
+                self._checkpoint()
             key = float(frequency_hz)
             for existing, result in cache.items():
                 if abs(existing - key) <= max(1e-6, 1e-10 * key):
@@ -1041,7 +1051,9 @@ class MultiHarmonicLLCSolver:
 def solve_harmonic_balance(
     request: LLCAnalysisRequest,
     config: HarmonicBalanceConfig | None = None,
+    *,
+    checkpoint=None,
 ) -> LLCModelResult:
     """Convenience entry point for one V8.1 multi-harmonic work point."""
 
-    return MultiHarmonicLLCSolver(request, config).solve()
+    return MultiHarmonicLLCSolver(request, config, checkpoint=checkpoint).solve()

@@ -406,6 +406,7 @@ class DynamicPhasorModel:
         initial_states: NDArray[np.float64] | None = None,
         tolerance: float = 1e-9,
         max_evaluations: int = 1000,
+        checkpoint=None,
     ) -> DynamicPhasorSteadyState:
         """Solve ``rhs(x, u)=0`` for the selected LLC work point."""
         guess = (
@@ -440,6 +441,8 @@ class DynamicPhasorModel:
 
         def residual(x: NDArray[np.float64]) -> NDArray[np.float64]:
             nonlocal evaluations
+            if checkpoint is not None:
+                checkpoint()
             evaluations += 1
             return self.rhs(x, inputs) / scales
 
@@ -493,6 +496,7 @@ class DynamicPhasorModel:
         load_current_disturbance_a: float = 0.0,
         output_tolerance_v: float = 2e-3,
         frequency_samples: int = 31,
+        checkpoint=None,
     ) -> DynamicPhasorSteadyState:
         """Solve the regulated equilibrium ``Vo(fs)=Vo_target``.
 
@@ -521,6 +525,8 @@ class DynamicPhasorModel:
 
         def solve_at(frequency_hz: float) -> DynamicPhasorSteadyState:
             nonlocal last_states
+            if checkpoint is not None:
+                checkpoint()
             key = float(frequency_hz)
             if key in cache:
                 return cache[key]
@@ -534,12 +540,14 @@ class DynamicPhasorModel:
                     inputs,
                     operating_point=operating_point,
                     initial_states=last_states,
+                    checkpoint=checkpoint,
                 )
             except PlantModelError:
                 steady = self.solve_steady_state(
                     inputs,
                     operating_point=operating_point,
                     initial_states=None,
+                    checkpoint=checkpoint,
                 )
             last_states = steady.states
             cache[key] = steady

@@ -128,6 +128,7 @@ class LLCMainWindow(QMainWindow):
         self._power_stage_revision = 0
         self._waveform_generation = 0
         self._closing = False
+        self._comparison_control = None
         self._accepted_waveform_identity = None
         self._waveform_small_signal = None
         self._waveform_plant_inputs = None
@@ -153,10 +154,18 @@ class LLCMainWindow(QMainWindow):
         self.topology_view.set_integrated_magnetics(self.magnetics_mode_combo.currentData() == MagneticsMode.INTEGRATED)
         comparison = self.model_comparison_view
         for widget in (comparison.vbus, comparison.load_percent,
-                       comparison.max_harmonic, comparison.hb_samples):
+                       comparison.max_harmonic, comparison.hb_samples,
+                       comparison.execution_budget_s):
             widget.valueChanged.connect(self._invalidate_model_comparison)
         for widget in (comparison.include_td, comparison.apply_td_losses):
             widget.toggled.connect(self._invalidate_model_comparison)
+
+    def _cancel_model_comparison(self, reason: str = "用户取消") -> None:
+        control = getattr(self, "_comparison_control", None)
+        if control is not None:
+            control.cancel(reason)
+            self.model_comparison_view.cancel_button.setEnabled(False)
+            self.statusBar().showMessage("已请求取消，等待数值线程退出…")
 
     def _invalidate_model_comparison(self, *_args) -> None:
         self._model_comparison_request_id = getattr(self, "_model_comparison_request_id", 0) + 1
@@ -175,6 +184,7 @@ class LLCMainWindow(QMainWindow):
 
     def _power_stage_inputs_changed(self, *_args) -> None:
         """Invalidate visible results and late jobs when the physical plant changes."""
+        self._cancel_model_comparison("输入已改变")
         if hasattr(self, "invalidate_two_stage_optimization"):
             self.invalidate_two_stage_optimization()
         self._power_stage_revision += 1
@@ -639,6 +649,7 @@ class LLCMainWindow(QMainWindow):
 
         self.model_comparison_view = ModelComparisonView()
         self.model_comparison_view.analysis_requested.connect(self.run_model_comparison)
+        self.model_comparison_view.cancel_requested.connect(self._cancel_model_comparison)
         self.model_comparison_view.loss_report_requested.connect(self._export_td_loss_report)
         self.tabs.addTab(self.model_comparison_view, "FHA / HB / TD")
 
@@ -700,6 +711,7 @@ class LLCMainWindow(QMainWindow):
         return self._power_stage_revision, self._waveform_generation, self._closing
 
     def closeEvent(self, event):
+        self._cancel_model_comparison("窗口已关闭")
         if hasattr(self, "cancel_two_stage_optimization"):
             self.cancel_two_stage_optimization()
         self._closing = True
@@ -723,6 +735,9 @@ class LLCMainWindow(QMainWindow):
             button.setEnabled(not busy)
         self.waveform_view.set_busy(busy)
         self.model_comparison_view.set_busy(busy)
+        control = getattr(self, "_comparison_control", None)
+        self.model_comparison_view.cancel_button.setEnabled(
+            bool(busy and control is not None and control.outcome is None))
         self.small_signal_view.set_busy(busy)
         self.digital_loop_view.set_busy(busy)
         self.transformer_design_view.set_busy(busy)
@@ -1110,6 +1125,7 @@ class LLCMainWindow(QMainWindow):
         QMessageBox.about(self, t("关于"), about_text())
 
     def _run_worker(self, label: str, function, callback) -> None:
+        control = getattr(function, "_llc_comparison_control", None)
         self._set_busy(True, label)
         worker = FunctionWorker(function)
         # Keep a strong reference until the worker finishes; the thread pool
@@ -1126,6 +1142,12 @@ class LLCMainWindow(QMainWindow):
             return isValid(self) and worker in self._active_workers and not self._closing and revision == self._power_stage_revision and (
                 not digital_request or digital_revision == self.digital_loop_view.input_revision) and waveform_current()
         def ready(result):
+            if control is not None:
+                from ..analysis.execution import SolveInterrupted
+                try:
+                    control.checkpoint()
+                except SolveInterrupted:
+                    return
             if not isValid(self) or worker not in self._active_workers or self._closing:
                 return
             if not waveform_current():
@@ -1140,13 +1162,30 @@ class LLCMainWindow(QMainWindow):
             self._results_current = True
             callback(result)
         worker.signals.result.connect(ready)
-        worker.signals.error.connect(lambda error: self._worker_error(error) if inputs_current() else None)
+        def failed(error):
+            if control is not None and control.outcome is not None:
+                return  # A requested stop is reported after real worker release.
+            if inputs_current():
+                self._worker_error(error)
+        worker.signals.error.connect(failed)
         def finished():
             if worker not in self._active_workers:
                 return
             self._active_workers.remove(worker)
+            owns_comparison = control is not None and control is getattr(self, "_comparison_control", None)
+            if owns_comparison:
+                self._comparison_control = None
             if isValid(self) and not self._closing:
                 self._set_busy(bool(self._active_workers))
+                if owns_comparison and control.outcome is not None:
+                    self._results_current = False
+                    self.multi_fidelity_analysis = None
+                    self._accepted_model_options = None
+                    message = (f"计算超时：已达到 {control.budget_s:g} s 总预算，未发布部分结果。"
+                        if control.outcome == "timed_out" else f"计算已取消（{control.reason}），数值线程已退出，未发布结果。")
+                    self.model_comparison_view.show_stopped(message)
+                    self.statusBar().showMessage(message)
+                    self._append_log(message)
             worker.signals.result.disconnect()
             worker.signals.error.disconnect()
             worker.signals.finished.disconnect()
@@ -1345,6 +1384,8 @@ class LLCMainWindow(QMainWindow):
         include_td = bool(options.get("include_time_domain", True))
         apply_td_losses = bool(options.get("apply_td_losses", False))
         spec = self.spec
+        self._invalidate_model_comparison()
+        self._results_current = False
         self._model_comparison_request_id = getattr(self, "_model_comparison_request_id", 0) + 1
         request_id = self._model_comparison_request_id
         self.model_comparison_view.set_loss_report_available(False)
@@ -1352,7 +1393,16 @@ class LLCMainWindow(QMainWindow):
             show_operation_issue(self, t("参数错误"), t("请先勾选运行分段时域参考。"), critical=False)
             return
 
+        from ..analysis.execution import SolveControl
+        try:
+            control = SolveControl(float(options.get("execution_budget_s", 300.0)))
+        except (TypeError, ValueError) as exc:
+            show_operation_issue(self, t("参数错误"), str(exc), critical=False)
+            return
+        self._comparison_control = control
+
         def calculate():
+            control.checkpoint()
             request = LLCAnalysisRequest(
                 spec=spec,
                 vbus_v=vbus_v,
@@ -1373,15 +1423,19 @@ class LLCMainWindow(QMainWindow):
                     output_cycles=2,
                 ),
             )
-            result = LLCGoldenSolver(config).solve(request)
+            result = LLCGoldenSolver(config).solve(request, checkpoint=control.checkpoint)
+            control.checkpoint()
             losses = None
             if apply_td_losses:
                 analyzer = LLCSystemAnalyzer()
                 base = analyzer.analyze(spec, work_points=[(vbus_v, load_fraction)])
+                control.checkpoint()
                 losses = analyzer.with_time_domain_losses(
                     base, [result.result(FidelityLevel.SWITCHED_TIME_DOMAIN)])
+            control.checkpoint()
             return result, losses
 
+        calculate._llc_comparison_control = control
         self._run_worker(
             "正在计算 FHA / 多谐波 HB / 分段时域对比…",
             calculate,

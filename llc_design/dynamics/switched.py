@@ -174,11 +174,14 @@ def _advance_one_cycle(
     dt: float,
     samples_per_cycle: int,
     smoothing_current_a: float,
+    checkpoint=None,
 ) -> NDArray[np.float64]:
     phase = 0.0
     omega = 2.0 * math.pi * inputs.switching_frequency_hz
     result = np.asarray(state, dtype=float).copy()
-    for _ in range(samples_per_cycle):
+    for sample in range(samples_per_cycle):
+        if checkpoint is not None and sample % 32 == 0:
+            checkpoint()
         result = _rk4_step(
             model, inputs, phase, result, dt, smoothing_current_a)
         phase += omega * dt
@@ -189,8 +192,12 @@ def simulate_switched_steady_state(
     model: DynamicPhasorModel,
     steady_state: DynamicPhasorSteadyState,
     config: SwitchedSimulationConfig | None = None,
+    *,
+    checkpoint=None,
 ) -> WaveformBundle:
     """Settle and record the nonlinear piecewise LLC waveform."""
+    if checkpoint is not None:
+        checkpoint()
     cfg = config or SwitchedSimulationConfig()
     cfg.validate()
     inputs = steady_state.inputs
@@ -230,7 +237,7 @@ def simulate_switched_steady_state(
         start = state.copy()
         state = _advance_one_cycle(
             model, inputs, state, dt, cfg.samples_per_cycle,
-            cfg.rectifier_smoothing_current_a)
+            cfg.rectifier_smoothing_current_a, checkpoint=checkpoint)
         convergence = float(np.linalg.norm((state - start) / scales))
         settled_cycles = cycle + 1
         if (
@@ -248,7 +255,7 @@ def simulate_switched_steady_state(
             shooting_evaluations += 1
             end = _advance_one_cycle(
                 model, inputs, candidate, dt, cfg.samples_per_cycle,
-                cfg.rectifier_smoothing_current_a)
+                cfg.rectifier_smoothing_current_a, checkpoint=checkpoint)
             return (end - candidate) / scales
 
         solution = root(
@@ -282,6 +289,8 @@ def simulate_switched_steady_state(
     ico = np.zeros(total_samples, dtype=float)
     phase_values = np.zeros(total_samples, dtype=float)
     for index in range(total_samples):
+        if checkpoint is not None and index % 32 == 0:
+            checkpoint()
         states[index] = state
         phase_values[index] = phase
         alg = _instantaneous(

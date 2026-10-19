@@ -27,6 +27,7 @@ class ModelComparisonView(QWidget):
 
     analysis_requested = Signal(dict)
     loss_report_requested = Signal()
+    cancel_requested = Signal()
 
     HEADERS = (
         "模型",
@@ -96,12 +97,28 @@ class ModelComparisonView(QWidget):
         self.run_button.clicked.connect(
             lambda: self.analysis_requested.emit(self.options()))
         actions.addWidget(self.run_button)
+        self.cancel_button = QPushButton("取消计算")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel_requested.emit)
+        actions.addWidget(self.cancel_button)
         self.loss_report_button = QPushButton("导出当前 TD 损耗报告")
         self.loss_report_button.setEnabled(False)
         self.loss_report_button.clicked.connect(self.loss_report_requested.emit)
         actions.addWidget(self.loss_report_button)
         actions.addStretch(1)
         layout.addLayout(actions)
+
+        execution = QHBoxLayout()
+        execution.addWidget(QLabel("本次计算总预算"))
+        self.execution_budget_s = QDoubleSpinBox()
+        self.execution_budget_s.setRange(0.1, 3600.0)
+        self.execution_budget_s.setDecimals(1)
+        self.execution_budget_s.setValue(300.0)
+        self.execution_budget_s.setSuffix(" s")
+        self.execution_budget_s.setToolTip("执行时间预算，不改变谐波阶数、采样或收敛容差。到期合作停止，不发布部分结果；仅本次会话设置。")
+        execution.addWidget(self.execution_budget_s)
+        execution.addStretch(1)
+        layout.addLayout(execution)
 
         note = QLabel(
             "FHA 用于快速设计；HB 对整流换相与高次谐波自洽求解；"
@@ -133,6 +150,7 @@ class ModelComparisonView(QWidget):
             "hb_samples": self.hb_samples.value(),
             "include_time_domain": self.include_td.isChecked(),
             "apply_td_losses": self.apply_td_losses.isChecked(),
+            "execution_budget_s": self.execution_budget_s.value(),
         }
 
     def set_nominal_work_point(self, vbus_v: float) -> None:
@@ -146,9 +164,19 @@ class ModelComparisonView(QWidget):
         self._busy = busy
         self.run_button.setEnabled(not busy)
         for widget in (self.vbus, self.load_percent, self.max_harmonic,
-                       self.hb_samples, self.include_td, self.apply_td_losses):
+                       self.hb_samples, self.include_td, self.apply_td_losses,
+                       self.execution_budget_s):
             widget.setEnabled(not busy)
         self.loss_report_button.setEnabled(self._loss_report_available and not busy)
+        if not busy:
+            self.cancel_button.setEnabled(False)
+
+    def show_stopped(self, message: str) -> None:
+        self.analysis = None
+        self.table.setRowCount(0)
+        self.set_loss_report_available(False)
+        self.details.setPlainText(message)
+        self.cancel_button.setEnabled(False)
 
     @staticmethod
     def _item(value: str) -> QTableWidgetItem:

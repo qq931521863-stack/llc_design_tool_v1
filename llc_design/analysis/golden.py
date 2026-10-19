@@ -155,9 +155,12 @@ class LLCGoldenSolver:
         *,
         tank: TankDesign | None = None,
         system_analysis: SystemAnalysis | None = None,
+        checkpoint=None,
     ) -> MultiFidelityAnalysis:
         """Run enabled solvers and compare them against the best reference."""
 
+        if checkpoint is not None:
+            checkpoint()
         request.validate()
         cfg = self.config
         shared_tank = tank or design_tank(request.spec)
@@ -172,11 +175,14 @@ class LLCGoldenSolver:
                     raise
                 warnings.append(f"FHA solve failed: {exc}")
 
+        if checkpoint is not None:
+            checkpoint()
         if cfg.include_harmonic_balance:
             try:
                 results[FidelityLevel.HARMONIC_BALANCE] = solve_harmonic_balance(
                     request,
                     cfg.harmonic_balance,
+                    checkpoint=checkpoint,
                 )
             except (HarmonicBalanceConvergenceError, ValueError, RuntimeError) as exc:
                 if cfg.strict:
@@ -200,6 +206,8 @@ class LLCGoldenSolver:
                     f"documented reference damping instead: {exc}"
                 )
 
+        if checkpoint is not None:
+            checkpoint()
         if cfg.include_time_domain:
             try:
                 results[FidelityLevel.SWITCHED_TIME_DOMAIN] = solve_time_domain(
@@ -207,6 +215,7 @@ class LLCGoldenSolver:
                     cfg.time_domain,
                     system_analysis=td_system,
                     tank=shared_tank,
+                    checkpoint=checkpoint,
                 )
             except (ValueError, RuntimeError) as exc:
                 if cfg.strict:
@@ -229,6 +238,8 @@ class LLCGoldenSolver:
                     f"(residual={result.convergence.residual_norm:.3e})."
                 )
 
+        if checkpoint is not None:
+            checkpoint()
         return MultiFidelityAnalysis(
             request=request,
             results=results,
