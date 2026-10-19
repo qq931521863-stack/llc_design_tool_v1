@@ -335,3 +335,41 @@ TI executable equivalence. T05/T11/T18 therefore remain PARTIAL in the alignment
 register. Authorized TI software capture is still needed to identify its exact
 gating/valley/load policies. No login/export gate was bypassed. Full-source and
 native-package qualification must be rerun after the remaining consumer repairs.
+
+## TwoStage real consumer checkpoint (2026-10-19)
+
+The previously missing production caller is now a real desktop and opt-in CLI
+workflow. Stage-A screening and bounded Stage-B verification preserve each
+candidate's own specification, actual TD source, loss scope and ranking metrics.
+Unknown/rejected candidates cannot Apply. Nominal-only versus critical-point
+verification is explicit; unverified operating points retain labeled FHA terms.
+Project restore retains exact requests and historical results without restoring
+Apply/report authority. The default CLI without `--two-stage` remains Stage A.
+
+An independent actual GUI run with two SR-parallel candidates obtained
+74.9082153351 W / 72.4466596580 W, correctly ranked them, then deliberately selected
+rank 2. Apply changed the actual project to precisely that candidate; saved input,
+selected ZIP and legacy Markdown report preserved its TD identity. The actual CLI
+returned the same candidate ID and loss for the matching specification. A separate
+two-point scan correctly rejected volt-second and FHA/TD consistency failures.
+Real running-TD cancel and close both ended with zero active workers, no accepted
+late result and disabled Apply/report while the Qt event loop remained responsive.
+
+Independent legacy report races exposed five stale/modal/closed publication
+counterexamples. Repairs capture the clicked source before dialogs, stage worker
+bytes privately and publish only if ownership still matches; all five original
+counterexamples and current-state positives now pass. An additional actual CLI
+reused-output case exposed stale accepted report files beside new rejection JSON.
+TwoStage now requires a new directory before any computation or publication;
+17 existing output files remained byte-identical in the independent recheck.
+Fresh rejected requests have REJECTED status, selected ID null, no accepted report
+and nonzero exit. Incomplete runs retain explicit RUNNING/FAILED status. Existing
+user files are never moved or deleted by this policy.
+
+The author consumer suite passed 48 tests; the CLI reuse/new-directory suite plus
+existing CLI checks passed 12 tests separately. A03 remains PARTIAL at this
+checkpoint because the independent audit found a distinct actual formula-PDF
+source error: FHA substitutions gave 10.9737134195 W primary conduction while the
+printed TD result was 12.1326694538 W. SR/Cr and frequency substitutions likewise
+mixed sources. This is being repaired with same-waveform formula-input summaries;
+a successful PDF file alone is not acceptance of its engineering contents.

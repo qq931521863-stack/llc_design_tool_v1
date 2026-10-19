@@ -127,6 +127,8 @@ class LLCMainWindow(QMainWindow):
         self._build_actions()
         self._build_ui()
         self._load_spec_to_widgets(self.spec)
+        from .optimization_install import install_two_stage_optimization
+        install_two_stage_optimization(self)
         for key, widget in self.fields.items():
             widget.valueChanged.connect(lambda _value, key=key: self._power_stage_field_edited(key))
             widget.valueChanged.connect(self._power_stage_inputs_changed)
@@ -157,6 +159,8 @@ class LLCMainWindow(QMainWindow):
 
     def _power_stage_inputs_changed(self, *_args) -> None:
         """Invalidate visible results and late jobs when the physical plant changes."""
+        if hasattr(self, "invalidate_two_stage_optimization"):
+            self.invalidate_two_stage_optimization()
         self._power_stage_revision += 1
         self._waveform_inputs_changed()
         self.digital_loop_view.invalidate_analysis()
@@ -356,7 +360,9 @@ class LLCMainWindow(QMainWindow):
         if not hasattr(self, "tabs") or self._active_workers:
             return
         current = self.tabs.currentWidget()
-        if current is self.q_zvs_view:
+        if current is getattr(self, "two_stage_optimization_view", None):
+            self.run_two_stage_optimization()
+        elif current is self.q_zvs_view:
             self.run_q_zvs()
         elif current is self.transformer_design_view:
             self.run_transformer_design(None, None)
@@ -605,6 +611,8 @@ class LLCMainWindow(QMainWindow):
         return self._power_stage_revision, self._waveform_generation, self._closing
 
     def closeEvent(self, event):
+        if hasattr(self, "cancel_two_stage_optimization"):
+            self.cancel_two_stage_optimization()
         self._closing = True
         self._power_stage_revision += 1
         self._waveform_inputs_changed()
@@ -764,15 +772,22 @@ class LLCMainWindow(QMainWindow):
         self._loaded_spec = deepcopy(spec)
         self._loaded_widget_values = {key: widget.value() for key, widget in self.fields.items()}
 
+    def _project_owner(self):
+        optimization = getattr(self, "_two_stage_optimization_state", {})
+        view = getattr(self, "two_stage_optimization_view", None)
+        return (self._waveform_owner(), optimization.get("generation"),
+                view.table.currentRow() if view is not None else None)
+
     def load_json(self) -> None:
-        owner = self._waveform_owner()
+        owner = self._project_owner()
         path, _ = QFileDialog.getOpenFileName(self, "加载 LLC JSON", "", "JSON (*.json)")
         if not path:
             return
-        if self._closing or owner != self._waveform_owner():
+        if self._closing or owner != self._project_owner():
             return
         try:
-            spec, session, waveform_session = load_project(path, include_waveform=True)
+            spec, session, waveform_session, optimization_session = load_project(
+                path, include_waveform=True, include_optimization=True)
             prepared = None
             if session is not None:
                 import json
@@ -798,6 +813,8 @@ class LLCMainWindow(QMainWindow):
                 view.selected_component = waveform_session["component"]
                 self._waveform_plant_inputs = deepcopy(waveform_session["plant_inputs"])
                 view.request_current()
+            from .optimization_install import restore_two_stage_session
+            restore_two_stage_session(self, optimization_session)
             self._append_log(f"Loaded: {path}" + (
                 " — exact control inputs restored; Run and regenerate candidate before Apply."
                 if session is not None else ""))
@@ -805,9 +822,9 @@ class LLCMainWindow(QMainWindow):
             show_operation_issue(self, t("加载失败"), str(exc), critical=True)
 
     def save_json(self) -> None:
-        owner = self._waveform_owner()
+        owner = self._project_owner()
         path, _ = QFileDialog.getSaveFileName(self, "保存 LLC JSON", "llc_project.json", "JSON (*.json)")
-        if not path or self._closing or owner != self._waveform_owner():
+        if not path or self._closing or owner != self._project_owner():
             return
         try:
             self.spec = self._spec_from_widgets()
@@ -819,8 +836,10 @@ class LLCMainWindow(QMainWindow):
             from .solution_map_install import install_llc_solution_map
             install_llc_solution_map(self)
             session = self.digital_loop_view._session_capture()
+            from .optimization_install import capture_two_stage_session
             save_project(self.spec, path, analysis, control_session=session,
-                         waveform_session=self._waveform_session(self.spec))
+                         waveform_session=self._waveform_session(self.spec),
+                         optimization_session=capture_two_stage_session(self))
             self._append_log(f"Saved: {path}")
         except Exception as exc:
             show_operation_issue(self, t("保存失败"), str(exc), critical=True)
@@ -832,31 +851,49 @@ class LLCMainWindow(QMainWindow):
             self.statusBar().showMessage(f"输出目录：{path}")
 
     def export_formula_pdf(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "导出 LLC 公式计算书",
-            str(self.output_directory / "LLC_formula_worksheet.pdf"),
-            "PDF (*.pdf)",
-        )
-        if not path:
-            return
+        # Capture the clicked physical state before entering the nested dialog
+        # event loop. Workers never read live host.spec or publish external files.
+        import tempfile
+        from .optimization_install import publish_export_files
         try:
-            self.spec = self._spec_from_widgets()
+            spec = deepcopy(self._spec_from_widgets())
         except Exception as exc:
             show_operation_issue(self, t("参数错误"), str(exc), critical=False)
             return
-        analysis = (
-            self.system_analysis
-            if self.system_analysis and self.system_analysis.spec == self.spec
-            else None
+        owner = self._project_owner()
+        analysis_owner = self.system_analysis
+        analysis = analysis_owner if analysis_owner and analysis_owner.spec == spec else None
+
+        def current():
+            return (isValid(self) and not self._closing and owner == self._project_owner()
+                    and self.system_analysis is analysis_owner and self._spec_from_widgets() == spec)
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出 LLC 公式计算书", str(self.output_directory / "LLC_formula_worksheet.pdf"), "PDF (*.pdf)",
         )
-        self._run_worker(
-            "正在生成公式计算书…",
-            lambda: build_formula_pdf(
-                analysis or LLCSystemAnalyzer().analyze(self.spec), path
-            ),
-            self._formula_pdf_ready,
-        )
+        if not path or not current():
+            return
+
+        def calculate():
+            with tempfile.TemporaryDirectory(prefix="llc-formula-") as temporary:
+                result = build_formula_pdf(analysis or LLCSystemAnalyzer().analyze(spec),
+                                           Path(temporary) / "worksheet.pdf")
+                return Path(result).read_bytes()
+
+        calculate._llc_waveform_current = current
+
+        def ready(content):
+            if not current():
+                return
+            try:
+                output = Path(path)
+                publish_export_files(output.parent, {output.name: content})
+            except (OSError, ValueError) as exc:
+                self._worker_error(str(exc))
+                return
+            self._formula_pdf_ready(output)
+
+        self._run_worker("正在生成公式计算书…", calculate, ready)
 
     def _formula_pdf_ready(self, path: Path) -> None:
         self._append_log(f"Formula worksheet exported: {path}")
@@ -1164,7 +1201,8 @@ class LLCMainWindow(QMainWindow):
         comparison = self.multi_fidelity_analysis
         if analysis is None or comparison is None:
             return
-        if getattr(self, "_accepted_model_options", None) != self.model_comparison_view.options():
+        options = deepcopy(getattr(self, "_accepted_model_options", None))
+        if options != self.model_comparison_view.options():
             self._invalidate_model_comparison()
             return
         if not any(point.semiconductor_source == "TIME_DOMAIN_WAVEFORM"
@@ -1175,19 +1213,48 @@ class LLCMainWindow(QMainWindow):
         if analysis.spec != self._spec_from_widgets() or comparison.request.spec != analysis.spec:
             show_operation_issue(self, t("参数错误"), t("输入已改变，请重新计算 TD 损耗后导出。"), critical=False)
             return
+        owner = self._project_owner()
+        request_id = getattr(self, "_model_comparison_request_id", 0)
+
+        def current():
+            return (isValid(self) and not self._closing and owner == self._project_owner()
+                    and self.system_analysis is analysis and self.multi_fidelity_analysis is comparison
+                    and request_id == getattr(self, "_model_comparison_request_id", 0)
+                    and options == getattr(self, "_accepted_model_options", None)
+                    and options == self.model_comparison_view.options()
+                    and self._spec_from_widgets() == analysis.spec)
+
         directory = QFileDialog.getExistingDirectory(self, "导出当前 TD 损耗报告", str(self.output_directory))
-        if not directory:
+        if not directory or not current():
             return
+        import tempfile
         from ..analysis import export_multifidelity_analysis
         from ..report.export import export_calculation_book
+        from .optimization_install import publish_export_files
 
         def export():
-            paths = export_calculation_book(analysis, directory)
-            export_multifidelity_analysis(comparison, Path(directory) / "model_comparison")
-            return paths["report"]
+            with tempfile.TemporaryDirectory(prefix="llc-td-report-") as temporary:
+                root = Path(temporary)
+                paths = export_calculation_book(analysis, root)
+                export_multifidelity_analysis(comparison, root / "model_comparison")
+                files = {str(item.relative_to(root)): item.read_bytes()
+                         for item in root.rglob("*") if item.is_file()}
+                return files, str(Path(paths["report"]).relative_to(root))
 
-        self._run_worker(t("正在导出同一 TD 工况的损耗与波形报告…"), export,
-                         lambda path: self._append_log(f"TD loss report exported: {path}"))
+        export._llc_waveform_current = current
+
+        def ready(payload):
+            if not current():
+                return
+            files, report = payload
+            try:
+                published = publish_export_files(directory, files)
+            except (OSError, ValueError) as exc:
+                self._worker_error(str(exc))
+                return
+            self._append_log(f"TD loss report exported: {published[report]}")
+
+        self._run_worker(t("正在导出同一 TD 工况的损耗与波形报告…"), export, ready)
 
     def run_sr_design(self, options: dict | None = None) -> None:
         try:

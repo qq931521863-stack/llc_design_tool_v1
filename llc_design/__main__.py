@@ -520,26 +520,48 @@ def gui(config):
 
 @cli.command()
 @click.option("--config", type=click.Path(exists=True, dir_okay=False), default=None)
-@click.option("--profile", type=click.Choice(["quick", "full"]), default="quick",
+@click.option("--profile", type=click.Choice(["current", "quick", "full"]), default="quick",
               show_default=True)
 @click.option("--half-bridge", is_flag=True, default=False,
               help="Optimize a half-bridge LLC and scale the turns search accordingly")
-@click.option("--max-candidates", type=int, default=None,
-              help="Optional early stop for development runs")
-@click.option("--top", type=int, default=10, show_default=True)
+@click.option("--max-candidates", type=click.IntRange(1, 4096), default=None,
+              help="Candidate bound; two-stage supports at most 128 Stage-A candidates")
+@click.option("--top", type=click.IntRange(1, 100), default=10, show_default=True)
+@click.option("--two-stage", is_flag=True, default=False,
+              help="Explicitly run bounded FHA screening then actual TD-loss verification; requires a new output directory")
+@click.option("--verification-scope", type=click.Choice(["nominal", "critical"]), default="critical", show_default=True,
+              help="With --two-stage: nominal verifies only the nominal point; critical verifies the critical set")
+@click.option("--top-n", type=click.IntRange(1, 8), default=3, show_default=True,
+              help="With --two-stage: keep Top N after examining at most 4*N feasible candidates")
+@click.option("--candidate-rank", type=click.IntRange(1, 8), default=1, show_default=True,
+              help="With --two-stage: export this 1-based ranked, verified candidate")
 @click.option("--output", type=click.Path(file_okay=False), default="output/llc_optimization",
               show_default=True)
-def optimize(config, profile, half_bridge, max_candidates, top, output):
+def optimize(config, profile, half_bridge, max_candidates, top, output,
+             two_stage, verification_scope, top_n, candidate_rank):
     """Run multi-variable tank/turns/device/SR optimization."""
     spec = _base_spec(config)
     if half_bridge:
         spec = spec.clone(primary_topology=PrimaryTopology.HALF_BRIDGE,
                           primary_turns=max(1, round(spec.primary_turns / 2)))
-    cfg = OptimizationConfig.quick() if profile == "quick" else OptimizationConfig.full()
-    if spec.primary_topology == PrimaryTopology.HALF_BRIDGE:
+    if not two_stage:
+        from click.core import ParameterSource
+        context = click.get_current_context()
+        if any(context.get_parameter_source(name) == ParameterSource.COMMANDLINE
+               for name in ("verification_scope", "top_n", "candidate_rank")):
+            raise click.ClickException("--verification-scope/--top-n/--candidate-rank require --two-stage")
+    cfg = (OptimizationConfig(
+        (spec.ln_ratio,), (spec.q_full_load,), (spec.resonant_frequency_hz,),
+        (spec.primary_turns,), (spec.secondary_turns,), (spec.primary_device,),
+        (spec.sr_parallel_devices_per_position,)) if profile == "current" else
+        OptimizationConfig.quick() if profile == "quick" else OptimizationConfig.full())
+    if spec.primary_topology == PrimaryTopology.HALF_BRIDGE and profile != "current":
         cfg = replace(cfg, primary_turn_values=tuple(max(1, round(n / 2))
                                                      for n in cfg.primary_turn_values))
-    click.echo(f"Running {profile} sweep: up to {cfg.count} candidates")
+    if two_stage:
+        _optimize_two_stage(spec, cfg, max_candidates, top_n, candidate_rank, verification_scope, output)
+        return
+    click.echo(f"Running {profile} sweep: up to {cfg.count} candidates (Stage A / FHA)")
     result = LLCOptimizer().run(spec, cfg, max_candidates)
     out = Path(output)
     out.mkdir(parents=True, exist_ok=True)
@@ -554,6 +576,81 @@ def optimize(config, profile, half_bridge, max_candidates, top, output):
                if c in result.table.columns]
     click.echo(result.table.loc[:, columns].head(top).to_string(index=False))
     click.echo(f"Results: {out / 'optimization_all.csv'}")
+
+
+def _optimize_two_stage(spec, cfg, maximum_candidates, top_n, candidate_rank, scope, output):
+    """CLI adapter over the same bounded engine and provenance as the desktop."""
+    import json
+    from dataclasses import asdict
+    import pandas as pd
+    from .control.design_session import encode_model
+    from .optimization.two_stage import (DEFAULT_WEIGHTS, SESSION_MODEL_REVISION,
+        TwoStageLLCOptimizer, candidate_provenance)
+    bound = min(cfg.count, 128) if maximum_candidates is None else maximum_candidates
+    if bound > 128:
+        raise click.ClickException("Two-stage Stage-A bound must be 1..128")
+    if candidate_rank > top_n:
+        raise click.ClickException("--candidate-rank must not exceed --top-n")
+    # A two-stage result directory is one immutable request publication. Never
+    # replace current rejection metadata alongside a previous successful report.
+    out = Path(output)
+    try:
+        out.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise click.ClickException("Two-stage requires a new output directory; existing files are unchanged: " + str(out)) from exc
+    status_path = out / "run_status.json"
+    def status(state, **details):
+        status_path.write_text(json.dumps({"state": state, **details}, ensure_ascii=False,
+                                         indent=2, allow_nan=False), encoding="utf-8")
+    status("RUNNING", message="Incomplete request; no current accepted report yet")
+    solver = TimeDomainConfig(samples_per_cycle=256, output_cycles=1,
+        maximum_settling_cycles=120, shooting_max_evaluations=60, frequency_scan_points=5)
+    click.echo(f"Two-stage: Stage A <= {bound}; Stage B <= {top_n * 4}; TD scope={scope}")
+    if scope == "nominal":
+        click.echo("Only nominal-point TD losses are verified; all other point losses remain FHA.")
+    try:
+        result = TwoStageLLCOptimizer().run(spec, cfg, maximum_candidates=bound,
+            top_n=top_n, verification_scope=scope, time_domain=solver)
+    except (ValueError, TypeError) as exc:
+        status("FAILED", error=str(exc))
+        raise click.ClickException(str(exc)) from exc
+    result.stage_a.table.to_csv(out / "optimization_all.csv", index=False)
+    result.stage_a.pareto.to_csv(out / "optimization_pareto.csv", index=False)
+    accepted = [candidate for candidate in result.verified if not candidate.rejected]
+    selected = accepted[candidate_rank - 1] if candidate_rank <= len(accepted) else None
+    request = {"base_spec": encode_model(spec), "config": asdict(cfg),
+        "maximum_candidates": bound, "top_n": top_n, "ranking_weights": dict(DEFAULT_WEIGHTS),
+        "time_domain": asdict(solver), "verification_scope": scope}
+    provenance = {"model_revision": SESSION_MODEL_REVISION, "request": request,
+        "warnings": list(result.warnings), "candidates": [candidate_provenance(c) for c in result.verified],
+        "selected_candidate_id": candidate_provenance(selected)["candidate_id"] if selected else None}
+    record = out / "two_stage_verification.json"
+    record.write_text(json.dumps(provenance, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+    ranks = {id(candidate): rank for rank, candidate in enumerate(accepted, start=1)}
+    rows = [{"rank": ranks.get(id(c)),
+        "rejected": c.rejected, "reason": c.reject_reason, "ln": c.spec.ln_ratio,
+        "q_full": c.spec.q_full_load, "fr_hz": c.spec.resonant_frequency_hz,
+        "td_scope": scope, "td_scope_worst_loss_w": c.rank_metrics.get("total_loss_w"),
+        "td_scope_minimum_efficiency": c.rank_metrics.get("efficiency"), "zvs_margin_worst": c.zvs_margin_worst,
+        "fha_td_validity": c.fha_td_validity.value} for c in result.verified]
+    table = pd.DataFrame(rows)
+    table.to_csv(out / "two_stage_candidates.csv", index=False)
+    if not table.empty:
+        click.echo(table.to_string(index=False))
+    for warning in result.warnings:
+        click.echo(warning)
+    if selected is None or selected.analysis is None:
+        status("REJECTED", selected_candidate_id=None, evidence=record.name)
+        raise click.ClickException(f"No verified candidate at rank {candidate_rank}; rejection/UNKNOWN evidence: {record}")
+    directory = out / "selected_candidate"
+    paths = export_calculation_book(selected.analysis, directory)
+    (directory / "optimization_provenance.json").write_text(json.dumps({
+        "model_revision": SESSION_MODEL_REVISION, "request": request,
+        "selected_candidate": candidate_provenance(selected)}, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+    status("COMPLETE", selected_candidate_id=provenance["selected_candidate_id"], evidence=record.name,
+           report=str(Path(paths["report"]).relative_to(out)))
+    click.echo(f"Selected rank {candidate_rank}, TD scope={scope}; report: {paths['report']}")
+    click.echo(f"Evidence: {record}")
 
 
 @cli.command("write-template")

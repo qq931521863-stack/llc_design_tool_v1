@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import itertools
 import math
-from typing import Iterable
+from typing import Callable, Iterable
 
 import pandas as pd
 
@@ -23,6 +23,25 @@ class OptimizationConfig:
     secondary_turn_values: tuple[int, ...]
     primary_devices: tuple[str, ...]
     sr_parallel_values: tuple[int, ...]
+
+    def validate(self) -> None:
+        """Reject empty, non-finite and non-physical axes before enumeration."""
+        integer_axes = ("primary_turn_values", "secondary_turn_values", "sr_parallel_values")
+        for name in ("ln_values", "q_values", "fr_values_hz", *integer_axes):
+            values = getattr(self, name)
+            if not isinstance(values, (tuple, list)) or not 1 <= len(values) <= 128:
+                raise ValueError(f"{name}: provide 1..128 values")
+            for value in values:
+                if (type(value) not in (int, float) or not math.isfinite(value) or value <= 0
+                        or (name in integer_axes and type(value) is not int)):
+                    raise ValueError(f"{name}: positive finite {'integers' if name in integer_axes else 'numbers'} required")
+                limit = 128 if name == "sr_parallel_values" else (4096 if name in integer_axes else None)
+                if limit is not None and value > limit:
+                    raise ValueError(f"{name}: value exceeds supported bound {limit}")
+        if (not isinstance(self.primary_devices, (tuple, list)) or not 1 <= len(self.primary_devices) <= 128
+                or any(not isinstance(value, str) or not value.strip() or len(value) > 256
+                       for value in self.primary_devices)):
+            raise ValueError("primary_devices: provide 1..128 device identifiers")
 
     @classmethod
     def quick(cls) -> "OptimizationConfig":
@@ -69,8 +88,13 @@ class LLCOptimizer:
 
     def run(self, base_spec: LLCDesignSpec,
             config: OptimizationConfig | None = None,
-            maximum_candidates: int | None = None) -> OptimizationResult:
+            maximum_candidates: int | None = None, *,
+            cancelled: Callable[[], bool] | None = None) -> OptimizationResult:
         cfg = config or OptimizationConfig.quick()
+        cfg.validate()
+        base_spec.validate()
+        if maximum_candidates is not None and (type(maximum_candidates) is not int or maximum_candidates < 1):
+            raise ValueError("maximum_candidates must be a positive integer")
         combinations = itertools.product(
             cfg.ln_values, cfg.q_values, cfg.fr_values_hz,
             cfg.primary_turn_values, cfg.secondary_turn_values,
@@ -78,6 +102,9 @@ class LLCOptimizer:
         rows: list[dict] = []
         analyses: list[SystemAnalysis | None] = []
         for index, (ln, q, fr, np_turns, ns_turns, primary_device, sr_parallel) in enumerate(combinations):
+            if cancelled is not None and cancelled():
+                from concurrent.futures import CancelledError
+                raise CancelledError("LLC optimization cancelled")
             if maximum_candidates is not None and index >= maximum_candidates:
                 break
             spec = base_spec.clone(

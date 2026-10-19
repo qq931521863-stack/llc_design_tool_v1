@@ -35,7 +35,7 @@ def _normalize(data: dict) -> dict:
     return normalized
 
 
-def load_project(path: str | Path, *, include_waveform: bool = False):
+def load_project(path: str | Path, *, include_waveform: bool = False, include_optimization: bool = False):
     """Read legacy specs and versioned projects without trusting saved evidence."""
     from ..control.design_session import (
         MAX_FILE_BYTES,
@@ -52,6 +52,7 @@ def load_project(path: str | Path, *, include_waveform: bool = False):
         raise ValueError("Project JSON must be an object")
     session = None
     waveform_session = None
+    optimization_session = None
     if "spec" in document:
         if not isinstance(document["spec"], dict):
             raise ValueError("Project spec must be an object")
@@ -66,6 +67,7 @@ def load_project(path: str | Path, *, include_waveform: bool = False):
             if session["workspace"] != "llc":
                 raise ValueError("An LLC project cannot contain a different control workspace")
         waveform_session = document.get("waveform_session")
+        optimization_session = document.get("optimization_session")
         data = document["spec"]
     else:
         data = document
@@ -74,9 +76,15 @@ def load_project(path: str | Path, *, include_waveform: bool = False):
     encode_model(spec)
     if waveform_session is not None:
         validate_waveform_session(waveform_session, spec)
+    if optimization_session is not None:
+        from ..optimization.two_stage import validate_two_stage_session
+        optimization_session = validate_two_stage_session(optimization_session)
+    result = (spec, session)
     if include_waveform:
-        return spec, session, waveform_session
-    return spec, session
+        result += (waveform_session,)
+    if include_optimization:
+        result += (optimization_session,)
+    return result
 
 
 def load_spec(path: str | Path) -> LLCDesignSpec:
@@ -101,7 +109,8 @@ def _spec_payload(spec: LLCDesignSpec) -> dict[str, Any]:
 
 def create_project_document(spec: LLCDesignSpec, analysis: Any | None = None,
                             control_session: dict | None = None,
-                            waveform_session: dict | None = None) -> dict[str, Any]:
+                            waveform_session: dict | None = None,
+                            optimization_session: dict | None = None) -> dict[str, Any]:
     from ..validation.provenance import validate_bundled_data
 
     analysis_state: dict[str, Any] = {"status": "not_run"}
@@ -136,12 +145,16 @@ def create_project_document(spec: LLCDesignSpec, analysis: Any | None = None,
         document["control_session"] = control_session
     if waveform_session is not None:
         document["waveform_session"] = validate_waveform_session(waveform_session, spec)
+    if optimization_session is not None:
+        from ..optimization.two_stage import validate_two_stage_session
+        document["optimization_session"] = validate_two_stage_session(optimization_session)
     return document
 
 
 def save_project(spec: LLCDesignSpec, path: str | Path, analysis: Any | None = None,
-                 control_session: dict | None = None, waveform_session: dict | None = None) -> Path:
-    data = create_project_document(spec, analysis, control_session, waveform_session)
+                 control_session: dict | None = None, waveform_session: dict | None = None,
+                 optimization_session: dict | None = None) -> Path:
+    data = create_project_document(spec, analysis, control_session, waveform_session, optimization_session)
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     from ..control.design_session import MAX_FILE_BYTES
