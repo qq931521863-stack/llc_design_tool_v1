@@ -10,6 +10,15 @@ import zipfile
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+SOURCE_SHA = 'e8751d37ceb975ae0e8e13b374773e419de6643b'
+# Exact bytes from SOURCE_SHA:.github/workflows/build-release.yml, the immutable
+# source pinned by complete-v942-release.yml. Keep the historical contract local
+# so shallow checkouts need neither Git history nor network access to test it.
+ORIGINAL = Path(__file__).with_name('fixtures') / 'build-release-v942.yml'
+
+
+def test_original_workflow_fixture_is_immutable():
+    assert hashlib.sha256(ORIGINAL.read_bytes()).hexdigest() == 'ff31ffe81dad2833b83d35588fc9b32d54c6380ca8b56c7132385fb95228f8fd'
 
 
 def _script(text, heading):
@@ -22,7 +31,7 @@ def _gate():
     recovery = (ROOT / '.github/workflows/complete-v942-release.yml').read_text(encoding='utf-8')
     namespace = {'__name__': 'recovery_contract_test'}
     exec(compile(_script(recovery, 'Verify exact v9.4.2 assets and EOL contract'), 'recovery', 'exec'), namespace)
-    original = _script((ROOT / '.github/workflows/build-release.yml').read_text(encoding='utf-8'),
+    original = _script(ORIGINAL.read_text(encoding='utf-8'),
                        'Verify both archives and write checksums')
     return original, namespace['rewrite_gate']
 
@@ -45,7 +54,7 @@ def _fixture(tmp_path, monkeypatch, *, crlf, defect=None):
         if defect == 'wrong-raw-proof' and runner == 'Windows':
             sha = hashlib.sha256(data).hexdigest()
         proof = dict(success=True, frozen=True, version='9.4.2', platform=platform,
-                     workspaces=['llc', 'pfc', 'control', 'fra', 'dab'], guided_design=True,
+                     workspaces=['llc', 'pfc', 'control', 'fra'], guided_design=True,
                      brand_taxonomy_sha256=sha)
         (tmp_path / f'release/bundle-proof-{runner}.json').write_text(json.dumps(proof), encoding='utf-8')
         with zipfile.ZipFile(tmp_path / 'release' / name, 'w') as z:
@@ -62,16 +71,28 @@ def test_publication_accepts_only_source_lf_or_crlf(tmp_path, monkeypatch, crlf)
     if crlf:
         with pytest.raises(AssertionError):
             exec(compile(original, 'original-publisher', 'exec'), {})
+    else:
+        exec(compile(original, 'original-publisher', 'exec'), {})
     exec(compile(rewrite(original), 'fixed-publisher', 'exec'), {})
-    assert len((tmp_path / 'release/SHA256SUMS.txt').read_text().splitlines()) == 2
+    checksums = (tmp_path / 'release/SHA256SUMS.txt').read_text(encoding='utf-8').splitlines()
+    assert len(checksums) == 2
+    assert set(checksums) == {
+        f'{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}'
+        for archive in (tmp_path / 'release').glob('*.zip')
+    }
 
 
-@pytest.mark.parametrize('defect', ['changed-content-with-matching-proof', 'wrong-raw-proof'])
-def test_publication_keeps_source_and_raw_proof_checks(tmp_path, monkeypatch, defect):
+@pytest.mark.parametrize('defect, message', [
+    ('changed-content-with-matching-proof', 'runtime taxonomy differs from tagged source'),
+    ('wrong-raw-proof', 'missing/wrong taxonomy: PowerDesignTool-Windows-x64.zip'),
+])
+def test_publication_keeps_source_and_raw_proof_checks(tmp_path, monkeypatch, defect, message):
     original, rewrite = _gate()
+    fixed = rewrite(original)
     _fixture(tmp_path, monkeypatch, crlf=True, defect=defect)
-    with pytest.raises(AssertionError):
-        exec(compile(rewrite(original), 'fixed-publisher', 'exec'), {})
+    with pytest.raises(AssertionError, match=message):
+        exec(compile(fixed, 'fixed-publisher', 'exec'), {})
+    assert not (tmp_path / 'release/SHA256SUMS.txt').exists()
 
 
 def test_recovery_refuses_unexpected_tagged_publisher():
@@ -89,7 +110,7 @@ def test_recovery_requires_original_successful_jobs_and_exact_assets():
     text = (ROOT / '.github/workflows/complete-v942-release.yml').read_text(encoding='utf-8')
     assert "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'" in text
     for value in ('36120489780', '108024571430', '108027671777', '108027671853',
-                  'e8751d37ceb975ae0e8e13b374773e419de6643b', 'len(files) == 5',
+                  SOURCE_SHA, 'len(files) == 5',
                   'refusing to overwrite public release'):
         assert value in text
 
