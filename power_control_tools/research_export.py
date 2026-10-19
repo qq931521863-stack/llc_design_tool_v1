@@ -192,7 +192,8 @@ def build_llc_research_export(analysis: DigitalLoopAnalysis) -> ResearchExport:
                                  input_unit=in_unit, output_unit=out_unit,
                                  source="responses." + key))
     input_kind_note = ()
-    if small.control_input_kind.value != "frequency_hz":
+    from llc_design.control.linearize import ControlInputKind
+    if ControlInputKind(small.control_input_kind) != ControlInputKind.FREQUENCY_HZ:
         input_kind_note = ("SOURCE MODEL CAVEAT: the LLC mixed-loop builder multiplies its power stage by an FM slope in Hz/pu even for a non-Hz control input. These samples preserve that source behavior; the Gfm_s and full-loop physical unit conversion is not validated. G_s retains its original input units.",)
     from llc_design.control.candidate_evidence import llc_export_evidence
     metadata = {
@@ -325,6 +326,35 @@ def build_pfc_research_export(analysis: PFCControlLabAnalysis, loop: str = "both
                     "The original frequency grid is not clipped at individual Nyquist frequencies. Samples above a layer's Nyquist rate are source multirate evaluations, not an independently valid unique discrete system; counts are recorded in metadata."))
 
 
+def _coefficient_checks(model: ResearchModel, frequencies) -> dict[str, Any]:
+    """Select well-conditioned TF checks without deleting source samples.
+
+    At an integrator's aliased pole a finite floating-point value is not an
+    accurate reference. Independent polynomial orientations can disagree by
+    percent even with byte-identical coefficients. The relative denominator
+    condition below bounds cancellation; it is not a changed response tolerance.
+    """
+    if not model.rational:
+        return {"coefficient_reference_indices": [], "ill_conditioned_indices": []}
+    f = np.asarray(frequencies, dtype=float)
+    a = np.asarray(model.denominator, dtype=float)
+    a = a / np.max(abs(a))
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        if model.domain == "discrete":
+            q = np.exp(-2j * np.pi * f * model.sample_time_s)
+            denominator = np.polynomial.polynomial.polyval(q, a)
+            bound = np.full(f.shape, np.sum(abs(a)))
+        else:
+            point = 2j * np.pi * f
+            denominator = np.polyval(a, point)
+            bound = np.polyval(abs(a), abs(point))
+        condition = abs(denominator) / bound
+    eligible = np.flatnonzero(np.isfinite(condition) & (condition > 1e-8))
+    indices = eligible[np.linspace(0, len(eligible)-1, min(5, len(eligible)), dtype=int)].tolist() if len(eligible) else []
+    return {"coefficient_reference_indices": indices,
+            "ill_conditioned_indices": np.flatnonzero(~np.isfinite(condition) | (condition <= 1e-8)).tolist()}
+
+
 def _payload(bundle: ResearchExport) -> dict[str, Any]:
     indices = sorted(set(np.linspace(0, len(bundle.frequencies_hz) - 1, min(5, len(bundle.frequencies_hz)), dtype=int).tolist()))
     return {
@@ -332,6 +362,7 @@ def _payload(bundle: ResearchExport) -> dict[str, Any]:
         "frequencies_hz": bundle.frequencies_hz, "reference_indices": indices,
         "loops": [asdict(loop) for loop in bundle.loops],
         "models": [{**{key: value for key, value in asdict(m).items() if key != "response"},
+                    **_coefficient_checks(m, bundle.frequencies_hz),
                     "response_real": [z.real for z in m.response],
                     "response_imag": [z.imag for z in m.response],
                     "reference_real": [m.response[i].real for i in indices],
@@ -372,6 +403,7 @@ responses = {name: np.asarray(item["response_real"]) + 1j * np.asarray(item["res
              for name, item in model_info.items()}
 models = {}  # Rational SciPy TF objects only. Mixed models remain complex samples.
 poles, zeros = {}, {}
+coefficient_verification = {}  # Numerical checks only; no hardware qualification.
 
 
 def evaluate_rational(name, frequency_hz):
@@ -411,6 +443,11 @@ for name, item in model_info.items():
     if not item["denominator"]:
         continue
     b, a = np.asarray(item["numerator"]), np.asarray(item["denominator"])
+    check_indices = np.asarray(item["coefficient_reference_indices"], dtype=int)
+    if item["ill_conditioned_indices"]:
+        print(name + ": numerical TF self-check excludes " + str(len(item["ill_conditioned_indices"]))
+              + " ill-conditioned pole samples (relative denominator <=1e-8); original samples and coefficients retained.")
+
     if item["domain"] == "discrete":
         # SciPy TF uses descending z powers, not z^-1. Multiply BOTH original
         # polynomials by the same z^order; append zeros, never reverse arrays.
@@ -423,15 +460,21 @@ for name, item in model_info.items():
         # common-order padding, so integer delays remain in the z denominator.
         models[name].num = np.trim_zeros(bz, "f") if np.any(bz) else np.asarray([0.0])
         models[name].den = np.trim_zeros(az, "f")
-        _, check = signal.dfreqresp(models[name], w=omega_rad_s[reference_indices] * item["sample_time_s"])
+        _, check = signal.dfreqresp(models[name], w=omega_rad_s[check_indices] * item["sample_time_s"])
     else:
         models[name] = signal.TransferFunction([1.0], [1.0])
         models[name].num = np.trim_zeros(b, "f") if np.any(b) else np.asarray([0.0])
         models[name].den = np.trim_zeros(a, "f")
-        _, check = signal.freqresp(models[name], w=omega_rad_s[reference_indices])
-    assert_response(evaluate_rational(name, frequencies_hz[reference_indices]), reference,
-                    name + " coefficient/reference mismatch")
-    assert_response(check, reference, name + " SciPy TF orientation/reference mismatch")
+        _, check = signal.freqresp(models[name], w=omega_rad_s[check_indices])
+    if check_indices.size:
+        coefficient_reference = responses[name][check_indices]
+        assert_response(evaluate_rational(name, frequencies_hz[check_indices]), coefficient_reference,
+                        name + " coefficient/reference mismatch")
+        assert_response(check, coefficient_reference, name + " SciPy TF orientation/reference mismatch")
+        coefficient_verification[name] = "PASS_AT_WELL_CONDITIONED_SAMPLES"
+    else:
+        coefficient_verification[name] = "NOT_RUN"
+        print(name + ": coefficient numerical self-check NOT_RUN; no well-conditioned source frequency sample.")
     # Use these dictionaries for P/Z: SciPy tf2zpk/.zeros can discard very
     # small numerator coefficients while normalizing a transfer function.
     poles[name], zeros[name] = exact_roots(models[name].den), exact_roots(models[name].num)
@@ -562,8 +605,13 @@ def render_matlab(bundle: ResearchExport) -> str:
                 args = ""
             lines.extend([n + " = tf(" + b + ", " + a + args + ");",
                           "models." + n + " = " + n + ";",
-                          "check = reshape(freqresp(" + n + ", omega_rad_s(reference_indices)), 1, []);",
-                          "assert(all(abs(check-reference) <= 5e-13*max(max(abs(reference)),realmin)+2e-6*abs(reference)), 'TF coefficient/reference mismatch: " + n + "');",
+                          "coefficient_indices = " + _matlab_vector([i+1 for i in item["coefficient_reference_indices"]]) + ";",
+                          "% Numerical TF checks exclude relative-denominator <=1e-8 pole samples; original samples/coefficients retained.",
+                          "if ~isempty(coefficient_indices)",
+                          "  reference = responses." + n + "(coefficient_indices);",
+                          "  check = reshape(freqresp(" + n + ", omega_rad_s(coefficient_indices)), 1, []);",
+                          "  assert(all(abs(check-reference) <= 5e-13*max(max(abs(reference)),realmin)+2e-6*abs(reference)), 'TF coefficient/reference mismatch: " + n + "');",
+                          "else", "  warning('Coefficient numerical self-check NOT_RUN: " + n + "');", "end",
                           "poles." + n + " = pole(" + n + "); zeros." + n + " = zero(" + n + ");"])
         else:
             lines.extend(["% Frequency data only. FRD uses Ts=0 as a container convention, not a continuous/full-loop dynamics claim.",

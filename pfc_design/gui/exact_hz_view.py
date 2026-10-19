@@ -1,10 +1,12 @@
 """First-class exact-H(z) / C99 handoff page for TTPL PFC."""
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import numpy as np
-
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -16,7 +18,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtGui import QFontDatabase
 
 from pfc_design.control import (
     PFCControlHandoff,
@@ -37,6 +38,8 @@ class TTPLExactHzView(QWidget):
         super().__init__(parent)
         self.analysis: PFCControlLabAnalysis | None = None
         self.handoff: PFCControlHandoff | None = None
+        self._busy = False
+        self._export_revision = 0
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -131,6 +134,7 @@ class TTPLExactHzView(QWidget):
         )
 
     def set_analysis(self, analysis: PFCControlLabAnalysis) -> None:
+        self._export_revision += 1
         try:
             handoff = build_pfc_control_handoff(analysis)
             assert_handoff_matches_analysis(analysis, handoff)
@@ -150,8 +154,8 @@ class TTPLExactHzView(QWidget):
 
         self.analysis = analysis
         self.handoff = handoff
-        self.export_button.setEnabled(True)
-        self.codegen_button.setEnabled(True)
+        self.export_button.setEnabled(not self._busy)
+        self.codegen_button.setEnabled(not self._busy)
         self.status.setText(
             f"PASS · analyzed H(z) frozen with no S2Z · power_sim max relative frequency-response error: "
             f"current={current_error:.3e}, voltage={voltage_error:.3e}"
@@ -187,34 +191,59 @@ class TTPLExactHzView(QWidget):
         )
 
     def _export_manifest(self) -> None:
-        if self.analysis is None:
+        if self.analysis is None or self._busy:
             return
+        analysis, handoff, revision = self.analysis, self.handoff, self._export_revision
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export TTPL Exact H(z) Manifest",
             "ttpl_exact_hz_manifest.json",
             "JSON (*.json)",
         )
-        if not path:
+        if (not path or self._busy or self.analysis is not analysis
+                or self.handoff is not handoff or self._export_revision != revision):
             return
         try:
-            target = export_pfc_exact_hz_manifest(self.analysis, Path(path))
+            target = export_pfc_exact_hz_manifest(analysis, Path(path))
         except Exception as exc:
             QMessageBox.critical(self, "Exact H(z) Export", str(exc))
             return
         QMessageBox.information(self, "Exact H(z) Export", f"Exported:\n{target}")
 
     def _generate_c99(self) -> None:
-        if self.analysis is None:
+        if self.analysis is None or self._busy:
             return
+        analysis, handoff, revision = self.analysis, self.handoff, self._export_revision
         directory = QFileDialog.getExistingDirectory(self, "Select TTPL C99 output directory")
-        if not directory:
+        if (not directory or self._busy or self.analysis is not analysis
+                or self.handoff is not handoff or self._export_revision != revision):
             return
         try:
             result = generate_ttpl_control_code_exact(
-                self.analysis,
+                analysis,
                 Path(directory) / "ttpl_control_generated",
             )
+            # This is a semantic integration template, not a qualified hardware
+            # image. Preserve the distinction between identity/stability checks
+            # and C99 numerical execution, which this generator does not run.
+            verification = {
+                "schema": "ttpl-c99-integration-verification-v1",
+                "linear_coefficient_identity": "PASS",
+                "stability_configuration_gate": "PASS" if result.validation.passed else "FAIL",
+                "float32_execution": "NOT_RUN",
+                "hardware_qualification": "NOT_RUN",
+                "scope": "Semantic ControlStep/ISR integration template; BSP excluded.",
+                "source_sha256": {
+                    path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in result.files.values() if path.suffix in {".h", ".c"}
+                },
+            }
+            manifest_path = result.files["exact_hz_manifest"]
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["codegen_verification"] = verification
+            manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            (result.directory / "c99_verification.json").write_text(
+                json.dumps(verification, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         except Exception as exc:
             QMessageBox.critical(self, "TTPL C99 Generation", str(exc))
             return
@@ -222,10 +251,14 @@ class TTPLExactHzView(QWidget):
         QMessageBox.information(
             self,
             "TTPL C99 Generation",
-            f"Generated exact-H(z)-audited C99 package:\n{result.directory}\n\n{files}",
+            f"Generated exact-H(z)-audited C99 package:\n{result.directory}\n\n{files}\n\n"
+            "C99 numerical execution verification: NOT_RUN. Not hardware-qualified.",
         )
 
     def set_busy(self, busy: bool) -> None:
+        if self._busy != busy:
+            self._export_revision += 1
+        self._busy = busy
         enabled = (not busy) and self.analysis is not None
         self.export_button.setEnabled(enabled)
         self.codegen_button.setEnabled(enabled)

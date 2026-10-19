@@ -46,7 +46,7 @@ from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
 from llc_design.gui.help import install_help
 from llc_design.gui.i18n_ui import install_language_selector
-from power_control_tools.codegen import export_c99_filter, render_c99_single_file, verify_c99_filter
+from power_control_tools.codegen import export_verified_c99_filter, render_c99_single_file, verify_c99_filter
 from power_control_tools.controllers import CONTROLLER_LABELS, EXACT_CONTROLLER, controller_parameter_keys, design_controller
 from power_control_tools.discretize import discretize_transfer_function
 from power_control_tools.fra.analysis import (
@@ -1242,14 +1242,13 @@ class FRALoopDesignerWindow(QMainWindow):
         if not path.lower().endswith(".h"):
             path += ".h"
         try:
-            out = export_c99_filter(controller, path, prefix=prefix)
-            verify = verify_c99_filter(controller, out)
+            out, verify = export_verified_c99_filter(controller, path, prefix=prefix, verifier=verify_c99_filter)
             if not verify.available or not verify.passed:
                 QMessageBox.warning(
                     self, t("C99 导出失败"),
                     f"{out.file_path}\n\n"
                     + t("系数文件已写入，但验证未通过；请勿用于控制硬件。")
-                    + f"\n{verify.message}\nImpulse error={verify.impulse_max_abs_error:.3e}\nStep error={verify.step_max_abs_error:.3e}",
+                    + f"\n{verify.status}: {verify.message}\nImpulse error={verify.impulse_max_abs_error:.3e}\nStep error={verify.step_max_abs_error:.3e}",
                 )
                 return
             QMessageBox.information(

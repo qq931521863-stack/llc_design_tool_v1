@@ -7,12 +7,14 @@ Version 9.9.0 and release preflight changes remain local preparation only.
 A new requirement-by-requirement audit is checking actual consumers and common
 minimum deliverables, rather than treating bounded row labels as completion.
 Work is continuing on explicit T05 floating-node dynamics, QR valley/data options
-and PSFB finite-Coss commutation; these extensions are not yet accepted or enabled.
+and PSFB finite-Coss commutation; each remains opt-in with explicit source parameters.
+T05 has independent circuit acceptance; QR fixes and final T18 integration are in progress.
 Concrete audit findings include calculator-session model identity, everyday Chinese
 result presentation and the precise documented Type-I network setup. A03 is now
-PARTIAL: TwoStageLLCOptimizer has model/tests but no production desktop/CLI/API
-caller. Its asynchronous candidate/application/report workflow is being added.
-A report/corner junction-temperature identity mismatch has an independent red test.
+PARTIAL pending final independent review: its newly implemented desktop and explicit
+CLI consumers now run actual TD candidates, Apply, save/restore and report. The
+report/corner temperature mismatch is repaired and independently verified. A05
+real C99/FRA/LLC/PFC export boundaries are independently accepted after the fixes.
 
 ## 9.9.0 integration
 
@@ -87,7 +89,9 @@ remain in the source tree.
 - Explicitly correct the earlier broad A03/A05 acceptance: real two-stage LLC
   candidate consumers were absent, and LLC/Control Tools could announce successful
   C99 generation despite actual float32 verification failure. Those are being
-  implemented and independently reviewed; source-engine tests are insufficient.
+  implemented with actual consumers; A05 has independent red/green acceptance,
+  while A03 final independent report/CLI review remains in progress. Source-engine
+  tests alone are insufficient.
 - Completed focused repairs: same-temperature nominal/corner reports, exact
   integrator-branch action/help, and toolbox model identity/Chinese presentation.
   See the validation report for red/green evidence and independent checks.

@@ -184,7 +184,7 @@ def test_matlab_uses_r2014b_compatible_constructs_and_exact_controller_coefficie
     assert "Lv = frd(" in script and "Gv = frd(" in script
     assert "Gv_base_s = tf(" in script
     assert "models.Lv = Lv" in script
-    assert "freqresp(Ci_z, omega_rad_s(reference_indices))" in script
+    assert "freqresp(Ci_z, omega_rad_s(coefficient_indices))" in script
     assert "Ts=0 as a container convention" in script
     assert "jsondecode(" not in script
     assert "tiledlayout(" not in script

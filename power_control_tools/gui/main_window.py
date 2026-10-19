@@ -46,7 +46,7 @@ from llc_design.i18n import t
 from llc_design.user_messages import show_operation_issue
 from power_control_tools.analysis import analyze_digital_filter
 from power_control_tools.codegen import (
-    export_c99_filter,
+    export_verified_c99_filter,
     render_c99_single_file,
     verify_c99_filter,
 )
@@ -519,8 +519,13 @@ class ControlToolsMainWindow(QMainWindow):
             return
         if not path.lower().endswith('.h'): path += '.h'
         try:
-            out = export_c99_filter(digital, path, prefix=prefix); verify = verify_c99_filter(digital, out)
+            out, verify = export_verified_c99_filter(digital, path, prefix=prefix, verifier=verify_c99_filter)
             self.c99.setPlainText(out.file_path.read_text(encoding='utf-8') + f"\n/* Verification: {verify.message}; impulse={verify.impulse_max_abs_error:.3e}; step={verify.step_max_abs_error:.3e} */\n")
+            if not verify.available or not verify.passed:
+                QMessageBox.warning(self, t("C99 导出失败"),
+                                    t("系数文件已写入，但验证未通过；请勿用于控制硬件。")
+                                    + f"\n{out.file_path}\n{verify.status}: {verify.message}")
+                return
             QMessageBox.information(self, t("C99 导出完成"), f"单文件已生成:\n{out.file_path}\n\nVerification: {verify.message}")
         except Exception as exc:
             show_operation_issue(self, t("C99 导出失败"), str(exc), critical=True)

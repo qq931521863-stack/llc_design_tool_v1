@@ -69,7 +69,7 @@ from .sense_schematic import AnalogSenseSchematic
 from .research_export import ExportResearchPanel
 from .. import theme
 from power_codegen import generate_llc_control_code
-from power_control_tools.codegen import export_c99_filter, verify_c99_filter
+from power_control_tools.codegen import export_verified_c99_filter, verify_c99_filter
 from power_control_tools.models import DigitalTransferFunction as ToolDigitalTransferFunction
 
 
@@ -825,8 +825,13 @@ class DigitalLoopView(QWidget):
                     name=analysis.controller.name,
                     source=analysis.controller_source,
                 )
-                exported = export_c99_filter(tf, Path(directory), prefix="LLC_VLOOP")
-                verification = verify_c99_filter(tf, exported)
+                exported, verification = export_verified_c99_filter(
+                    tf, Path(directory), prefix="LLC_VLOOP", verifier=verify_c99_filter)
+                if not verification.available or not verification.passed:
+                    QMessageBox.warning(self, t("C99 代码生成失败"),
+                                        t("系数文件已写入，但验证未通过；请勿用于控制硬件。")
+                                        + f"\n{exported.file_path}\n{verification.status}: {verification.message}")
+                    return
                 detail = (
                     f"已生成单文件：{exported.file_path}\n"
                     f"C99 float32_t / DF2T-SOS 验证："

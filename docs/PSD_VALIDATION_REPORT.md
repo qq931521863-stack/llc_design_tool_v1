@@ -245,3 +245,41 @@ and explicit option identity; their desktop/schematic integration and separate
 physical review are still in progress. No full integration acceptance is inferred
 from the author's 32 T05 / 37 QR kernel tests alone. T18 commutation remains in
 implementation. Publication, tag creation and remote writes remain paused.
+
+## A05 actual-consumer closure (2026-10-19)
+
+The earlier A05 broad acceptance was incorrect at real desktop export boundaries:
+LLC and Control Tools could show success for a float32 mismatch, and FRA left an
+unblocked failed header. All three now use one guarded export path. The initial
+artifact is compile-blocked NOT_RUN before fallible work; only actual host-gcc
+PASS releases the unchanged generated header. FAIL/NOT_RUN remain diagnostic
+`#error` artifacts with atomic SHA-256-bound b/a/Fs/status sidecars. Raw rendering
+APIs remain explicitly unverified building blocks, not desktop acceptance APIs.
+PFC exact exports additionally enforce busy/revision/analysis/handoff ownership
+before and after native dialogs; its semantic ISR template labels configuration,
+float32 and hardware verification separately rather than inventing a board gate.
+
+Independent actual-launcher probes exercised PSD T20/T21 → exact Control Tools
+H(z) → LLC real worker → project save/load → restored waveform worker → digital
+reanalyze → real Python research-script execution. Coefficients, sample time and
+source/operating metadata remained exact. FRA measured-plant, complete-loop and
+identified-plant paths each passed actual save/open and compiled C execution.
+Independent PFC PI/PIF/2P2Z × voltage/current runtime executions include saturation,
+anti-windup, reset and asymmetric coefficients. Maximum error versus separate
+recurrence equations was 1.272e-5; versus Python runtime 7.656e-6. This is host
+float32 semantic evidence, not an MCU/BSP timing or hardware claim.
+
+The real LLC research consumer exposed a canonical string/Enum boundary that the
+old constructor tests missed. The actual PFC 2P2Z export exposed an aliased
+integrator pole where two polynomial orientations disagreed despite identical
+coefficients. Repairs preserve all coefficients and all source samples. Only the
+cross-library numerical self-check excludes relative denominator conditions
+≤1e-8, explicitly records the affected indices, and reports NOT_RUN when no
+well-conditioned sample exists. The original comparison tolerance is unchanged;
+a changed well-conditioned coefficient still fails. Python scripts were executed;
+MATLAB output was inspected but MATLAB execution is not claimed.
+
+Focused evidence: 15 new guarded-export tests, 16 PFC ownership tests, 462 existing
+compatibility tests, 63 combined consumer tests, and 25 research-export tests
+passed in separate runs. Independent positive probes reran after both research
+repairs. These counts overlap and are not a fresh full-suite total.
