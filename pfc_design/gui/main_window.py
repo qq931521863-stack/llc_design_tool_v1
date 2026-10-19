@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QWidget,
 )
+from shiboken6 import isValid
 
 from llc_design.gui import theme
 from llc_design.gui.help import install_help
@@ -305,18 +306,31 @@ class PFCMainWindow(QMainWindow):
         request_id = self._worker_request_id
         self.set_busy(True, label)
         worker = FunctionWorker(function)
+        # The pool releases the runnable after run() returns; this registry
+        # keeps its signals alive until their queued completion is handled.
+        worker.setAutoDelete(True)
         self._active_workers.append(worker)
+        def current():
+            return (isValid(self) and worker in self._active_workers
+                    and request_id == self._worker_request_id)
         worker.signals.result.connect(
-            lambda result: callback(result) if request_id == self._worker_request_id else None)
+            lambda result: callback(result) if current() else None)
         worker.signals.error.connect(
-            lambda error: self._worker_error(error) if request_id == self._worker_request_id else None)
+            lambda error: self._worker_error(error) if current() else None)
         worker.signals.finished.connect(lambda: self._worker_finished(worker, request_id))
         self.thread_pool.start(worker)
 
     def _worker_finished(self, worker, request_id):
-        if worker in self._active_workers:
-            self._active_workers.remove(worker)
-        if request_id == self._worker_request_id or not self._active_workers:
+        if worker not in self._active_workers:
+            return
+        self._active_workers.remove(worker)
+        # End the signals -> callback -> worker cycle only after the job's
+        # final emission. Queued callbacks also check registry membership.
+        worker.signals.result.disconnect()
+        worker.signals.error.disconnect()
+        worker.signals.finished.disconnect()
+        worker.signals.deleteLater()
+        if isValid(self) and (request_id == self._worker_request_id or not self._active_workers):
             self.set_busy(False)
 
     def _worker_error(self, error):

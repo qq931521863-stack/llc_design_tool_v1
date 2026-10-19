@@ -462,8 +462,6 @@ def _exercise_two_stage(host, directory):
 def _run_packaged_self_test() -> int:
     """Exercise all workspaces and emit evidence only after successful cleanup."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from pyqtgraph import GraphicsLayoutWidget
-    from PySide6.QtCore import QCoreApplication, QEvent, QThreadPool
     from PySide6.QtWidgets import QApplication, QPushButton
 
     from llc_design import __version__
@@ -473,6 +471,7 @@ def _run_packaged_self_test() -> int:
         WorkspaceApplicationController,
         WorkspaceSelectionDialog,
     )
+    from llc_design.gui.lifetime import dispose_dialog
     from llc_design.gui.system_modeling import SystemModelingDesignDialog
     from llc_design.gui.updater import wait_for_update_checks
     from llc_design.validation.provenance import validate_bundled_data
@@ -533,22 +532,13 @@ def _run_packaged_self_test() -> int:
                  "power_stage_priority": priority_proof,
                  "brand_taxonomy_sha256": hashlib.sha256(taxonomy.read_bytes()).hexdigest()}
     finally:
-        for window in [selector, guided, *windows]:
-            window.close()
-        if not QThreadPool.globalInstance().waitForDone(30000):
-            raise RuntimeError("Packaged GUI workers did not finish")
+        # Exercise the same final ownership boundary as normal application
+        # exit, including Python-owned plot menus outside native scene trees.
+        # Cleanup errors must prevent writing a successful frozen proof.
+        dispose_dialog(selector)
+        dispose_dialog(guided)
+        controller.dispose()
         wait_for_update_checks()
-        app.processEvents()
-        # Destroy owned scenes first; never delete Qt's internal top-level
-        # menus/viewports independently or replace delayed bound callbacks.
-        for window in [selector, guided, *windows]:
-            window.close()
-            for graphics in window.findChildren(GraphicsLayoutWidget):
-                if not graphics.closed:
-                    graphics.close()
-            window.deleteLater()
-        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-        app.processEvents()
 
     destination = os.environ.get("PDT_SELF_TEST_REPORT")
     if destination:

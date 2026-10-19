@@ -918,10 +918,10 @@ class LLCMainWindow(QMainWindow):
         digital_request = callback == self._digital_loop_ready or getattr(function, "_llc_digital_request", False)
         waveform_current = getattr(function, "_llc_waveform_current", lambda: True)
         def inputs_current():
-            return isValid(self) and not self._closing and revision == self._power_stage_revision and (
+            return isValid(self) and worker in self._active_workers and not self._closing and revision == self._power_stage_revision and (
                 not digital_request or digital_revision == self.digital_loop_view.input_revision) and waveform_current()
         def ready(result):
-            if not isValid(self) or self._closing:
+            if not isValid(self) or worker not in self._active_workers or self._closing:
                 return
             if not waveform_current():
                 self._append_log("Discarded waveform: input/request identity changed.")
@@ -937,8 +937,9 @@ class LLCMainWindow(QMainWindow):
         worker.signals.result.connect(ready)
         worker.signals.error.connect(lambda error: self._worker_error(error) if inputs_current() else None)
         def finished():
-            if worker in self._active_workers:
-                self._active_workers.remove(worker)
+            if worker not in self._active_workers:
+                return
+            self._active_workers.remove(worker)
             if isValid(self) and not self._closing:
                 self._set_busy(bool(self._active_workers))
             worker.signals.result.disconnect()

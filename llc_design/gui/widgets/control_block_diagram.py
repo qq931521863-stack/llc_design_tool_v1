@@ -168,7 +168,7 @@ class ControlBlockDiagram(QWidget):
         self.view.setStyleSheet(
             "QGraphicsView {background:#ffffff;border:1px solid #d0d5dd;border-radius:6px;}"
         )
-        self._proxy = _SignalProxy()
+        self._proxy = _SignalProxy(self)
         self._proxy.selected.connect(self._on_selected)
         self._items: dict[str, _BlockItem] = {}
         self._connections: list[ConnectionSpec] = []

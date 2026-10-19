@@ -1,5 +1,27 @@
 # Power Stage Designer feature matrix
 
+## Latest acceptance additions and corrections (2026-10-19)
+
+- T18 parameter suggestions: the optional Lm target must be off by default and
+  must not silently carry between topologies or new projects. A real aggregate
+  counterexample found the old 0.1 A default changing untargeted Lm. The unchanged
+  workflow and new explicit/untargeted persistence tests now pass after correction.
+- Cross-cutting GUI lifetime: final owner destruction must also release separate
+  pyqtgraph menu/parameter/file-dialog trees and completed worker objects. Focused
+  real-exit, reuse, shared-owner and transient-dialog repairs pass. The common
+  asynchronous repair passes 85 focused cases and independent nine-producer
+  repeated-job/owner-disposal and two queue-cancellation replays. Integrated
+  aggregate qualification remains a cross-cutting gate, not another topology.
+- New user requirement: complete the CSC magnetic-core selection database from
+  four supplied PDFs, including source-specific models, actual selection,
+  calculations, saved identity and reports where the data permits. Extraction and
+  implementation are in progress. This requirement is separate from the original
+  50 IDs; geometry-only data and missing model conventions must not be promoted to
+  fully calculable material records through legacy defaults.
+
+The stopped `0dfd790` aggregate recorded 965 PASS and 1 FAIL, not a complete pass.
+All new changes require fresh integrated-source qualification before any release.
+
 ## Current full-matrix completion repairs (2026-10-19)
 
 The task was re-read in full and all 50 IDs traced to their actual inputs, kernels,

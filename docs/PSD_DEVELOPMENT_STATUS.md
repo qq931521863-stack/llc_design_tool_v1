@@ -1,5 +1,37 @@
 # Power Stage Designer development status
 
+## Active completion extension and lifecycle gate (2026-10-19)
+
+The user additionally requested completion of the magnetic-core selection database
+from four supplied CSC documents. This is a new acceptance item alongside the
+50 original T/X/L/C/A IDs. Source extraction, strict source-specific data adapters,
+actual PFC selection/calculation/persistence/report consumers and LLC reference
+catalog integration are in progress. Missing conventions and parameters remain
+explicit; legacy default bias/loss/material values must not fill new records.
+No final source freeze or publication is authorized while this work is unfinished.
+
+The `0dfd790` aggregate was deliberately interrupted after a concrete native menu
+retention counterexample. Full-log reconciliation found **965 passed, 1 failed**
+outcomes among 3763 collected; the session exited 130, without complete JUnit.
+Earlier tail-only monitoring missed the T18 failure. It is retained as a failure,
+not converted into a complete pass. The default optional magnetizing-ripple target
+was wrongly active at 0.1 A; the original unchanged failing test now passes after
+defaulting it off, clearing topology/new-project carryover and preserving explicit
+saved targets. Focused intent and ideal-physics checks pass.
+
+A bounded all-GUI ownership audit covered 76 local classes, actual application
+entrypoints, transient/lazy dialogs, plot/export auxiliaries and nine asynchronous
+producer paths. Explicit menu ownership, standalone entry cleanup, transient
+impedance dialogs, cached catalog reuse and a parented control-diagram signal proxy
+have focused red/green evidence. The shared runnable/signal repair now passes
+85 focused cases across 14 actual startup paths. Independent replay of all nine
+producer families proves zero workers/signals after three jobs and both owner
+disposal stages; two adversarial Toolbox cancellation boundaries also pass without
+waiting for unrelated global work. New database GUI consumers must satisfy these
+same lifetime checks. A fresh immutable full-suite,
+long-PFC and installed-wheel/actual Linux frozen run will follow integration;
+native Windows/macOS proof remains a separate release condition.
+
 ## Current direction: finish remaining functions before publication
 
 Publication is paused. No remote push, CI dispatch, tag or release was performed.
@@ -85,14 +117,14 @@ At preparation of this candidate those native results are **pending**.
 | --- | --- | --- |
 | T05 exact TI strategy | Two-switch simultaneous CCM/BCM implemented; no four-switch substitution | Authorized official executable and identical input captures to identify actual gating/low-load behavior |
 | T05 floating-node DCM stress | Implemented opt-in finite-Coss/Ron/diode/winding periodic state, independently validated | Nonlinear vendor Coss/recovery/startup would need a separately declared model/data; not an unimplemented ideal-node substitution |
-| T11 exact TI valley rules | Finite-Cnode positive valleys and first zero clamp implemented | Authorized executable comparison for ceiling/valley selection; controller policy for later clamped valleys, skip/burst |
+| T11 exact TI valley rules | Explicit user-selected true valleys, first-zero clamp/release, delays and frequency ceiling are implemented | Authorized executable/input comparison to identify TI's exact policy; arbitrary burst/skip remains a separately specified extension |
 | T11 nonideal turn-on | Explicit Q(V)/C(V), true later valleys/delays and finite-Ron discharge implemented and independently validated | Arbitrary burst/skip logic, gate charge/recovery and uncovered voltage ranges remain outside this declared policy |
 | T18 exact TI scope | Finite Llk/Lm/Lo CCM and declared diode-secondary BCM/DCM implemented | Authorized executable comparison; public handbook describes 50–100% load, CCM/ZVS assumptions |
 | T18 nonlinear commutation | Explicit constant-Coss/Ron seven-state CCM circuit and gate-event ZVS independently validated | Nonlinear Qoss/recovery/zero-load/burst require separately declared device/control models; hardware correlation still requires measurements |
 | Other stage extensions | T04 zero isolated load; T10 leakage-clamp transient; T12 leakage/dead-time ZVS; T15–T17 asymmetric timing/flux/body-diode reset; T19 beyond CCM/duty≤0.5/small transfer-C ripple | A separately specified physical model and independent circuit/energy checks; these are not all blocked by TI login |
 | A03/A04 higher-fidelity loss | Accepted-period waveforms are consumed; geometry/material, constant-ESR and commutation assumptions remain explicit | Vendor data and measured material/device/thermal correlation; selected-component overlays require electrical rerun when they change the circuit |
 | A01 unscanned regions | Explicit Vin/load/L/C1 and supported L2/C2/ESR/ESR2/DCR Cartesian corners, ≤500 points | Deliberately selected extra dimensions/model inputs; a finite scan is not a global worst-case proof |
-| Desktop/native layouts | Linux/offscreen source and wheel flows qualified; LLC whole-window minimum 1360×977, not a 900px fit | Both supported native CI platforms for startup/frozen paths; real display review for platform layout claims |
+| Desktop/native layouts | Priority Linux/offscreen checks repaired LLC minimum to 1228×624 and exercised 1280×720, 1366×768 and 1440×900; current integrated-source artifact qualification remains pending | Fresh installed-wheel/Linux frozen proof plus both supported native CI platform startup/frozen paths; native display review for platform layout claims |
 | Hardware/measurement | No complete thermal/EMI, real FRA, ISR/ADC/PWM or hardware safety acceptance | Traceable measurements and a separately approved hardware validation plan |
 
 X01 reverse recovery remains excluded and missing loss terms remain UNKNOWN.
@@ -105,8 +137,9 @@ invalidate export; successful neighboring points do not establish whole-domain c
 
 The recovered development source is identified in [the validation report](PSD_VALIDATION_REPORT.md).
 Its old local Git object IDs are provenance, not claimed remote commits.
-The public integration is based on the current remote main, without force or
-replacement of the 9.8.1 tag. The 9.9.0 release must contain both native packages,
+Any future public integration must first reconcile current remote main without
+force or replacement of the 9.8.1 tag. No such remote integration occurred in this
+paused completion pass. The 9.9.0 release must contain both native packages,
 both fresh frozen-process proof JSON files and SHA256SUMS before publication.
 Large raw simulation records and iterative debug archives are not bundled into
 the public application assets; maintained tests and these engineering boundaries

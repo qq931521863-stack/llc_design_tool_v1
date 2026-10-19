@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 
 from dab_design.core import (
     DABConfig,
@@ -294,13 +295,20 @@ class DABMainWindow(QMainWindow):
         self.statusBar().showMessage("正在计算 TPS 工况…")
         worker = FunctionWorker(analyze_dab, config)
         self._worker = worker
-        worker.signals.result.connect(self.set_result)
-        worker.signals.error.connect(self._error)
-        worker.signals.finished.connect(self._finished)
+        def current():
+            return isValid(self) and self._worker is worker
+        worker.signals.result.connect(lambda result: self.set_result(result) if current() else None)
+        worker.signals.error.connect(lambda error: self._error(error) if current() else None)
+        worker.signals.finished.connect(lambda: self._finished(worker))
         QThreadPool.globalInstance().start(worker)
 
-    def _finished(self):
+    def _finished(self, worker):
+        if self._worker is not worker:
+            return
         self._worker = None
+        worker.signals.deleteLater()
+        if not isValid(self):
+            return
         self._running_config = None
         self.run_button.setEnabled(True)
         if self._rerun_requested:

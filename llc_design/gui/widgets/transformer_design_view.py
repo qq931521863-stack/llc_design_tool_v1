@@ -120,6 +120,7 @@ class TransformerDesignView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._presets = load_transformer_core_presets()
+        self.catalog_dialog = None
         self.result: TransformerSynthesisResult | None = None
         self._build_ui()
         self._load_preset(next(iter(self._presets)))
@@ -300,9 +301,12 @@ class TransformerDesignView(QWidget):
 
     def _open_catalog(self):
         from .magnetic_catalog_view import MagneticCatalogDialog
-        self.catalog_dialog = MagneticCatalogDialog(self)
-        self.catalog_dialog.preset_selected.connect(self._select_catalog_preset)
+        if self.catalog_dialog is None:
+            self.catalog_dialog = MagneticCatalogDialog(self)
+            self.catalog_dialog.preset_selected.connect(self._select_catalog_preset)
         self.catalog_dialog.show()
+        self.catalog_dialog.raise_()
+        self.catalog_dialog.activateWindow()
 
     def _select_catalog_preset(self, key):
         self.core_search.clear()

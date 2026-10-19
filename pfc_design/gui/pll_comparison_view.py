@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 
 from llc_design.gui.widgets.control_block_diagram import (
     BlockSpec,
@@ -149,15 +150,22 @@ class PLLComparisonView(QWidget):
             return
         worker = FunctionWorker(run_comparison, config, scenario)
         self._worker = worker
-        worker.signals.result.connect(self.set_result)
-        worker.signals.error.connect(lambda text: self.status.setText(text))
-        worker.signals.finished.connect(self._finished)
+        def current():
+            return isValid(self) and self._worker is worker
+        worker.signals.result.connect(lambda result: self.set_result(result) if current() else None)
+        worker.signals.error.connect(lambda error: self.status.setText(error) if current() else None)
+        worker.signals.finished.connect(lambda: self._finished(worker))
         self.run_button.setEnabled(False)
         self.status.setText("正在计算三种 PLL…")
         QThreadPool.globalInstance().start(worker)
 
-    def _finished(self):
+    def _finished(self, worker):
+        if self._worker is not worker:
+            return
         self._worker = None
+        worker.signals.deleteLater()
+        if not isValid(self):
+            return
         self.run_button.setEnabled(True)
 
     def set_result(self, result):

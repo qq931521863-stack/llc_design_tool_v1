@@ -1,5 +1,53 @@
 # Power Stage Designer validation report
 
+## Latest completion qualification correction (2026-10-19)
+
+The immutable `0dfd790569b8f28935020bc1f3d3f78a5f57e7f0` run collected 3763
+cases. It was operator-interrupted (tool session exit 130) after a reproducible
+ownership defect, with **965 PASS and 1 FAIL**, no complete JUnit and no aggregate
+success claim. Source hashes stayed unchanged and the worktree stayed clean.
+The last monitor sample was 1134.249 s; peak process-group RSS was 2,529,196 KiB,
+parent peak 1,950,752 KiB, minimum MemAvailable 2,996,472 KiB. These are stopped-run
+observations, not proof of a leak-free or successful complete regression.
+
+The failure is `test_new_domain_real_parameter_proposal_apply_and_restored_targets`
+for ideal T18 DCM. Replaying it independently took 2.43 s and showed a genuine
+GUI intent bug: an untouched 0.1 A optional magnetizing target changed Lm from
+1 mH to 4.0180657 mH. Setting the optional target to zero recovered Lo
+100.000000261 µH and Np/Ns 3.999999993. The narrow GUI correction preserves the
+original numerical assertion; 45 focused intent/consumer tests and 36 additional
+ideal-physics/workflow checks pass. Five finite-Coss cases were explicitly excluded
+from the latter small check, not credited as passed.
+
+Independent native-object observations found exactly 91 parentless menu/popup
+widgets and 21 WidgetGroups per PSD window, despite zero remaining window/scene
+roots. Releasing Python references and GC could remove them, but retained invalid
+wrappers must not keep native auxiliaries alive. The explicit auxiliary repair
+covers actual application quit, three reuse cycles, shared/external owners, direct
+and already-closed plot roots, lazy exporter file dialogs and logical Parameter
+trees. Its final focused gate is 15 PASS in 70.43 s. Additional actual standalone
+entry/linked-LLC/startup-error, impedance dialog and clickable diagram-owner checks
+are 5 PASS in 11.72 s. Independent original probes replay green for those paths.
+
+The wider audit also demonstrated completed QRunnable/signal retention in actual
+LLC/DAB/PFC-subview/PSD/toolbox producer paths. The common repair now passes
+85 cases in 34.18 s across 14 real startup paths, including normal/error, queued
+late callback, close/reopen, final owner disposal and unrelated-global-work
+negative controls. An independent 76-class/26-modal-callsite audit replayed all
+nine producer families: zero worker wrappers, native workers and signals after
+each of three jobs and both disposal stages. Both real Toolbox cancel boundaries
+pass, including native completion before queued GUI delivery. All ten final
+producer hashes were independently checked after formatting-only changes. These
+are focused ownership qualifications, not a completed aggregate suite. Future full
+runs persist each complete failure traceback as soon as pytest reports it, and
+surface a live failure count; an intentional synthetic failure verified this
+monitoring path. No tail-only "no failures" claim substitutes for complete logs.
+
+Four newly supplied magnetic-core PDFs add a separate pending source-data and
+actual-consumer acceptance item. Formula identity, units, coverage, missing flux
+conventions and user-declared assumptions must be distinguished before accepting
+new PFC calculation/report outputs. No data qualification is claimed yet.
+
 ## Current re-audit and terminated aggregate run (2026-10-19)
 
 Source `3d2f9fbd020fd0b9513f6f9e5950de5c31dfb38e`: 3502 collected;

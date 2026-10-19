@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 
 from llc_design.gui.workers import FunctionWorker
 from pfc_design.three_phase.model import (
@@ -199,13 +200,20 @@ class ThreePhaseDQView(QWidget):
         self.status.setText("正在计算三相电流、母线能量和离散控制…")
         worker = FunctionWorker(simulate_three_phase, config)
         self._worker = worker
-        worker.signals.result.connect(self.set_result)
-        worker.signals.error.connect(self._error)
-        worker.signals.finished.connect(self._finished)
+        def current():
+            return isValid(self) and self._worker is worker
+        worker.signals.result.connect(lambda result: self.set_result(result) if current() else None)
+        worker.signals.error.connect(lambda error: self._error(error) if current() else None)
+        worker.signals.finished.connect(lambda: self._finished(worker))
         QThreadPool.globalInstance().start(worker)
 
-    def _finished(self):
+    def _finished(self, worker):
+        if self._worker is not worker:
+            return
         self._worker = None
+        worker.signals.deleteLater()
+        if not isValid(self):
+            return
         self.run_button.setEnabled(True)
 
     def _error(self, message):

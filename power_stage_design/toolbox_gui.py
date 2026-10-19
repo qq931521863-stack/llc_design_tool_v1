@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 
 from llc_design import __version__
 from llc_design.control.design_session import strict_json_loads
@@ -567,9 +568,7 @@ class ToolBoxWidget(QWidget):
     def _clear_result(self, message):
         self._auto_timer.stop()
         self._generation += 1
-        for worker in self._workers[:]:
-            if self._pool.tryTake(worker):
-                self._workers.remove(worker)
+        self._cancel_queued_workers()
         self._pending = False
         self._restore_pending = False
         self.cancel_button.setEnabled(False)
@@ -676,8 +675,8 @@ class ToolBoxWidget(QWidget):
                     return generation, None, f"{type(exc).__name__}: {exc}"
             worker = FunctionWorker(job)
             self._workers.append(worker)
-            worker.signals.result.connect(self._async_ready)
-            worker.signals.finished.connect(lambda w=worker: self._workers.remove(w) if w in self._workers else None)
+            worker.signals.result.connect(lambda payload: self._async_ready(payload) if self._worker_current(worker) else None)
+            worker.signals.finished.connect(lambda: self._release_worker(worker))
             self._pool.start(worker)
             return None
         try:
@@ -685,6 +684,23 @@ class ToolBoxWidget(QWidget):
         except (ValueError, TypeError, ArithmeticError) as exc:
             self.status.setText("无有效结果：" + str(exc))
             return None
+
+    def _worker_current(self, worker):
+        return isValid(self) and not self._closing and worker in self._workers
+
+    def _release_worker(self, worker):
+        if worker not in self._workers:
+            return
+        self._workers.remove(worker)
+        worker.signals.deleteLater()
+
+    def _cancel_queued_workers(self):
+        # This dedicated pool owns only this tab's jobs. clear() deletes queued
+        # auto-deleting runnables without the tryTake() recycled-pointer race.
+        self._pool.clear()
+        for worker in self._workers[:]:
+            if not isValid(worker):
+                self._release_worker(worker)
 
     def _async_ready(self, payload):
         generation, result, error = payload
@@ -712,9 +728,7 @@ class ToolBoxWidget(QWidget):
         self._generation += 1
         self._pending = self._restore_pending = False
         self.cancel_button.setEnabled(False)
-        for worker in self._workers[:]:
-            if self._pool.tryTake(worker):
-                self._workers.remove(worker)
+        self._cancel_queued_workers()
         self.status.setText(message)
 
     def _apply_result(self, result):
@@ -981,8 +995,8 @@ class ToolBoxWidget(QWidget):
 
         worker = FunctionWorker(job)
         self._workers.append(worker)
-        worker.signals.result.connect(self._restore_ready)
-        worker.signals.finished.connect(lambda w=worker: self._workers.remove(w) if w in self._workers else None)
+        worker.signals.result.connect(lambda payload: self._restore_ready(payload) if self._worker_current(worker) else None)
+        worker.signals.finished.connect(lambda: self._release_worker(worker))
         self._pool.start(worker)
 
     def _restore_ready(self, payload):
@@ -1004,9 +1018,7 @@ class ToolBoxWidget(QWidget):
         was_pending = self._pending
         self._pending = self._restore_pending = False
         self.cancel_button.setEnabled(False)
-        for worker in self._workers[:]:
-            if self._pool.tryTake(worker):
-                self._workers.remove(worker)
+        self._cancel_queued_workers()
         # Dedicated pool contains at most one bounded 16-bit/4001-point job.
         # A bounded wait keeps signal QObjects alive until emission ends and
         # never waits on other workspaces' global-pool tasks.

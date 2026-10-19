@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 
 from llc_design.gui.contact import add_toolbar_contacts
 from llc_design.gui.workers import FunctionWorker
@@ -353,7 +354,7 @@ class PowerStageMainWindow(QMainWindow):
                 try:return token,calculate_stage(inputs,cancelled=event.is_set),None
                 except (ValueError,TypeError,ArithmeticError,InterruptedError) as exc:return token,None,str(exc)
             worker=FunctionWorker(compute);key=("stage",token);self._jobs[key]=worker
-            worker.signals.result.connect(self._on_stage_calculated)
+            worker.signals.result.connect(lambda payload:self._on_stage_calculated(payload) if self._job_current(key,worker) else None)
             worker.signals.error.connect(self._background_error)
             worker.signals.finished.connect(lambda:self._release_job(key,event))
             self.status.setText("正在求解周期工作点…修改输入或关闭窗口会取消旧计算。")
@@ -543,8 +544,8 @@ class PowerStageMainWindow(QMainWindow):
             try:return token,suggest_parameters(inputs,targets,cancelled=event.is_set),None
             except (ValueError,TypeError,ArithmeticError,InterruptedError) as exc:return token,None,str(exc)
         worker=FunctionWorker(compute);key=("parameters",token);self._jobs[key]=worker
-        worker.signals.result.connect(self._on_parameter_proposal)
-        worker.signals.error.connect(lambda message,token=token:self._parameter_proposal_error(token,message))
+        worker.signals.result.connect(lambda payload:self._on_parameter_proposal(payload) if self._job_current(key,worker) else None)
+        worker.signals.error.connect(lambda message,token=token:self._parameter_proposal_error(token,message) if self._job_current(key,worker) else None)
         worker.signals.finished.connect(lambda:self._release_job(key,event))
         self.suggestion_output.setPlainText("正在计算并验算实际纹波、占空比和有效域…输入改变或取消后将丢弃旧建议。")
         self._pool.start(worker)
@@ -762,19 +763,25 @@ class PowerStageMainWindow(QMainWindow):
             except InterruptedError:
                 return generation,None
         worker=FunctionWorker(compute);self._jobs[generation]=worker
-        worker.signals.result.connect(self._on_synthesis)
+        worker.signals.result.connect(lambda payload:self._on_synthesis(payload) if self._job_current(generation,worker) else None)
         worker.signals.error.connect(self._synthesis_error)
         worker.signals.finished.connect(lambda gen=generation,event=cancel:self._release_job(gen,event))
         self.loop_status.setText("正在搜索并验算实际元件…可继续修改输入或取消。")
         self._pool.start(worker)
 
+    def _job_current(self,key,worker):
+        return isValid(self) and not self._closing and self._jobs.get(key) is worker
+
     def _release_job(self,generation,event):
-        self._jobs.pop(generation,None)
+        worker=self._jobs.pop(generation,None)
+        if worker is None:return
+        worker.signals.deleteLater()
         if event in self._cancel_events:self._cancel_events.remove(event)
         if event in self._synthesis_events:self._synthesis_events.remove(event)
         if event in self._suggestion_events:self._suggestion_events.remove(event)
 
     def _background_error(self,message):
+        if not isValid(self):return
         sender=self.sender()
         key=next((key for key,worker in self._jobs.items() if worker.signals is sender),None)
         if self._closing or not isinstance(key,tuple):return
@@ -787,6 +794,7 @@ class PowerStageMainWindow(QMainWindow):
         if kind=="corners" and token==self._sweep_generation:self.corner_status.setText("扫描失败，结果不可用："+message.splitlines()[-1])
 
     def _synthesis_error(self,message):
+        if not isValid(self):return
         sender=self.sender()
         generation=next((key for key,worker in self._jobs.items() if worker.signals is sender),None)
         if not self._closing and generation==self._loop_generation:
@@ -860,7 +868,7 @@ class PowerStageMainWindow(QMainWindow):
             try:return token,analyze_corners(base,request,loop_settings=settings,selected_device=selected,cancelled=event.is_set),None
             except (ValueError,InterruptedError) as exc:return token,None,str(exc)
         worker=FunctionWorker(compute);job_key=("corners",token);self._jobs[job_key]=worker
-        worker.signals.result.connect(self._on_corners)
+        worker.signals.result.connect(lambda payload:self._on_corners(payload) if self._job_current(job_key,worker) else None)
         worker.signals.error.connect(self._background_error)
         worker.signals.finished.connect(lambda:self._release_job(job_key,event))
         self.corner_status.setText("正在计算所列工况…");self._pool.start(worker)
@@ -994,8 +1002,8 @@ class PowerStageMainWindow(QMainWindow):
                 return token,path,document,None
             except (ValueError,OSError,InterruptedError) as exc:return token,path,None,str(exc)
         worker=FunctionWorker(compute);key=("save",id(worker));self._jobs[key]=worker
-        worker.signals.result.connect(self._on_project_saved)
-        worker.signals.error.connect(lambda message,token=token:self._project_save_error(token,message))
+        worker.signals.result.connect(lambda payload:self._on_project_saved(payload) if self._job_current(key,worker) else None)
+        worker.signals.error.connect(lambda message,token=token:self._project_save_error(token,message) if self._job_current(key,worker) else None)
         worker.signals.finished.connect(lambda:self._release_job(key,event))
         self.status.setText("正在校验保存快照…输入改变后旧快照不会写入文件。")
         self._pool.start(worker)
@@ -1034,7 +1042,7 @@ class PowerStageMainWindow(QMainWindow):
             try:return token,read_project(path,cancelled=event.is_set),None
             except (ValueError,OSError,InterruptedError) as exc:return token,None,str(exc)
         worker=FunctionWorker(compute);key=("open",token);self._jobs[key]=worker
-        worker.signals.result.connect(self._on_project_opened);worker.signals.error.connect(self._background_error)
+        worker.signals.result.connect(lambda payload:self._on_project_opened(payload) if self._job_current(key,worker) else None);worker.signals.error.connect(self._background_error)
         worker.signals.finished.connect(lambda:self._release_job(key,event))
         self.status.setText("正在校验并重算项目；校验成功后替换当前设计。")
         self._pool.start(worker)

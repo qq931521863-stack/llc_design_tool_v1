@@ -33,5 +33,5 @@ def dispose_test_owned_desktop_widgets():
         if owners:
             from llc_design.gui.lifetime import dispose_widgets
             # Internal pyqtgraph menus/viewports are not independent owners.
-            # Their application's native root trees dispose those too.
+            # Production owner disposal also releases their auxiliary trees.
             dispose_widgets(owners)

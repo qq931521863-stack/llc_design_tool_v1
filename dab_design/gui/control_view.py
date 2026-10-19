@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 
 from dab_design.control import DABVoltageControlConfig, simulate_dab_voltage_loop
 from dab_design.optimization import TPSConstraints, optimize_tps
@@ -186,16 +187,21 @@ class DABControlView(QWidget):
         self.export_button.setEnabled(False)
         worker = FunctionWorker(func, *args)
         self._worker = worker
-        worker.signals.result.connect(self._display)
-        worker.signals.error.connect(
-            lambda text: self.status.setText("分析失败：" + text)
-        )
-        worker.signals.finished.connect(self._finished)
+        def current():
+            return isValid(self) and self._worker is worker
+        worker.signals.result.connect(lambda result: self._display(result) if current() else None)
+        worker.signals.error.connect(lambda error: self.status.setText("分析失败：" + error) if current() else None)
+        worker.signals.finished.connect(lambda: self._finished(worker))
         self.status.setText("正在计算…")
         QThreadPool.globalInstance().start(worker)
 
-    def _finished(self):
+    def _finished(self, worker):
+        if self._worker is not worker:
+            return
         self._worker = None
+        worker.signals.deleteLater()
+        if not isValid(self):
+            return
         for button in self.action_buttons[:2]:
             button.setEnabled(True)
 

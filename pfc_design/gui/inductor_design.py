@@ -8,7 +8,7 @@ import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QComboBox,
@@ -468,6 +468,7 @@ class PFCInductorDesignResultView(QWidget):
         self.summary.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.summary.setPlainText("尚未计算电感。左侧进入“电感设计”，然后点击“计算电感”。")
         root.addWidget(self.summary)
+        self.impedance_dialog = None
         self.impedance_fit_button = QPushButton("实测复阻抗拟合 / SPICE 模型")
         self.impedance_fit_button.clicked.connect(self.open_impedance_fit)
         root.addWidget(self.impedance_fit_button)
@@ -476,9 +477,26 @@ class PFCInductorDesignResultView(QWidget):
         root.addWidget(self.canvas, 1)
 
     def open_impedance_fit(self):
+        from shiboken6 import isValid
+
         from llc_design.gui.widgets.impedance_fit_view import ImpedanceFitDialog
-        self.impedance_dialog = ImpedanceFitDialog(self)
-        self.impedance_dialog.show()
+
+        dialog = self.impedance_dialog
+        if dialog is None or not isValid(dialog):
+            dialog = ImpedanceFitDialog(self)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self.impedance_dialog = dialog
+            # Repeated clicks reuse a live dialog. Closing discards that fit;
+            # a late destroyed signal must not clear a newly opened dialog.
+            dialog.finished.connect(lambda _result: self._release_impedance_dialog(dialog))
+            dialog.destroyed.connect(lambda: self._release_impedance_dialog(dialog))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _release_impedance_dialog(self, dialog):
+        if self.impedance_dialog is dialog:
+            self.impedance_dialog = None
 
     def set_result(self, result) -> None:
         if isinstance(result, FerriteInductorResult):

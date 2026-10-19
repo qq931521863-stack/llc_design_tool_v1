@@ -35,14 +35,23 @@ def main():
     from PySide6.QtWidgets import QApplication
 
     from llc_design.gui import theme
+    from llc_design.gui.lifetime import dispose_widgets
 
     from .gui import PowerStageMainWindow
     app=QApplication.instance() or QApplication(sys.argv)
     theme.apply_app_theme(app)
     window=PowerStageMainWindow()
-    if args.project:window.open_from(args.project)
-    window.showMaximized()
-    return app.exec()
+    try:
+        if args.project:window.open_from(args.project)
+        window.showMaximized()
+        return app.exec()
+    finally:
+        # A standalone PSD session may create the linked six-workspace owner.
+        # Its aboutToQuit handler can already have disposed it; final cleanup
+        # is idempotent and also runs if startup/open raises before app.exec().
+        linked=getattr(window,"_linked_application",None)
+        if linked is not None:linked.dispose()
+        else:dispose_widgets([window])
 
 
 if __name__ == "__main__":

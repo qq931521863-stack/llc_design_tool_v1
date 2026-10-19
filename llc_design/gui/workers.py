@@ -26,7 +26,7 @@ class FunctionWorker(QRunnable):
 
     def __init__(self, function: Callable[..., Any], *args, **kwargs):
         super().__init__()
-        self.setAutoDelete(False)
+        self.setAutoDelete(True)
         self.function = function
         self.args = args
         self.kwargs = kwargs
