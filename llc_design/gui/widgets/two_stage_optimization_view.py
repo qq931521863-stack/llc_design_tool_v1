@@ -67,13 +67,25 @@ class TwoStageOptimizationView(QWidget):
                       "仅支持 AUTO_DESIGN 的 Ln/Q/fr 优化；其他工程参数保持原始精度。取消在当前候选计算结束后释放工作线程。")
         note.setWordWrap(True)
         layout.addWidget(note)
-        form = QFormLayout()
         self.config_text = QPlainTextEdit()
         self.config_text.setMaximumHeight(160)
-        form.addRow("搜索轴 JSON（Hz；整数匝数）", self.config_text)
         self.weights_text = QPlainTextEdit(json.dumps(DEFAULT_WEIGHTS, indent=2))
         self.weights_text.setMaximumHeight(95)
-        form.addRow("排序权重（较大评分优先）", self.weights_text)
+        # These independent JSON editors share a row. Stacking their native
+        # scroll-area minima made this hidden tab force the whole main window
+        # beyond a 720px desktop on macOS with a 12pt application font.
+        editors = QHBoxLayout()
+        for title, editor in (("搜索轴 JSON（Hz；整数匝数）", self.config_text),
+                              ("排序权重（较大评分优先）", self.weights_text)):
+            column = QVBoxLayout()
+            label = QLabel(title)
+            label.setBuddy(editor)
+            column.addWidget(label)
+            column.addWidget(editor)
+            column.addStretch(1)
+            editors.addLayout(column, 1)
+        layout.addLayout(editors)
+        form = QFormLayout()
         bounds = QHBoxLayout()
         self.maximum_candidates = QSpinBox(); self.maximum_candidates.setRange(1, 128); self.maximum_candidates.setValue(12)
         self.top_n = QSpinBox(); self.top_n.setRange(1, 8); self.top_n.setValue(3)

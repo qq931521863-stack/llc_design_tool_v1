@@ -14,6 +14,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.mark.parametrize("font_points", [10, 12])
 def test_narrow_dock_and_window_frame_with_larger_font(tmp_path, font_points):
+    _run_metrics(tmp_path, font_points)
+
+
+def test_native_scrollbar_minima_fit_small_desktop(tmp_path):
+    # Controlled Linux reproduction of macOS Fusion's larger scroll-area
+    # minima. Native-font runs above remain the actual platform acceptance.
+    _run_metrics(tmp_path, 12, native_scrollbars=True)
+
+
+def _run_metrics(tmp_path, font_points, native_scrollbars=False):
     pytest.importorskip("PySide6")
     config = tmp_path / "screen.json"
     config.write_text(json.dumps({"screens": [{"name": "small-desktop",
@@ -23,7 +33,10 @@ def test_narrow_dock_and_window_frame_with_larger_font(tmp_path, font_points):
         QT_SCALE_FACTOR="1", QT_FONT_DPI="96", MPLBACKEND="Agg", PYTHONPATH=str(ROOT),
         MPLCONFIGDIR=str(tmp_path / "mpl"), XDG_CACHE_HOME=str(tmp_path / "cache"),
         XDG_CONFIG_HOME=str(tmp_path / "config"))
-    result = subprocess.run([sys.executable, str(Path(__file__).resolve()), str(font_points)],
+    command = [sys.executable, str(Path(__file__).resolve()), str(font_points)]
+    if native_scrollbars:
+        command.append("native-scrollbars")
+    result = subprocess.run(command,
         env=env, cwd=tmp_path, capture_output=True, text=True, encoding="utf-8",
         errors="replace", timeout=60, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -107,12 +120,81 @@ def _parameter_controls(window):
     return controls
 
 
+def _layout_snapshot(window):
+    from PySide6.QtWidgets import QStyle, QToolBar
+
+    def geometry(widget):
+        return {"type": type(widget).__name__,
+            "minimum": list(widget.minimumSizeHint().toTuple()),
+            "geometry": list(widget.geometry().getRect())}
+
+    candidate = window.two_stage_optimization_view
+    return {"window": geometry(window), "tabs": geometry(window.tabs),
+        "toolbar": geometry(window.findChild(QToolBar, "llc_main_toolbar")),
+        "statusbar": geometry(window.statusBar()),
+        "pages": [{"title": window.tabs.tabText(index), **geometry(window.tabs.widget(index))}
+            for index in range(window.tabs.count())],
+        "candidate_scroll_controls": {name: geometry(getattr(candidate, name))
+            for name in ("config_text", "weights_text", "table", "details")},
+        "scrollbar_extent": window.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent),
+        "scrollbar_slider_min": window.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarSliderMin)}
+
+
+def _exercise_candidate_editors(window, app):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QLabel
+
+    candidate = window.two_stage_optimization_view
+    controls = (candidate.config_text, candidate.weights_text, candidate.maximum_candidates,
+        candidate.top_n, candidate.verification_scope, candidate.run_button,
+        candidate.cancel_button, candidate.apply_button, candidate.report_button,
+        candidate.table, candidate.details)
+    for control in controls:
+        assert control.isVisible() and not control.isHidden()
+        assert window.rect().contains(_bounds_in(control, window))
+        assert control.visibleRegion().contains(control.rect()), type(control).__name__
+    config, weights = candidate.config_text, candidate.weights_text
+    assert config.geometry().right() < weights.geometry().left()
+    assert config.geometry().top() == weights.geometry().top()
+    for editor in (config, weights):
+        assert len([label for label in candidate.findChildren(QLabel) if label.buddy() is editor]) == 1
+    original = candidate.options()
+    evidence = []
+    for editor, key in ((config, "config"), (weights, "ranking_weights")):
+        # Real keyboard entry of a long JSON line followed by a vertically
+        # scrollable document, preserving the exact original option values.
+        text = json.dumps(original[key])
+        editor.setFocus()
+        editor.selectAll()
+        QTest.keyClicks(editor, text)
+        for _ in range(40):
+            QTest.keyClick(editor, Qt.Key.Key_Return)
+        app.processEvents()
+        assert editor.toPlainText() == text + "\n" * 40
+        assert candidate.options() == original
+        bar = editor.verticalScrollBar()
+        assert bar.maximum() > 0
+        bar.setValue(bar.minimum())
+        assert bar.value() == bar.minimum()
+        bar.setValue(bar.maximum())
+        assert bar.value() == bar.maximum()
+        assert editor.visibleRegion().contains(editor.rect())
+        evidence.append({"editor": key, "json_characters": len(text),
+            "vertical_scroll": bar.maximum(), "geometry": list(editor.geometry().getRect())})
+    candidate.restore_options(original)
+    assert candidate.options() == original
+    assert not candidate.apply_button.isEnabled() and not candidate.report_button.isEnabled()
+    return evidence
+
+
 @pytest.mark.parametrize("focus", [False, True])
 @pytest.mark.parametrize("height", [32, 34, 35])
 def test_whole_control_scroll_and_visibility_gate(monkeypatch, focus, height):
     pytest.importorskip("PySide6")
     from PySide6.QtCore import QRect, Qt
     from PySide6.QtWidgets import QApplication, QDoubleSpinBox, QScrollArea, QWidget
+
     from llc_design.gui.lifetime import dispose_widgets
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
@@ -179,11 +261,11 @@ def test_whole_control_scroll_and_visibility_gate(monkeypatch, focus, height):
         dispose_widgets([scroll])
 
 
-def _exercise_metrics(font_points):
+def _exercise_metrics(font_points, native_scrollbars=False):
     from PySide6.QtCore import Qt, qVersion
     from PySide6.QtGui import QFontInfo, QFontMetrics
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QProxyStyle, QStyle
     from shiboken6 import isValid
 
     from llc_design.gui import main_window as module
@@ -195,6 +277,19 @@ def _exercise_metrics(font_points):
     app = QApplication([])
     theme.apply_app_theme(app)
     apply_language("zh-Hans", app)
+    if native_scrollbars:
+        class NativeScrollMetrics(QProxyStyle):
+            def pixelMetric(self, metric, option=None, widget=None):
+                # Qt 6.11.2: QAbstractScrollArea's minimum is three scrollbar
+                # extents + minimum slider length (+ frame). macOS CI records
+                # 88px without a frame: 3 * 18 + 34, versus Linux's 68px.
+                # This changes style metrics, never QWidget size hints/fonts.
+                if metric == QStyle.PixelMetric.PM_ScrollBarExtent:
+                    return 18
+                if metric == QStyle.PixelMetric.PM_ScrollBarSliderMin:
+                    return 34
+                return super().pixelMetric(metric, option, widget)
+        app.setStyle(NativeScrollMetrics("Fusion"))
     # Exercise different real metrics, without changing the production font or
     # substituting size hints. A fresh process keeps application fonts isolated.
     font = app.font()
@@ -203,11 +298,14 @@ def _exercise_metrics(font_points):
     evidence = Path(os.environ.get("LLC_LAYOUT_EVIDENCE_DIR", Path.cwd()))
     evidence.mkdir(parents=True, exist_ok=True)
     prefix = f"llc-1280x720-{font_points:g}pt-dock"
+    if native_scrollbars:
+        prefix += "-controlled-scrollbars"
     font_info = QFontInfo(app.font())
     diagnostics = {"platform": sys.platform, "qt_platform": app.platformName(),
         "qt_version": qVersion(), "source": str(ROOT), "requested_font_points": font_points,
         "font": {"requested": app.font().toString(), "resolved_family": font_info.family(),
             "resolved_point_size": font_info.pointSizeF(), "height": QFontMetrics(app.font()).height()},
+        "controlled_scrollbar_metrics": native_scrollbars,
         "controls": [], "completed": False}
     window = module.LLCMainWindow()
     scroll = window.parameter_dock.widget()
@@ -225,6 +323,7 @@ def _exercise_metrics(font_points):
             assert tuple(window.tabs.widget(i) for i in range(window.tabs.count())) == pages
 
         window.show()
+        diagnostics["startup_layout"] = _layout_snapshot(window)
         fits()
         # Client dimensions alone do not include the platform frame margins.
         assert window.frameGeometry().width() > window.width()
@@ -234,6 +333,8 @@ def _exercise_metrics(font_points):
             window.tabs.setCurrentWidget(page)
             fits()
         candidate = window.two_stage_optimization_view
+        diagnostics["candidate_editors"] = _exercise_candidate_editors(window, app)
+        fits()
         for message in (
             "Diagnostic boundary remains visible.\n" * 20 + "Final engineering warning.",
             ("TD verification scope: nominal point only; other operating-point losses remain FHA\n"
@@ -292,6 +393,7 @@ def _exercise_metrics(font_points):
     finally:
         try:
             diagnostics.update(frame=list(window.frameGeometry().getRect()),
+                layout=_layout_snapshot(window),
                 minimum=list(window.minimumSizeHint().toTuple()),
                 viewport=list(scroll.viewport().rect().getRect()),
                 controls_at_exit=[_control_snapshot(scroll, name, control)
@@ -306,4 +408,4 @@ def _exercise_metrics(font_points):
 
 
 if __name__ == "__main__":
-    _exercise_metrics(float(sys.argv[1]))
+    _exercise_metrics(float(sys.argv[1]), "native-scrollbars" in sys.argv[2:])
