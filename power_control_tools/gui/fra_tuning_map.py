@@ -255,7 +255,7 @@ class FRATuningMapWindow(QMainWindow):
             document = session.to_json()
             path, _ = QFileDialog.getSaveFileName(self, "Save FRA session", "fra-session.json", "JSON (*.json)")
             if path and self._session_unchanged(session, generation, document):
-                Path(path).write_text(document, encoding="utf-8")
+                Path(path).write_bytes(document.encode("utf-8"))
         except (ValueError, OSError) as exc:
             QMessageBox.warning(self, "Save failed", str(exc))
 
@@ -284,6 +284,6 @@ class FRATuningMapWindow(QMainWindow):
             content = export_scan_csv(session.current)
             path, _ = QFileDialog.getSaveFileName(self, "Export measured scan", "fra-measured.csv", "CSV (*.csv)")
             if path and self._session_unchanged(session, generation, document):
-                Path(path).write_text(content, encoding="utf-8")
+                Path(path).write_bytes(content.encode("utf-8"))
         except (ValueError, OSError) as exc:
             QMessageBox.warning(self, "Export failed", str(exc))

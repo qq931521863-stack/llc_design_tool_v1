@@ -1,3 +1,4 @@
+import csv
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -6,9 +7,10 @@ import pytest
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 from power_control_tools.gui.fra_tuning_map import FRATuningMapWindow, ScanImportDialog
-from power_control_tools.fra.tuning_session import PIParameters, OperatingPoint, Scan
+from power_control_tools.fra.tuning_session import PIParameters, OperatingPoint, Scan, export_scan_csv, import_csv
 from power_control_tools.fra.models import FRAMeasurement, FRASourceFormat
 from power_control_tools.fra.analysis import digital_frequency_response
+from power_stage_design.tests.export_checks import assert_exact_bytes, model_windows_text_newlines
 
 
 @pytest.fixture(scope="module")
@@ -22,6 +24,46 @@ def sample(name="baseline", kp=.3):
     h = 10 / (1 + 1j*f/1000)**2 * digital_frequency_response(c.digital(), f)
     m = FRAMeasurement(f, 20*np.log10(abs(h)), np.angle(h, deg=True), FRASourceFormat.GENERIC)
     return Scan(name, m, c, OperatingPoint(400, 1000, "CCM", "bench"), "signed_loop_gain", "negative_feedback_L")
+
+
+@pytest.mark.parametrize("windows_newlines", [False, True], ids=["native", "windows-io-model"])
+def test_saved_session_preserves_utf8_bytes_and_restores(app, monkeypatch, tmp_path, windows_newlines):
+    if windows_newlines:
+        model_windows_text_newlines(monkeypatch, tmp_path)
+    window = FRATuningMapWindow()
+    window.add_scan(sample("实测基线"))
+    original = window.session.to_json().encode("utf-8")
+    path = tmp_path / "session.json"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(path), ""))
+    window.save_session()
+    assert_exact_bytes(path.read_bytes(), original)
+    window.add_scan(sample("later", .24))
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (str(path), ""))
+    window.open_session()
+    assert_exact_bytes(window.session.to_json().encode("utf-8"), original)
+    assert window.session.current.name == "实测基线"
+    window.close()
+
+
+@pytest.mark.parametrize("windows_newlines", [False, True], ids=["native", "windows-io-model"])
+def test_exported_scan_has_exact_csv_bytes_and_consumes_without_blank_rows(app, monkeypatch, tmp_path, windows_newlines):
+    if windows_newlines:
+        model_windows_text_newlines(monkeypatch, tmp_path)
+    window = FRATuningMapWindow()
+    scan = sample("实测基线")
+    window.add_scan(scan)
+    path = tmp_path / "scan.csv"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(path), ""))
+    window.export_current()
+    assert_exact_bytes(path.read_bytes(), export_scan_csv(scan).encode("utf-8"))
+    with path.open(encoding="utf-8", newline="") as stream:
+        rows = list(csv.reader(stream))
+    assert len(rows) == len(scan.measurement.frequency_hz) + 1
+    assert all(len(row) == 4 for row in rows)
+    consumed = import_csv(path)
+    for field in ("frequency_hz", "magnitude_db", "raw_phase_deg"):
+        np.testing.assert_array_equal(getattr(consumed, field), getattr(scan.measurement, field))
+    window.close()
 
 
 def test_map_sparse_history_and_repeated_actions(app, monkeypatch, tmp_path):

@@ -109,7 +109,8 @@ class CalculatorResult:
         if path.suffix.lower() not in formats:
             raise ValueError("Toolbox export requires .json, .csv or .txt")
         text = formats[path.suffix.lower()]()
-        path.write_text(text, encoding="utf-8")
+        # Preserve serialized line endings; CSV already contains CRLF.
+        path.write_bytes(text.encode("utf-8"))
         return path
 
 

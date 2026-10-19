@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from llc_design import __version__
+from power_stage_design.tests.export_checks import assert_exact_bytes, model_windows_text_newlines
 from power_stage_design.toolbox import MODEL_VERSION
 from power_stage_design.toolbox_presentation import (
     LABELS,
@@ -90,10 +91,13 @@ def test_filter_current_is_labeled_and_persisted_as_stage_average(widget, app, t
 
 
 @pytest.mark.parametrize("tool_id", TOOL_IDS)
-def test_all_real_tools_show_chinese_results_exact_exports_and_invalidation(widget, app, tmp_path, tool_id):
+@pytest.mark.parametrize("windows_newlines", [False, True], ids=["native", "windows-io-model"])
+def test_all_real_tools_show_chinese_results_exact_exports_and_invalidation(widget, app, monkeypatch, tmp_path, tool_id, windows_newlines):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
 
+    if windows_newlines:
+        model_windows_text_newlines(monkeypatch, tmp_path)
     widget.select_tool(tool_id)
     QTest.mouseClick(widget.calculate_button, Qt.MouseButton.LeftButton)
     result = widget.latest_result
@@ -120,7 +124,7 @@ def test_all_real_tools_show_chinese_results_exact_exports_and_invalidation(widg
     for suffix, expected in ((".json", result.to_json()), (".txt", result.to_text()), (".csv", result.to_csv())):
         path = tmp_path / (tool_id + suffix)
         widget.export_to(path)
-        assert path.read_bytes() == expected.encode("utf-8")
+        assert_exact_bytes(path.read_bytes(), expected.encode("utf-8"))
     widget.details_toggle.setChecked(False)
     assert widget.latest_result is result
     assert result.to_json() == original
@@ -199,7 +203,10 @@ def test_unit_conversion_caption_is_dimension_specific(widget, category, from_un
 
 
 @pytest.mark.parametrize("tool_id,changes", [("X09", {"bits": 16}), ("X12", {"points": 4001})])
-def test_large_real_map_and_curves_have_bounded_preview_and_complete_exact_export(widget, app, tmp_path, tool_id, changes):
+@pytest.mark.parametrize("windows_newlines", [False, True], ids=["native", "windows-io-model"])
+def test_large_real_map_and_curves_have_bounded_preview_and_complete_exact_export(widget, app, monkeypatch, tmp_path, tool_id, changes, windows_newlines):
+    if windows_newlines:
+        model_windows_text_newlines(monkeypatch, tmp_path)
     widget.select_tool(tool_id)
     widget.set_values(changes)
     assert widget.calculate() is None
@@ -214,10 +221,11 @@ def test_large_real_map_and_curves_have_bounded_preview_and_complete_exact_expor
     assert widget.output.toPlainText() == details_text(result)
     output = result.outputs["mapping"] if tool_id == "X09" else result.outputs["curves"]["frequency_hz"]
     assert len(output) == (65536 if tool_id == "X09" else 4001)
-    path = tmp_path / "complete.json"
-    widget.export_to(path)
-    assert path.read_bytes() == original.encode("utf-8")
-    assert result.to_json() == original
+    for suffix, expected in ((".json", original), (".txt", result.to_text()), (".csv", result.to_csv())):
+        path = tmp_path / ("complete" + suffix)
+        widget.export_to(path)
+        assert_exact_bytes(path.read_bytes(), expected.encode("utf-8"))
+    assert_exact_bytes(result.to_json().encode("utf-8"), original.encode("utf-8"))
 
 
 @pytest.mark.parametrize("tool_id", TOOL_IDS)
@@ -398,7 +406,7 @@ def test_modal_action_ownership_tracks_input_not_details_toggle(widget, monkeypa
     {"export": widget._export_dialog, "save": widget._save_inputs_dialog, "open": widget._open_inputs_dialog}[action]()
     if change == "details":
         if action == "export":
-            assert path.read_bytes() == original.to_json().encode("utf-8")
+            assert_exact_bytes(path.read_bytes(), original.to_json().encode("utf-8"))
         else:
             assert widget.state() == before
             assert widget.latest_result.to_json() == original.to_json()
