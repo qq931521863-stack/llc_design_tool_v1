@@ -4,7 +4,10 @@ from __future__ import annotations
 import csv
 import json
 import os
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -12,7 +15,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
 from PySide6.QtCore import QCoreApplication, QEvent, QLocale, Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QFileDialog, QLineEdit, QToolButton
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialogButtonBox,
+    QFileDialog,
+    QLineEdit,
+    QToolButton,
+)
 
 from power_stage_design.gui import PowerStageMainWindow
 from power_stage_design.project import read_project
@@ -85,12 +94,80 @@ def test_locale_decimal_is_committed_without_manual_float_parsing(desktop):
     assert box.text().startswith("24,5")
 
 
+def choose_file(dialog, path):
+    # QFileDialog's completer retains selected directory rows if keys are
+    # injected into an unfocused editor. accept() then navigates to that
+    # directory instead of accepting the otherwise-correct filename text.
+    dialog.activateWindow()
+    assert QTest.qWaitForWindowActive(dialog, 2000), "file dialog did not activate"
+    filename = dialog.findChild(QLineEdit, "fileNameEdit")
+    QTest.mouseClick(filename, Qt.MouseButton.LeftButton)
+    assert filename.hasFocus(), "filename editor did not receive focus"
+    filename.selectAll()
+    QTest.keyClicks(filename, str(path))
+    assert filename.text() == str(path)
+    assert [Path(name) for name in dialog.selectedFiles()] == [Path(path)], dialog.selectedFiles()
+    save = dialog.findChild(QDialogButtonBox, "buttonBox").button(QDialogButtonBox.StandardButton.Save)
+    assert save.isEnabled()
+    QTest.mouseClick(save, Qt.MouseButton.LeftButton)
+
+
+def test_real_file_dialog_chooser_activates_first_window(tmp_path):
+    # No prior QApplication/window activation can mask the regression. Keep
+    # the real chooser, completer, typed absolute path and Save-button signal.
+    script = """
+import sys
+from pathlib import Path
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QFileDialog
+from power_stage_design.tests.test_pending_input_actions import choose_file
+app = QApplication([])
+app.setQuitOnLastWindowClosed(False)
+assert app.activeWindow() is None
+errors, events = [], []
+def choose():
+    dialog = app.activeModalWidget()
+    try:
+        assert isinstance(dialog, QFileDialog)
+        dialog.accepted.connect(lambda: events.append('accepted'))
+        dialog.rejected.connect(lambda: events.append('rejected'))
+        choose_file(dialog, sys.argv[1])
+    except Exception as exc:
+        errors.append(repr(exc))
+        if dialog:
+            dialog.reject()
+def timeout():
+    errors.append('watchdog timeout')
+    if app.activeModalWidget():
+        app.activeModalWidget().reject()
+chooser = QTimer()
+chooser.setSingleShot(True)
+chooser.timeout.connect(choose)
+chooser.start(250)
+watchdog = QTimer()
+watchdog.setSingleShot(True)
+watchdog.timeout.connect(timeout)
+watchdog.start(5000)
+path, _ = QFileDialog.getSaveFileName(None, 'Save', 'default.json', 'JSON (*.json)')
+assert not errors, errors
+assert events == ['accepted'], events
+assert Path(path) == Path(sys.argv[1]), (path, sys.argv[1])
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path / "pending.json")],
+        capture_output=True, text=True, timeout=20, check=False,
+        env={**os.environ, "XDG_CONFIG_HOME": str(tmp_path), "XDG_CACHE_HOME": str(tmp_path)},
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
 @pytest.mark.parametrize("action,suffix", [("保存项目", "json"), ("导出报告", "html"), ("导出波形 CSV", "csv")])
 def test_pending_edit_exports_from_real_file_dialog(desktop, tmp_path, action, suffix):
     path = tmp_path / ("pending." + suffix)
     box = desktop.input_widgets["vin_v"]
     edit(box, "24")
     observations = []
+    dialog_events = []
 
     def choose():
         dialog = QApplication.activeModalWidget()
@@ -99,12 +176,10 @@ def test_pending_edit_exports_from_real_file_dialog(desktop, tmp_path, action, s
             return
         try:
             observations.append(desktop.result.inputs.vin_v if desktop.result else None)
-            filename = dialog.findChild(QLineEdit, "fileNameEdit")
-            filename.setFocus()
-            filename.selectAll()
-            QTest.keyClicks(filename, str(path))
-            dialog.accept()
-        except (AttributeError, RuntimeError, TypeError) as exc:
+            dialog.accepted.connect(lambda: dialog_events.append("accepted"))
+            dialog.rejected.connect(lambda: dialog_events.append("rejected"))
+            choose_file(dialog, path)
+        except (AssertionError, AttributeError, RuntimeError, TypeError) as exc:
             observations.append(str(exc))
             dialog.reject()
 
@@ -113,7 +188,13 @@ def test_pending_edit_exports_from_real_file_dialog(desktop, tmp_path, action, s
     chooser.timeout.connect(choose)
     watchdog = QTimer(desktop)
     watchdog.setSingleShot(True)
-    watchdog.timeout.connect(lambda: QApplication.activeModalWidget().reject() if QApplication.activeModalWidget() else None)
+
+    def timed_out():
+        dialog_events.append("watchdog timeout")
+        if QApplication.activeModalWidget():
+            QApplication.activeModalWidget().reject()
+
+    watchdog.timeout.connect(timed_out)
     chooser.start(250)
     watchdog.start(5000)
     click(desktop, action)
@@ -121,6 +202,7 @@ def test_pending_edit_exports_from_real_file_dialog(desktop, tmp_path, action, s
     watchdog.stop()
     settle(desktop)
     assert observations == [24]
+    assert dialog_events == ["accepted"]
     assert path.exists(), desktop.status.text()
     identity = desktop.current_inputs().design_id
     if suffix == "json":
