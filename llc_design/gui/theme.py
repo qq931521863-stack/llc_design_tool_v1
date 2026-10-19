@@ -139,6 +139,9 @@ def active_theme() -> ThemeTokens:
 
 def apply_app_theme(app: QApplication) -> ThemeTokens:
     """Force Fusion style + a palette matching the OS light/dark appearance."""
+    from llc_design.i18n.fonts import load_windows_offscreen_fonts
+
+    load_windows_offscreen_fonts(app)
     app.setStyle(QStyleFactory.create("Fusion"))
     t = DARK if detect_dark(app) else LIGHT
     pal = QPalette()

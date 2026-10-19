@@ -98,7 +98,7 @@ def _exercise_desktop(width, height, output):
         Qt,
         qVersion,
     )
-    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtGui import QFontDatabase, QFontInfo, QFontMetrics, QWheelEvent
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import (
         QApplication,
@@ -124,8 +124,36 @@ def _exercise_desktop(width, height, output):
     _stage("qapplication-start")
     app = QApplication.instance() or QApplication([])
     _stage("qapplication-created")
+    evidence = Path(os.environ["LLC_LAYOUT_EVIDENCE_DIR"]) if os.environ.get("LLC_LAYOUT_EVIDENCE_DIR") else None
+    if evidence:
+        evidence.mkdir(parents=True, exist_ok=True)
+    original_point_size = app.font().pointSizeF()
+    theme_started = time.monotonic()
     theme.apply_app_theme(app)
+    theme_startup_seconds = time.monotonic() - theme_started
     apply_language("zh-Hans", app)
+    font = app.font()
+    font_info = QFontInfo(font)
+    metrics = QFontMetrics(font)
+    font_evidence = {
+        "theme_startup_seconds": theme_startup_seconds,
+        "requested_family": font.family(), "resolved_family": font_info.family(),
+        "requested_point_size": font.pointSizeF(), "resolved_point_size": font_info.pointSizeF(),
+        "original_point_size": original_point_size, "pixel_size": font_info.pixelSize(),
+        "height": metrics.height(), "latin_width": metrics.horizontalAdvance("Power Stage Designer"),
+        "cjk_width": metrics.horizontalAdvance("电源设计工具箱"),
+        "family_count": len(QFontDatabase.families()),
+        "missing_glyphs": [char for char in "Power Stage Designer 电源设计工具箱波形控制参数"
+                           if not metrics.inFontUcs4(ord(char))],
+        "registered_files": list(getattr(app, "_power_design_offscreen_font_files", ())),
+    }
+    _stage("fonts-ready", **font_evidence)
+    if evidence:
+        (evidence / f"llc-{width}x{height}-font.json").write_text(
+            json.dumps(font_evidence, indent=2), encoding="utf-8")
+    assert font.pointSizeF() == original_point_size, font_evidence
+    assert font_info.family() and font_info.pointSizeF() > 0, font_evidence
+    assert not font_evidence["missing_glyphs"], font_evidence
     screen = app.primaryScreen()
     assert screen.geometry().size().toTuple() == (width, height)
     assert screen.logicalDotsPerInch() == 96
@@ -138,6 +166,16 @@ def _exercise_desktop(width, height, output):
     _stage("window-created")
     window.show()
     QTest.qWait(50)
+    startup = dict(available=list(screen.availableGeometry().getRect()),
+        frame=list(window.frameGeometry().getRect()), geometry=list(window.geometry().getRect()),
+        minimum=list(window.minimumSize().toTuple()),
+        minimum_hint=list(window.minimumSizeHint().toTuple()), font=font_evidence,
+        qpa_fontdir=os.environ.get("QT_QPA_FONTDIR"))
+    _stage("window-shown", **startup)
+    if evidence:
+        (evidence / f"llc-{width}x{height}-startup.json").write_text(
+            json.dumps(startup, indent=2), encoding="utf-8")
+        assert window.grab().save(str(evidence / f"llc-{width}x{height}-normal-window.png"))
     assert screen.availableGeometry().contains(window.frameGeometry())
     window.showMaximized()
     QTest.qWait(50)
@@ -145,10 +183,8 @@ def _exercise_desktop(width, height, output):
     view = window.waveform_view
     digital = window.digital_loop_view
     candidate = window.two_stage_optimization_view
-    evidence = Path(os.environ["LLC_LAYOUT_EVIDENCE_DIR"]) if os.environ.get("LLC_LAYOUT_EVIDENCE_DIR") else None
-    if evidence:
-        evidence.mkdir(parents=True, exist_ok=True)
-    measurements = {"screen": [width, height], "minimum": list(window.minimumSizeHint().toTuple()),
+    measurements = {"screen": [width, height], "font": font_evidence,
+        "available": list(screen.availableGeometry().getRect()), "minimum": list(window.minimumSizeHint().toTuple()),
         "frame": list(window.frameGeometry().getRect()), "pages": [], "source": module.__file__}
 
     def settle():

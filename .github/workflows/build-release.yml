@@ -146,6 +146,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pyinstaller setuptools wheel
           python -m pip install -e ".[gui,dev,web,agent]"
+      - name: Expose Windows system fonts to offscreen Qt
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $fonts = Join-Path $env:WINDIR 'Fonts'
+          if (-not (Test-Path -LiteralPath $fonts -PathType Container)) {
+            throw "Windows system font directory is missing: $fonts"
+          }
+          "QT_QPA_FONTDIR=$fonts" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Install Windows host C compiler
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
@@ -175,6 +184,8 @@ jobs:
           PY
       - name: Check native numerical and desktop regressions first
         shell: bash
+        env:
+          LLC_LAYOUT_EVIDENCE_DIR: ${{ runner.temp }}/llc-layout-evidence
         run: |
           python -m pytest -x \
             power_stage_design/tests/test_psfb_dense_polynomials.py \
@@ -187,7 +198,10 @@ jobs:
             power_stage_design/tests/test_psfb_magnetizing_sizing.py \
             power_stage_design/tests/test_packaging_contract.py \
             llc_design/tests/test_integrated_magnetics_gui.py \
+            llc_design/tests/test_windows_offscreen_fonts.py \
             llc_design/tests/test_llc_desktop_layout.py \
+            llc_design/tests/test_llc_layout_metrics.py \
+            llc_design/tests/test_launcher_visibility.py \
             llc_design/tests/test_td_passive_consumers.py \
             llc_design/tests/test_two_stage_desktop.py \
             llc_design/tests/test_v3_dynamics_control.py \
@@ -200,6 +214,13 @@ jobs:
             power_stage_design/tests/test_pending_input_actions.py \
             power_stage_design/tests/test_advanced_edit_identity.py \
             power_stage_design/tests/test_llc_external_controller_contract.py
+      - name: Preserve native offscreen layout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llc-layout-${{ runner.os }}
+          path: ${{ runner.temp }}/llc-layout-evidence
+          if-no-files-found: warn
       - name: Run tests
         run: python -m pytest
       - name: Build with PyInstaller

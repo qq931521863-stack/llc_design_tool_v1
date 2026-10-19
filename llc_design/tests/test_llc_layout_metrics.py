@@ -19,12 +19,13 @@ def test_narrow_dock_and_window_frame_with_larger_font(tmp_path, font_points):
     config.write_text(json.dumps({"screens": [{"name": "small-desktop",
         "width": 1280, "height": 720, "logicalDpi": 96, "logicalBaseDpi": 96}],
         "windowFrameMargins": True}), encoding="utf-8")
-    env = dict(os.environ, QT_QPA_PLATFORM=f"offscreen:configfile={config}",
+    env = dict(os.environ, QT_QPA_PLATFORM=f"offscreen:configfile={config.name}",
         QT_SCALE_FACTOR="1", QT_FONT_DPI="96", MPLBACKEND="Agg", PYTHONPATH=str(ROOT),
         MPLCONFIGDIR=str(tmp_path / "mpl"), XDG_CACHE_HOME=str(tmp_path / "cache"),
         XDG_CONFIG_HOME=str(tmp_path / "config"))
     result = subprocess.run([sys.executable, str(Path(__file__).resolve()), str(font_points)],
-        env=env, cwd=ROOT, capture_output=True, text=True, timeout=60, check=False)
+        env=env, cwd=tmp_path, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=60, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert '"horizontal_scroll": 0' in result.stdout
     assert '"disposed": true' in result.stdout

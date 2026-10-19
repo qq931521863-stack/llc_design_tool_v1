@@ -29,13 +29,14 @@ def test_maximized_launcher_entries_and_real_topology_clicks(tmp_path, width, he
                      "height": height, "logicalDpi": 96, "logicalBaseDpi": 96}],
         "windowFrameMargins": True,
     }), encoding="utf-8")
-    env = dict(os.environ, QT_QPA_PLATFORM=f"offscreen:configfile={config}",
+    env = dict(os.environ, QT_QPA_PLATFORM=f"offscreen:configfile={config.name}",
                QT_SCALE_FACTOR="1", QT_FONT_DPI="96", MPLBACKEND="Agg",
                MPLCONFIGDIR=str(tmp_path / "mpl"), XDG_CACHE_HOME=str(tmp_path / "cache"),
                XDG_CONFIG_HOME=str(tmp_path / "config"), PYTHONPATH=str(ROOT))
     completed = subprocess.run(
         [sys.executable, str(Path(__file__).resolve()), str(width), str(height)],
-        cwd=ROOT, env=env, capture_output=True, text=True, timeout=120, check=False,
+        cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=120, check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert f'"screen": [{width}, {height}]' in completed.stdout

@@ -16,6 +16,9 @@ default is kept.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 _ZH_HANS = (
     "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB",
     "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei", "AR PL UMing CN",
@@ -50,6 +53,36 @@ MPL_FONT_STACKS: dict[str, tuple[str, ...]] = {
 
 # Kept for callers that only need "a CJK font exists" (cursor labels, PDF export).
 CJK_FONT_STACK: tuple[str, ...] = _ZH_HANS
+
+
+def load_windows_offscreen_fonts(app) -> tuple[str, ...]:
+    """Expose installed Windows fonts to Qt's non-native offscreen backend.
+
+    Qt 6.11.2 offscreen uses QFreeTypeFontDatabase on Windows, rather than the
+    native Windows font database. Its directory scan also omits .ttc files.
+    Register the actual system fonts through Qt's collection-aware public API;
+    leave the application's existing language family selection and size alone.
+    Native Windows, macOS and Linux already discover their own system fonts.
+    """
+    if sys.platform != "win32" or app.platformName() != "offscreen":
+        return ()
+    cached = getattr(app, "_power_design_offscreen_font_files", None)
+    if cached is not None:
+        return cached
+    from PySide6.QtCore import QStandardPaths
+    from PySide6.QtGui import QFontDatabase
+
+    directories = QStandardPaths.standardLocations(QStandardPaths.StandardLocation.FontsLocation)
+    files = {path.resolve() for directory in directories
+             for path in Path(directory).glob("*")
+             if path.is_file() and path.suffix.casefold() in {".ttf", ".ttc", ".otf"}}
+    registered = tuple(str(path) for path in sorted(files)
+                       if QFontDatabase.addApplicationFont(str(path)) >= 0)
+    if not registered:
+        raise RuntimeError("Windows offscreen Qt could not load any installed fonts from "
+                           + repr(directories))
+    app._power_design_offscreen_font_files = registered
+    return registered
 
 
 def qt_font_stack(code: str) -> tuple[str, ...]:
@@ -115,6 +148,7 @@ __all__ = [
     "apply_matplotlib_fonts",
     "apply_qt_font",
     "installed_family",
+    "load_windows_offscreen_fonts",
     "matplotlib_font_stack",
     "qt_font_stack",
 ]
