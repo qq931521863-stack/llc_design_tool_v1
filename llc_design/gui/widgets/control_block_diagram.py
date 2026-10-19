@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QObject, QPointF, Qt, Signal
+from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QGraphicsItem,
@@ -46,6 +46,11 @@ class ConnectionSpec:
     target: str
     label: str = ""
     feedback: bool = False
+    # Optional named boundary ports and explicit scene-space lanes.  Complex
+    # control drawings own their routing; simple consumers keep the defaults.
+    source_port: tuple[str, float] | None = None
+    target_port: tuple[str, float] | None = None
+    via: tuple[tuple[float, float], ...] = ()
 
 
 @dataclass
@@ -92,6 +97,9 @@ class _BlockItem(QGraphicsRectItem):
         font.setPointSize(10 if spec.height < 58.0 else 11)
         font.setBold(True)
         title.setFont(font)
+        if title.boundingRect().width() > spec.width - 12.0:
+            font.setPointSizeF(font.pointSizeF() * (spec.width - 12.0) / title.boundingRect().width())
+            title.setFont(font)
         title_rect = title.boundingRect()
         title_y = 8.0 if spec.height < 58.0 else 13.0
         title.setPos((spec.width - title_rect.width()) / 2.0, title_y)
@@ -102,6 +110,9 @@ class _BlockItem(QGraphicsRectItem):
             font2.setPointSize(8 if spec.height < 58.0 else 9)
             subtitle.setFont(font2)
             subtitle.setBrush(QBrush(QColor("#475467")))
+            if subtitle.boundingRect().width() > spec.width - 12.0:
+                font2.setPointSizeF(font2.pointSizeF() * (spec.width - 12.0) / subtitle.boundingRect().width())
+                subtitle.setFont(font2)
             rect = subtitle.boundingRect()
             subtitle_y = max(title_y + title_rect.height() + 3.0, spec.height - rect.height() - 7.0)
             subtitle.setPos((spec.width - rect.width()) / 2.0, subtitle_y)
@@ -205,6 +216,8 @@ class ControlBlockDiagram(QWidget):
             self._items[spec.key] = item
         for connection in connections:
             self._draw_connection(connection)
+        self._draw_crossings()
+        self._place_connection_labels()
         rect = self.scene.itemsBoundingRect().adjusted(-18, -16, 18, 16)
         self.scene.setSceneRect(rect)
         self.fit_to_view()
@@ -318,65 +331,66 @@ class ControlBlockDiagram(QWidget):
         if graphics.label is not None:
             graphics.label.setOpacity(1.0 if highlighted else (0.28 if dimmed else 1.0))
 
+    @staticmethod
+    def _port(rect: QRectF, port: tuple[str, float]) -> QPointF:
+        side, offset = port
+        if side in ("top", "bottom"):
+            return QPointF(rect.left() + offset * rect.width(),
+                           rect.top() if side == "top" else rect.bottom())
+        if side in ("left", "right"):
+            return QPointF(rect.left() if side == "left" else rect.right(),
+                           rect.top() + offset * rect.height())
+        raise ValueError(f"Unknown diagram port: {side}")
+
+    @staticmethod
+    def _segment_rect(p: QPointF, q: QPointF, margin: float = 0.1) -> QRectF:
+        return QRectF(p, q).normalized().adjusted(-margin, -margin, margin, margin)
+
     def _draw_connection(self, spec: ConnectionSpec) -> None:
         if spec.source not in self._items or spec.target not in self._items:
             return
-        a = self._items[spec.source].sceneBoundingRect()
-        b = self._items[spec.target].sceneBoundingRect()
-        if spec.feedback:
-            # Feedback sources are normally drawn below the controlled path.
-            # Route the return in the free gap immediately above the sensor,
-            # then rise vertically at the destination.  This keeps long PFC
-            # feedback lines out of the parameter/sensor blocks and avoids the
-            # old "big loop below everything" crossings.
-            feedback_index = sum(1 for g in self._connection_graphics if g.spec.feedback)
-            if a.top() > b.bottom() + 20.0:
-                p1 = QPointF(a.center().x(), a.top())
-                p4 = QPointF(b.center().x(), b.bottom())
-                proposed = a.top() - 18.0 - 14.0 * feedback_index
-                bus_y = max(b.bottom() + 8.0, proposed)
-                if bus_y < a.top() - 2.0:
-                    points = [
-                        p1,
-                        QPointF(p1.x(), bus_y),
-                        QPointF(p4.x(), bus_y),
-                        p4,
-                    ]
-                else:
-                    midy = (a.top() + b.bottom()) / 2.0
-                    points = [p1, QPointF(p1.x(), midy), QPointF(p4.x(), midy), p4]
-            else:
-                # Fallback for a feedback source that is not below its target.
-                p1 = QPointF(a.center().x(), a.bottom())
-                p4 = QPointF(b.center().x(), b.bottom())
-                y = max(a.bottom(), b.bottom()) + 46.0 + 28.0 * feedback_index
-                points = [p1, QPointF(p1.x(), y), QPointF(p4.x(), y), p4]
+        # Use the actual rectangle, not its pen-expanded bounding box.
+        a = self._items[spec.source].mapRectToScene(self._items[spec.source].rect())
+        b = self._items[spec.target].mapRectToScene(self._items[spec.target].rect())
+        same_row = abs(a.center().y() - b.center().y()) < min(a.height(), b.height()) * 0.55
+        if spec.feedback and a.top() >= b.bottom():
+            source, target = ("top", 0.25), ("bottom", 0.5)
+        elif same_row:
+            source, target = (("right", 0.5), ("left", 0.5)) if b.center().x() >= a.center().x() else (("left", 0.5), ("right", 0.5))
+        elif b.center().y() >= a.center().y():
+            source, target = ("bottom", 0.5), ("top", 0.5)
         else:
-            # Choose a clear orthogonal path.  Same-row blocks connect left/right;
-            # feedback/detail rows use vertical ports and a short dog-leg.
-            same_row = abs(a.center().y() - b.center().y()) < min(a.height(), b.height()) * 0.55
-            if b.center().x() >= a.center().x() and same_row:
-                p1 = QPointF(a.right(), a.center().y())
-                p4 = QPointF(b.left(), b.center().y())
-            elif b.center().x() < a.center().x() and same_row:
-                p1 = QPointF(a.left(), a.center().y())
-                p4 = QPointF(b.right(), b.center().y())
-            elif b.center().y() >= a.center().y():
-                p1 = QPointF(a.center().x(), a.bottom())
-                p4 = QPointF(b.center().x(), b.top())
-            else:
-                p1 = QPointF(a.center().x(), a.top())
-                p4 = QPointF(b.center().x(), b.bottom())
-            midx = (p1.x() + p4.x()) / 2.0
-            midy = (p1.y() + p4.y()) / 2.0
-            if abs(p1.y() - p4.y()) < 1.0:
-                points = [p1, p4]
-            elif abs(p1.x() - p4.x()) < 1.0:
-                points = [p1, p4]
-            elif abs(p1.x() - p4.x()) >= abs(p1.y() - p4.y()):
-                points = [p1, QPointF(midx, p1.y()), QPointF(midx, p4.y()), p4]
-            else:
-                points = [p1, QPointF(p1.x(), midy), QPointF(p4.x(), midy), p4]
+            source, target = ("top", 0.5), ("bottom", 0.5)
+        source, target = spec.source_port or source, spec.target_port or target
+        p1, p4 = self._port(a, source), self._port(b, target)
+        if spec.via:
+            points = [p1, *(QPointF(*point) for point in spec.via), p4]
+        elif source[0] in ("top", "bottom") and target[0] in ("top", "bottom"):
+            # A vertical port must leave vertically, even when the horizontal
+            # distance is larger.  Stay in the gap, including narrow feedback gaps.
+            y = (p1.y() + p4.y()) / 2.0
+            points = [p1, QPointF(p1.x(), y), QPointF(p4.x(), y), p4]
+            # Simple stacked consumers (e.g. PLL -> current controller) may
+            # have an intervening block.  Bypass that column on its outside.
+            obstacles = [item.sceneBoundingRect().adjusted(1, 1, -1, -1)
+                         for key, item in self._items.items() if key not in (spec.source, spec.target)]
+            if not spec.source_port and not spec.target_port and any(
+                self._segment_rect(p, q).intersects(rect)
+                for p, q in zip(points, points[1:]) for rect in obstacles
+            ):
+                x = max(item.sceneBoundingRect().right() for item in self._items.values()) + 24.0
+                p1, p4 = self._port(a, ("right", 0.5)), self._port(b, ("right", 0.5))
+                points = [p1, QPointF(x, p1.y()), QPointF(x, p4.y()), p4]
+        else:
+            x = (p1.x() + p4.x()) / 2.0
+            points = [p1, QPointF(x, p1.y()), QPointF(x, p4.y()), p4]
+        points = [point for i, point in enumerate(points) if i == 0 or point != points[i-1]]
+        # Coalesce straight dog-leg vertices so a crossing at the old midpoint
+        # receives the same visible break as one inside a single segment.
+        for i in range(len(points)-2, 0, -1):
+            p, q, r = points[i-1:i+2]
+            if (p.x() == q.x() == r.x()) or (p.y() == q.y() == r.y()):
+                points.pop(i)
 
         base_color = QColor("#0e9384" if spec.feedback else "#175cd3")
         pen = QPen(base_color, 1.8)
@@ -408,9 +422,8 @@ class ControlBlockDiagram(QWidget):
             font.setPointSize(9)
             label_item.setFont(font)
             label_item.setBrush(QBrush(QColor("#344054")))
-            mid = points[len(points) // 2]
-            label_item.setPos(mid.x() + 5.0, mid.y() - 21.0)
             self.scene.addItem(label_item)
+            label_item.setZValue(3)
 
         self._connection_graphics.append(_ConnectionGraphics(
             spec=spec,
@@ -419,6 +432,82 @@ class ControlBlockDiagram(QWidget):
             label=label_item,
             base_color=base_color,
         ))
+
+    def _draw_crossings(self) -> None:
+        # A white break in the underpassing stroke distinguishes an ordinary
+        # crossing from a junction.  There are no implicit signal junctions.
+        segments = [(graphics, item.line()) for graphics in self._connection_graphics
+                    for item in graphics.lines]
+        crossings = set()
+        for graphics, horizontal in segments:
+            if abs(horizontal.dy()) > 0.1:
+                continue
+            for other, vertical in segments:
+                if graphics is other or abs(vertical.dx()) > 0.1:
+                    continue
+                x, y = vertical.x1(), horizontal.y1()
+                if (min(horizontal.x1(), horizontal.x2()) + 0.1 < x < max(horizontal.x1(), horizontal.x2()) - 0.1
+                        and min(vertical.y1(), vertical.y2()) + 0.1 < y < max(vertical.y1(), vertical.y2()) - 0.1
+                        and (x, y) not in crossings):
+                    crossings.add((x, y))
+                    gap = self.scene.addEllipse(x-4, y-4, 8, 8, QPen(Qt.PenStyle.NoPen), QBrush(QColor("white")))
+                    gap.setZValue(1)
+                    pen = QPen(graphics.base_color, 1.8)
+                    pen.setCosmetic(True)
+                    bridge = self.scene.addLine(x-5, y, x+5, y, pen)
+                    bridge.setZValue(1)
+                    graphics.lines.append(bridge)
+
+    def _place_connection_labels(self) -> None:
+        """Place text beside a real segment, outside blocks and signal strokes."""
+        if not self._items:
+            return
+        occupied = [item.sceneBoundingRect().adjusted(-3, -3, 3, 3) for item in self._items.values()]
+        strokes = [self._segment_rect(item.line().p1(), item.line().p2(), 3.0)
+                   for graphics in self._connection_graphics for item in graphics.lines]
+        strokes += [graphics.arrow.sceneBoundingRect().adjusted(-2, -2, 2, 2)
+                    for graphics in self._connection_graphics]
+        top = min(rect.top() for rect in occupied)
+        bottom = max(rect.bottom() for rect in occupied)
+        for graphics in self._connection_graphics:
+            label = graphics.label
+            if label is None:
+                continue
+            w, h = label.boundingRect().width(), label.boundingRect().height()
+            segments = sorted((item.line() for item in graphics.lines), key=lambda line: line.length(), reverse=True)
+            candidates = []
+            for line in segments:
+                x, y = line.center().x(), line.center().y()
+                if abs(line.dy()) < 0.1:
+                    for left in (x-w/2, min(line.x1(), line.x2())+5,
+                                 max(line.x1(), line.x2())-w-5):
+                        candidates += [(left, y-h-5), (left, y+5)]
+                else:
+                    for above in (y-h/2, min(line.y1(), line.y2())+5,
+                                  max(line.y1(), line.y2())-h-5):
+                        candidates += [(x+10, above), (x-w-10, above)]
+            # Short between-block gaps can be narrower than the signal name.
+            # Place those labels immediately above/below the row, never on titles.
+            a = self._items[graphics.spec.source].sceneBoundingRect()
+            b = self._items[graphics.spec.target].sceneBoundingRect()
+            for line in segments:
+                x = line.center().x() - w/2
+                candidates += [(x, min(a.top(), b.top())-h-7),
+                               (x, max(a.bottom(), b.bottom())+7)]
+            for line in segments:
+                x = line.center().x() - w/2
+                candidates += [(x, top-h-5), (x, bottom+5)]
+            for x, y in candidates:
+                rect = QRectF(x, y, w, h)
+                if not any(rect.intersects(other) for other in occupied + strokes):
+                    label.setPos(x, y)
+                    occupied.append(rect.adjusted(-3, -3, 3, 3))
+                    break
+            else:
+                # A dense custom drawing still gets a readable external label.
+                label.setPos(segments[0].center().x()-w/2, top-h-5)
+                top -= h+10
+                occupied.append(label.sceneBoundingRect())
 
 
 __all__ = ["BlockSpec", "ConnectionSpec", "ControlBlockDiagram"]

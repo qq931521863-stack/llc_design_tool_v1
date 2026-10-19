@@ -138,50 +138,54 @@ class PFCControlLabView(QWidget):
             diagram_bar.addWidget(button)
         root.addLayout(diagram_bar)
 
-        # Compact functional diagram.  Unlike the old ~1900-unit horizontal
-        # chain, the main view is intentionally a ~1290-unit, three-band layout:
-        #   1) 10 kHz voltage path
-        #   2) 50 kHz current path
-        #   3) sensing / duty feed-forward sources
-        # The physical origin of iL/Vbus sensing is stated in each block rather
-        # than drawing two very long return wires through the entire schematic.
+        # Separate the voltage, current and sensing rows.  Plant measurements
+        # return through named lower lanes; Vac is the external grid input.
         self._diagram_blocks = [
             BlockSpec("vsum", "Σ Vbus", "Vref − Vbus", 20, 0, 86, 52),
             BlockSpec("voltage_controller", "Voltage PI / PIF / 2P2Z", "Cv(z) · 10 kHz", 126, 0, 154, 52, "controller"),
             BlockSpec("vff", "Vrms² Feedforward", "V-loop normalize", 300, 0, 136, 52, "modulator"),
             BlockSpec("iref", "AMC / Iref", "Gcmd·|Vac| · 25 kHz", 456, 0, 146, 52, "modulator"),
 
-            BlockSpec("isum", "Σ Current", "Iref − |iL|", 456, 64, 102, 52),
-            BlockSpec("current_controller", "Current PI / PIF / 2P2Z", "Ci(z) · 50 kHz", 578, 64, 158, 52, "controller"),
-            BlockSpec("indu_comp", "Current Gain", "Kindu = 0.7 … 1", 756, 64, 122, 52, "modulator"),
-            BlockSpec("duty", "Σ Duty", "Dff + ΔD", 898, 64, 92, 52),
-            BlockSpec("pwm", "PWM / Min Pulse", "ZOH + update", 1010, 64, 126, 52, "modulator"),
-            BlockSpec("plant", "TTPL Boost Plant", "Gid(s) / bus", 1156, 64, 138, 52, "plant"),
+            BlockSpec("isum", "Σ Current", "Iref − |iL|", 456, 100, 102, 52),
+            BlockSpec("current_controller", "Current PI / PIF / 2P2Z", "Ci(z) · 50 kHz", 578, 100, 158, 52, "controller"),
+            BlockSpec("indu_comp", "Current Gain", "Kindu = 0.7 … 1", 756, 100, 122, 52, "modulator"),
+            BlockSpec("duty", "Σ Duty", "Dff + ΔD", 898, 100, 92, 52),
+            BlockSpec("pwm", "PWM / Min Pulse", "ZOH + update", 1010, 100, 126, 52, "modulator"),
+            BlockSpec("plant", "TTPL Boost Plant", "OUT: iL / Vbus", 1156, 100, 138, 52, "plant"),
 
-            BlockSpec("vbus_sense", "Vbus Sense / ADC", "Plant Vbus → feedback", 20, 128, 142, 52, "sense"),
-            BlockSpec("vac_sense", "Vac Sense / ADC", "Vrms / Iref source", 300, 128, 142, 52, "sense"),
-            BlockSpec("current_sense", "iL Sense / ADC", "Plant iL → feedback", 456, 128, 142, 52, "sense"),
-            BlockSpec("duty_ff", "Duty Feedforward", "from Vac / Vbus_set", 898, 128, 146, 52, "modulator"),
+            BlockSpec("vbus_sense", "Vbus Sense / ADC", "IN: plant Vbus", 20, 210, 142, 52, "sense"),
+            BlockSpec("vac_sense", "Vac Sense / ADC", "IN: external grid Vac", 300, 210, 142, 52, "sense"),
+            BlockSpec("current_sense", "iL Sense / ADC", "IN: plant iL", 456, 210, 142, 52, "sense"),
+            BlockSpec("duty_ff", "Duty Feedforward", "1 − |Vac| / Vbus_set", 898, 210, 146, 52, "modulator"),
         ]
         self._diagram_connections = [
             ConnectionSpec("vsum", "voltage_controller"),
             ConnectionSpec("voltage_controller", "vff"),
             ConnectionSpec("vff", "iref", "Gcmd"),
-            ConnectionSpec("iref", "isum", "Iref"),
+            ConnectionSpec("iref", "isum", "Iref", source_port=("bottom", 51/146)),
             ConnectionSpec("isum", "current_controller", "ei"),
             ConnectionSpec("current_controller", "indu_comp", "Duty PI"),
             ConnectionSpec("indu_comp", "duty", "ΔD"),
+            ConnectionSpec("iref", "indu_comp", "Iref → Kindu", source_port=("right", 0.5),
+                           target_port=("top", 0.5), via=((817, 26),)),
             ConnectionSpec("duty_ff", "duty", "Dff"),
             ConnectionSpec("duty", "pwm"),
             ConnectionSpec("pwm", "plant"),
-            ConnectionSpec("current_sense", "isum", "iL meas", feedback=True),
+            ConnectionSpec("current_sense", "isum", "|iL| meas", feedback=True),
             ConnectionSpec("vbus_sense", "vsum", "Vbus meas", feedback=True),
             ConnectionSpec("vac_sense", "vff", "Vrms"),
-            ConnectionSpec("vac_sense", "iref", "|Vac|"),
+            ConnectionSpec("vac_sense", "iref", "|Vac|", source_port=("right", 0.5),
+                           target_port=("bottom", 0.8), via=((448, 236), (448, 76), (572.8, 76))),
+            ConnectionSpec("vac_sense", "duty_ff", "|Vac|", source_port=("bottom", 0.5),
+                           target_port=("bottom", 0.5), via=((371, 290), (971, 290))),
+            ConnectionSpec("plant", "current_sense", "iL", source_port=("bottom", 0.3),
+                           target_port=("bottom", 0.5), via=((1197.4, 324), (527, 324))),
+            ConnectionSpec("plant", "vbus_sense", "Vbus", source_port=("bottom", 0.7),
+                           target_port=("bottom", 0.5), via=((1252.6, 358), (91, 358))),
         ]
         self.diagram = ControlBlockDiagram()
         self.diagram.setMinimumHeight(150)
-        self.diagram.setMaximumHeight(195)
+        self.diagram.setMaximumHeight(280)
         self.diagram.set_diagram(self._diagram_blocks, self._diagram_connections)
         self.diagram.block_selected.connect(self._diagram_selected)
         root.addWidget(self.diagram, 0)

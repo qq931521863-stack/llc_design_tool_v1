@@ -122,45 +122,51 @@ class ViennaControlLabView(QWidget):
             diagram_bar.addWidget(button)
         root.addLayout(diagram_bar)
 
-        # One clean main row plus support/sensing rows.  The previous V7 layout
-        # mixed feed-forward, sensing and balance into the forward path and made
-        # several lines cross.  This layout intentionally mirrors the LLC/TTPL
-        # vector-diagram interaction model.
+        # Feed-forward is a parallel input to the modulator, not a series
+        # block in the current-controller path.  Give each input its own port.
         self._diagram_blocks = [
             BlockSpec("vsum", "Σ Vdc", "Vdc* − Vdc", 20, 0, 86, 52),
             BlockSpec("voltage_controller", "Voltage PI / PIF / 2P2Z", "Cv(z) · 10 kHz", 126, 0, 154, 52, "controller"),
             BlockSpec("gcmd", "Gcmd", "conductance", 300, 0, 110, 52, "modulator"),
             BlockSpec("references", "3φ Current Ref", "Gcmd × Vabc", 430, 0, 146, 52, "modulator"),
+            BlockSpec("feedforward", "Vabc + R/L FF", "voltage-drop FF", 624, 0, 138, 52, "modulator"),
 
-            BlockSpec("current_controller", "ABC Current PI/PIF/2P2Z", "CiA/B/C · 50 kHz", 430, 64, 174, 52, "controller"),
-            BlockSpec("feedforward", "Vabc + R/L FF", "voltage-drop FF", 624, 64, 138, 52, "modulator"),
-            BlockSpec("modulator", "Vienna Modulator", "THI / D0 / min pulse", 782, 64, 150, 52, "modulator"),
-            BlockSpec("plant", "Vienna Plant", "Iabc / Vdc±", 952, 64, 138, 52, "plant"),
+            BlockSpec("current_controller", "ABC Current PI/PIF/2P2Z", "CiA/B/C · 50 kHz", 430, 110, 174, 52, "controller"),
+            BlockSpec("modulator", "Vienna Modulator", "THI; FF − PI − balance", 782, 110, 150, 52, "modulator"),
+            BlockSpec("plant", "Vienna Plant", "OUT: Iabc / Vdc±", 952, 110, 138, 52, "plant"),
 
-            BlockSpec("bus_sense", "Vdc± Sense / ADC", "bus + midpoint", 20, 128, 146, 52, "sense"),
-            BlockSpec("phase_voltage_sense", "Vabc Sense / ADC", "reference / FF", 260, 128, 150, 52, "sense"),
-            BlockSpec("current_sense", "Iabc Sense / ADC", "current feedback", 624, 128, 150, 52, "sense"),
-            BlockSpec("balance", "Midpoint Balance", "ΔVdc → Cbal(z)", 794, 128, 150, 52, "aux"),
+            BlockSpec("bus_sense", "Vdc± Sense / ADC", "IN: plant Vdc±", 20, 220, 146, 52, "sense"),
+            BlockSpec("phase_voltage_sense", "Vabc Sense / ADC", "IN: external grid Vabc", 260, 220, 150, 52, "sense"),
+            BlockSpec("current_sense", "Iabc Sense / ADC", "IN: plant Iabc", 624, 220, 150, 52, "sense"),
+            BlockSpec("balance", "Midpoint Balance", "ΔVdc → Cbal(z)", 794, 220, 150, 52, "aux"),
         ]
         self._diagram_connections = [
             ConnectionSpec("vsum", "voltage_controller"),
             ConnectionSpec("voltage_controller", "gcmd"),
             ConnectionSpec("gcmd", "references", "Gcmd"),
             ConnectionSpec("references", "current_controller", "Iabc*"),
-            ConnectionSpec("current_controller", "modulator", "Δmabc"),
+            ConnectionSpec("current_controller", "modulator", "−Δmabc"),
             ConnectionSpec("modulator", "plant", "mabc"),
-            ConnectionSpec("phase_voltage_sense", "references", "Vabc"),
-            ConnectionSpec("phase_voltage_sense", "feedforward", "Vabc"),
+            ConnectionSpec("phase_voltage_sense", "references", "Vabc", source_port=("top", 0.5),
+                           target_port=("bottom", 0.2), via=((335, 80), (459.2, 80))),
+            ConnectionSpec("phase_voltage_sense", "feedforward", "Vabc", source_port=("top", 0.9),
+                           target_port=("bottom", 0.8), via=((395, 100), (614, 100), (614, 68), (734.4, 68))),
             ConnectionSpec("references", "feedforward", "Iabc*"),
-            ConnectionSpec("feedforward", "modulator", "FF"),
+            ConnectionSpec("feedforward", "modulator", "FF", source_port=("bottom", 0.5),
+                           target_port=("top", 0.5), via=((693, 80), (857, 80))),
             ConnectionSpec("current_sense", "current_controller", "Iabc meas", True),
             ConnectionSpec("bus_sense", "vsum", "Vdc meas", True),
-            ConnectionSpec("bus_sense", "balance", "ΔVdc"),
-            ConnectionSpec("balance", "modulator", "balance"),
+            ConnectionSpec("bus_sense", "balance", "ΔVdc", source_port=("bottom", 0.5),
+                           target_port=("bottom", 0.5), via=((93, 300), (869, 300))),
+            ConnectionSpec("balance", "modulator", "−balance"),
+            ConnectionSpec("plant", "current_sense", "Iabc", source_port=("bottom", 0.3),
+                           target_port=("bottom", 0.5), via=((993.4, 334), (699, 334))),
+            ConnectionSpec("plant", "bus_sense", "Vdc±", source_port=("bottom", 0.7),
+                           target_port=("left", 0.5), via=((1048.6, 368), (0, 368), (0, 246))),
         ]
         self.diagram = ControlBlockDiagram()
         self.diagram.setMinimumHeight(150)
-        self.diagram.setMaximumHeight(195)
+        self.diagram.setMaximumHeight(280)
         self.diagram.set_diagram(self._diagram_blocks, self._diagram_connections)
         self.diagram.block_selected.connect(self._diagram_selected)
         root.addWidget(self.diagram)
