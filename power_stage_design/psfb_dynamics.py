@@ -432,9 +432,9 @@ def _make_result(circuit, initial, terminal, duty, mean, parts, shooting_error):
         cr_current = sec[0]+sec[1]-io
         source = plus(channel[0]-body[0]+channel[2]-body[2], coss[0]+coss[2])
         winding = im+(sec[0]-sec[1])/p.turns_ratio_np_ns
-        append("L1", "Output inductor", io, vr-const(p.vout_v), left, right)
-        append("Lleak", "Primary leakage/series inductance", ip, va-vb-vp, left, right)
-        append("Lm", "Primary magnetizing inductance", im, vp, left, right)
+        append("L1", "Output inductor", io, vr-const(p.vout_v), left, right, "RECT to OUT", "RECT minus OUT")
+        append("Lleak", "Primary leakage/series inductance", ip, va-vb-vp, left, right, "A to P", "A minus P")
+        append("Lm", "Primary magnetizing inductance", im, vp, left, right, "P to B (magnetizing state)", "P minus B")
         append("primary", "Transformer winding (excludes shunt capacitance)", winding, vp, left, right,
                "P to B (into primary dot; excludes shunt capacitance)", "P minus B")
         append("secondary1", "Positive secondary half", sec[0], vp/p.turns_ratio_np_ns, left, right,
@@ -451,8 +451,8 @@ def _make_result(circuit, initial, terminal, duty, mean, parts, shooting_error):
         for k in range(2):
             append(f"D{k+1}", f"Secondary rectifier {k+1}", sec[k], -sec_voltage[k], left, right,
                    "anode to cathode", "cathode to anode")
-        append("Cprimary", "Declared transformer shunt capacitance", cp_current, vp, left, right)
-        append("Crectifier", "Declared rectified-node capacitance", cr_current, vr, left, right)
+        append("Cprimary", "Declared transformer shunt capacitance", cp_current, vp, left, right, "P to B", "P minus B")
+        append("Crectifier", "Declared rectified-node capacitance", cr_current, vr, left, right, "RECT to ISO", "RECT minus ISO")
         append("node_A", "Bridge node A (ideal high-impedance voltage probe)", zero, va, left, right,
                "ideal voltage probe draws zero current", "node A to DC return")
         append("node_B", "Bridge node B (ideal high-impedance voltage probe)", zero, vb, left, right,
@@ -484,15 +484,17 @@ def _make_result(circuit, initial, terminal, duty, mean, parts, shooting_error):
     source = waves[("source", "i")]
     output = devices["L1"].current_a
     actual_mean = math.fsum(segment.integral() for segment in output.segments)
-    cap_current = output.affine(offset=-p.iout_a, reference="into output capacitor positive terminal")
+    cap_current = output.affine(offset=-p.iout_a, reference="OUT to ISO (into Cout positive plate)")
     try:
         cap_voltage = _numerical_capacitor_voltage(cap_current, p.capacitance_f, p.vout_v,
                                                   max(2e-8, 20*o.relative_tolerance)*max(1., p.iout_a))
     except ValueError as exc:
         raise ModelDomainError(f"PSFB output charge does not close: {exc}") from exc
-    devices["Cout"] = DeviceWaveforms("Output capacitor (ripple reconstruction)", cap_current, cap_voltage)
-    devices["Cin"] = DeviceWaveforms("Stiff DC bus input capacitor", source.affine(scale=-1, offset=math.fsum(segment.integral() for segment in source.segments)),
-                                      source.affine(scale=0, offset=p.vin_v, unit="V"))
+    devices["Cout"] = DeviceWaveforms("Output capacitor (ripple reconstruction)", cap_current,
+                                      replace(cap_voltage, reference="OUT minus ISO"))
+    devices["Cin"] = DeviceWaveforms("Stiff DC bus input capacitor", source.affine(scale=-1, offset=math.fsum(segment.integral() for segment in source.segments),
+                                      reference="VIN to GND (into Cin positive plate)"),
+                                      source.affine(scale=0, offset=p.vin_v, unit="V", reference="VIN minus GND"))
     channel_loss = sum(_mean_product(devices[f"Q{k}"].current_a, devices[f"Q{k}"].voltage_v) for k in range(1,5))
     body_loss = -sum(_mean_product(devices[f"Dbody{k}"].current_a, devices[f"Dbody{k}"].voltage_v) for k in range(1,5))
     rectifier_loss = -sum(_mean_product(devices[f"D{k}"].current_a, devices[f"D{k}"].voltage_v) for k in (1,2))

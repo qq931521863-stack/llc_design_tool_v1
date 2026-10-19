@@ -163,6 +163,28 @@ def test_dynamic_psfb_final_result_and_consumers_keep_terminal_references(tmp_pa
         300e-12, .15, .8, .05, 100e-12, 1e-9, .02, "Explicit circuit test constants"))
     result = calculate_stage(inputs)
     assert result.mode == "CCM"
+    expected = {
+        "L1": ("RECT to OUT", "RECT minus OUT"),
+        "Lleak": ("A to P", "A minus P"),
+        "Lm": ("P to B (magnetizing state)", "P minus B"),
+        "primary": ("P to B (into primary dot; excludes shunt capacitance)", "P minus B"),
+        "secondary1": ("ISO to S1 (center tap to upper outer terminal)", "S1 minus ISO"),
+        "secondary2": ("ISO to S2 (center tap to lower outer terminal)", "S2 minus ISO"),
+        "Cprimary": ("P to B", "P minus B"),
+        "Crectifier": ("RECT to ISO", "RECT minus ISO"),
+        "Cout": ("OUT to ISO (into Cout positive plate)", "OUT minus ISO"),
+        "Cin": ("VIN to GND (into Cin positive plate)", "VIN minus GND"),
+        "node_A": ("ideal voltage probe draws zero current", "node A to DC return"),
+        "node_B": ("ideal voltage probe draws zero current", "node B to DC return"),
+    }
+    for number in range(1, 5):
+        expected[f"Q{number}"] = ("drain to source; channel only, excludes Coss/body diode", "drain to source")
+        expected[f"Dbody{number}"] = ("source to drain (anode to cathode)", "cathode to anode")
+        expected[f"Coss{number}"] = ("drain to source displacement current", "drain to source")
+    for number in (1, 2):
+        expected[f"D{number}"] = ("anode to cathode", "cathode to anode")
+    assert {key: (wave.current_a.reference, wave.voltage_v.reference)
+            for key, wave in result.waveforms.items()} == expected
     assert result.waveforms["primary"].voltage_v.reference == "P minus B"
     for number in (1, 2):
         winding = result.waveforms[f"secondary{number}"]
@@ -177,7 +199,7 @@ def test_dynamic_psfb_final_result_and_consumers_keep_terminal_references(tmp_pa
     window._apply_stage_result(result)
     window.show()
     app.processEvents()
-    for key in ("primary", "secondary1", "secondary2", "node_A", "node_B"):
+    for key in expected:
         window.component_combo.setCurrentIndex(window.component_combo.findData(key))
         app.processEvents()
         wave = result.waveforms[key]
@@ -186,7 +208,7 @@ def test_dynamic_psfb_final_result_and_consumers_keep_terminal_references(tmp_pa
     report = tmp_path/"dynamic.html"
     write_report(result, report)
     html = report.read_text(encoding="utf-8")
-    for key in ("primary", "secondary1", "secondary2", "node_A", "node_B"):
+    for key in expected:
         wave = result.waveforms[key]
         assert wave.current_a.reference in html and wave.voltage_v.reference in html
     window.close()
