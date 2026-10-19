@@ -86,6 +86,55 @@ def _priority_proof(advanced):
     return result
 
 
+def _magnetic_proof():
+    """Synthetic schema-only fixture; never evidence of a solver or executable run."""
+    import hashlib
+
+    resources, snapshot = MODULE._magnetic_catalog_contract()
+    identity = hashlib.sha256(json.dumps(snapshot, ensure_ascii=False, sort_keys=True,
+                                        allow_nan=False, separators=(",", ":")).encode()).hexdigest()
+    record_id = snapshot["record"]["record_id"]
+    core = f"Chang Sung Corporation CS400060 [{record_id}]"
+    l0 = 81 * 40 ** 2 * 2 / 1000
+    h = .4 * math.pi * 40 * 7 / snapshot["geometry"]["le_cm"]
+    bias = snapshot["dc_bias_model"]["coefficients"]
+    l_bias = l0 / (100 * (bias["a"] + bias["b"] * h ** bias["c"]))
+    loss = snapshot["loss_model"]["coefficients"]
+    rate = loss["a"] * 120 + loss["b"] * 120 ** loss["gamma"]
+    moment = 2. / (rate * snapshot["geometry"]["ve_cm3"] * 2 / 1000)
+    return {"fixture": "schema-only; synthetic numbers are not executable or physical qualification",
+        "resource_sha256": resources, "selection": snapshot, "selection_identity": identity, "record_id": record_id,
+        "source_documents_sha256": {row["filename"]: row["sha256"] for row in snapshot["source_documents"]},
+        "reference": {"inputs": {"turns": 37, "n_cores": 2, "h_oe": None, "b_kg": None, "f_khz": None},
+            "result": {"record_id": record_id, "selection_identity": identity, "label": "CS400060",
+                "turns": 37, "n_cores": 2, "al_nH_per_t2": 81., "l_zero_bias_uh": 221.778,
+                "full_pfc_blockers": ["Schema-only fixture: applicability unknown"], "scope": "零偏磁 schema-only"},
+            "default_full_calculate_disabled": True, "project_roundtrip": True, "report_consistency": True},
+        "pfc": {"scope": "QA-only user-declared reference model; not manufacturer qualification",
+            "inputs": {"topology": "ttpl", "input_rms_v": 230., "bus_voltage_v": 400., "output_power_w": 1000.,
+                "switching_frequency_hz": 120000., "target_inductance_uh": 200., "efficiency": .97, "n_cores": 2,
+                "wire_copper_diameter_mm": 1., "enamel_build_mm": .05, "target_current_density_a_mm2": 5.,
+                "copper_temperature_c": 100., "max_fill_factor": .45, "winding_length_factor": 1.1, "curve_points": 161},
+            "user_model_declaration": {"B_convention": "peak_ac", "waveform": "sinusoidal_reference",
+                "dimension_basis": "after_coating_limits", "source": "QA-only assumptions; not manufacturer qualification",
+                "H_Oe": [0, 1000], "B_T": [0, 1], "frequency_Hz": [5000, 300000],
+                "temperature_C": [20, 100], "core_temperature_C": 25},
+            "core_identity": core, "selection_identity": identity, "self_loss_identity": core + "; user-declared reference model",
+            "results": {"turns": 40, "parallel_wires": 2, "l_no_bias_uh": l0, "l_full_load_peak_uh": l_bias,
+                "h_peak_oe": h, "full_load_peak_with_ripple_a": 7., "phase_current_rms_a": 1000 / (.97 * 230),
+                "total_current_rms_with_ripple_a": 5., "core_loss_w": 2., "copper_loss_w": .5,
+                "total_loss_w": 2.5, "rdc_hot_ohm": .02, "fill_factor": .2, "b_ac_line_max_t": .03},
+            "printed_loss_check": {"b_kg_beta_mean": moment, "max_curve_absolute_error_w": 0.},
+            "curve_sha256": "3" * 64, "curve_samples": {"current_a": 161, "inductance_uh": 161,
+                "line_angle_deg": 361, "line_b_ac_t": 361, "line_core_loss_w": 361, "line_ripple_pp_a": 361},
+            "self_loss_w": 2.5, "applied": {"inductance_uh": round(l_bias, 2), "dcr_mohm": 20.},
+            "real_calculate_and_apply": True, "project_roundtrip": True, "recomputed_curves_identical": True,
+            "stale_consumers_cleared": True, "report_consistency": True},
+        "llc_reference_only": {"record_id": record_id, "apply_disabled": True},
+        "supplemental": {"source_case": "APP-023", "source_arithmetic_only": True, "solver_baseline": False,
+            "Lpfc_min_uH": 197.955, "engineering_cautions": ["Schema-only fixture: 不作为真实求解器正确性基准"]}}
+
+
 def _proof(**overrides):
     payload = {
         "proof_schema": 3, "success": True, "version": "9.4.1", "frozen": True, "platform": sys.platform,
@@ -110,6 +159,7 @@ def _proof(**overrides):
         }
     payload.update(_completion_proof())
     payload["power_stage_priority"] = _priority_proof(payload["power_stage_advanced"])
+    payload["magnetic_catalog"] = _magnetic_proof()
     payload.update(overrides)
     return payload
 
@@ -187,6 +237,9 @@ def _archive_gate(tmp_path, monkeypatch, *, missing_mac=False, wrong_taxonomy=Fa
     digest = hashlib.sha256(taxonomy).hexdigest()
     (tmp_path / "engineering_data").mkdir()
     (tmp_path / "engineering_data/brand_taxonomy.json").write_bytes(taxonomy)
+    # Real resource bytes, but the child/proof fixture remains schema-only.
+    for name in ("csc_magnetic_catalog.json", "magnetic_supplemental_records.json"):
+        (tmp_path / "engineering_data" / name).write_bytes((ROOT / "engineering_data" / name).read_bytes())
     (tmp_path / "packaging").mkdir()
     (tmp_path / "packaging/verify_bundle.py").write_bytes((ROOT / "packaging/verify_bundle.py").read_bytes())
     (tmp_path / "pyproject.toml").write_text('[project]\nversion="9.4.1"\n')

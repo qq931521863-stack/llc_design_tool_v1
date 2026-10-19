@@ -18,7 +18,8 @@ from pathlib import Path
 
 
 def validate_report(report: dict, *, expected_version: str,
-                    expected_taxonomy_sha256: str, expected_platform: str) -> None:
+                    expected_taxonomy_sha256: str, expected_platform: str,
+                    expected_magnetic_sha256: dict[str, str] | None = None) -> None:
     """One proof contract shared by native verification and release publication."""
     required = {
         "proof_schema": 3, "success": True, "frozen": True, "version": expected_version,
@@ -70,6 +71,7 @@ def validate_report(report: dict, *, expected_version: str,
         raise RuntimeError("packaged self-test report fails independent Buck VMC numerical check")
     _validate_completion_report(report)
     _validate_priority_report(report)
+    _validate_magnetic_report(report, expected_magnetic_sha256)
 
 
 def _hex_digest(value, length=64):
@@ -253,9 +255,144 @@ def _validate_priority_report(report):
         raise RuntimeError("packaged self-test report fails full-bridge DC-bus terminal invariants")
 
 
+def _magnetic_catalog_contract():
+    """Trusted checkout data for native and archive gates, with no GUI imports."""
+    directory = Path(__file__).resolve().parents[1] / "engineering_data"
+    paths = [directory / name for name in ("csc_magnetic_catalog.json", "magnetic_supplemental_records.json")]
+    resources = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+    catalog = json.loads(paths[0].read_text(encoding="utf-8"))
+    record = next(row for row in catalog["part_records"] if row["record_id"] == "csc2025:part:CS400060:054")
+    geometry = next(row for row in catalog["geometries"] if row["record_id"] == record["geometry_id"])
+    models = {row["record_id"]: row for row in catalog["material_models"]}
+    bias, loss = models[record["dc_bias_model_id"]], models[record["loss_model_id"]]
+    linked = {row["record_id"] for row in (record, geometry, bias, loss)}
+    conflict_ids = {key for row in (record, geometry, bias, loss) for key in row.get("conflict_ids", [])}
+    snapshot = {"schema": "power-design-toolkit-source-magnetic-selection-v1", "record_type": "explicit_part",
+                "record": record, "geometry": geometry, "dc_bias_model": bias, "loss_model": loss,
+                "source_documents": catalog["source_documents"],
+                "catalog_conflicts": [row for row in catalog.get("conflicts", [])
+                    if row.get("conflict_id") in conflict_ids or linked.intersection(row.get("affected_record_ids", []))]}
+    return resources, snapshot
+
+
+def _validate_magnetic_report(report, expected_magnetic_sha256=None):
+    case = report.get("magnetic_catalog")
+    if not isinstance(case, dict):
+        raise RuntimeError("packaged self-test report lacks magnetic source workflow evidence")  # noqa: TRY004
+    try:
+        resources, snapshot = _magnetic_catalog_contract()
+        if expected_magnetic_sha256 is not None:
+            if set(expected_magnetic_sha256) != set(resources):
+                raise ValueError("Incomplete expected magnetic resource identities")
+            resources = expected_magnetic_sha256
+        identity = hashlib.sha256(json.dumps(snapshot, ensure_ascii=False, sort_keys=True,
+                                            allow_nan=False, separators=(",", ":")).encode()).hexdigest()
+        record_id = snapshot["record"]["record_id"]
+        sources = {row["filename"]: row["sha256"] for row in snapshot["source_documents"]}
+        actual_identity = hashlib.sha256(json.dumps(case.get("selection"), ensure_ascii=False, sort_keys=True,
+                                                   allow_nan=False, separators=(",", ":")).encode()).hexdigest()
+        if (case.get("resource_sha256") != resources or any(not _hex_digest(value) for value in resources.values())
+                or actual_identity != identity
+                or case.get("selection") != snapshot or case.get("selection_identity") != identity
+                or case.get("record_id") != record_id or case.get("source_documents_sha256") != sources):
+            raise ValueError("Stale or mismatched magnetic resource/source identity")
+        reference = case["reference"]
+        ref = reference["result"]
+        expected_inputs = {"turns": 37, "n_cores": 2, "h_oe": None, "b_kg": None, "f_khz": None}
+        if (reference["inputs"] != expected_inputs
+                or any(reference.get(key) is not True for key in
+                       ("default_full_calculate_disabled", "project_roundtrip", "report_consistency"))
+                or ref.get("record_id") != record_id or ref.get("selection_identity") != identity
+                or ref.get("label") != "CS400060" or type(ref.get("turns")) is not int or ref["turns"] != 37
+                or type(ref.get("n_cores")) is not int or ref["n_cores"] != 2
+                or not isinstance(ref.get("full_pfc_blockers"), list) or not ref["full_pfc_blockers"]
+                or not isinstance(ref.get("scope"), str) or "零偏磁" not in ref["scope"]):
+            raise ValueError("Incomplete magnetic reference-only Calculate/Save/Open/Report evidence")
+        for key, expected in (("al_nH_per_t2", 81), ("l_zero_bias_uh", 221.778)):
+            if not _finite_number(ref.get(key)) or not math.isclose(ref[key], expected, rel_tol=1e-12):
+                raise ValueError("Independent zero-bias numerical check failed")
+        full = case["pfc"]
+        core_identity = f"Chang Sung Corporation CS400060 [{record_id}]"
+        declaration = {"B_convention": "peak_ac", "waveform": "sinusoidal_reference",
+            "dimension_basis": "after_coating_limits", "source": "QA-only assumptions; not manufacturer qualification",
+            "H_Oe": [0, 1000], "B_T": [0, 1], "frequency_Hz": [5000, 300000],
+            "temperature_C": [20, 100], "core_temperature_C": 25}
+        if (full.get("scope") != "QA-only user-declared reference model; not manufacturer qualification"
+                or json.dumps(full.get("user_model_declaration"), sort_keys=True, allow_nan=False)
+                   != json.dumps(declaration, sort_keys=True, allow_nan=False)
+                or full.get("selection_identity") != identity or full.get("core_identity") != core_identity
+                or full.get("self_loss_identity") != core_identity + "; user-declared reference model"
+                or not _hex_digest(full.get("curve_sha256"))
+                or any(full.get(key) is not True for key in ("real_calculate_and_apply", "project_roundtrip",
+                       "recomputed_curves_identical", "stale_consumers_cleared", "report_consistency"))):
+            raise ValueError("Incomplete actual PFC calculation/consumer evidence")
+        curve_samples = full["curve_samples"]
+        if (set(curve_samples) != {"current_a", "inductance_uh", "line_angle_deg", "line_b_ac_t", "line_core_loss_w", "line_ripple_pp_a"}
+                or any(type(value) is not int or value < 100 for value in curve_samples.values())
+                or curve_samples["current_a"] != curve_samples["inductance_uh"]
+                or len({curve_samples[key] for key in curve_samples if key not in {"current_a", "inductance_uh"}}) != 1):
+            raise ValueError("Incomplete magnetic source curves")
+        inputs = full["inputs"]
+        expected = {"topology": "ttpl", "input_rms_v": 230, "bus_voltage_v": 400, "output_power_w": 1000,
+                    "switching_frequency_hz": 120000, "target_inductance_uh": 200, "efficiency": .97, "n_cores": 2}
+        numeric_fields = {"wire_copper_diameter_mm", "enamel_build_mm", "target_current_density_a_mm2",
+                          "copper_temperature_c", "max_fill_factor", "winding_length_factor", "curve_points"}
+        if (set(inputs) != set(expected) | numeric_fields or any(inputs.get(key) != value for key, value in expected.items())
+                or any(not _finite_number(value) for key, value in inputs.items() if key != "topology")
+                or type(inputs["n_cores"]) is not int or type(inputs["curve_points"]) is not int
+                or inputs["curve_points"] != curve_samples["current_a"]):
+            raise ValueError("Unexpected magnetic application inputs")
+        result = full["results"]
+        result_fields = {"turns", "parallel_wires", "l_no_bias_uh", "l_full_load_peak_uh", "h_peak_oe",
+                        "full_load_peak_with_ripple_a", "phase_current_rms_a", "total_current_rms_with_ripple_a",
+                        "core_loss_w", "copper_loss_w", "total_loss_w", "rdc_hot_ohm", "fill_factor", "b_ac_line_max_t"}
+        if (set(result) != result_fields or any(not _finite_number(value) or value <= 0 for value in result.values())
+                or type(result["turns"]) is not int or not 1 <= result["turns"] <= 400
+                or type(result["parallel_wires"]) is not int or result["parallel_wires"] < 1):
+            raise ValueError("Invalid magnetic application numeric evidence")
+        bias = snapshot["dc_bias_model"]["coefficients"]
+        h = .4 * math.pi * result["turns"] * result["full_load_peak_with_ripple_a"] / snapshot["geometry"]["le_cm"]
+        l0 = 81 * result["turns"] ** 2 * inputs["n_cores"] / 1000
+        l_bias = l0 / (100 * (bias["a"] + bias["b"] * h ** bias["c"]))
+        for actual, expected in ((result["l_no_bias_uh"], l0), (result["h_peak_oe"], h),
+                (result["l_full_load_peak_uh"], l_bias), (result["phase_current_rms_a"], 1000 / (.97 * 230)),
+                (result["copper_loss_w"], result["total_current_rms_with_ripple_a"] ** 2 * result["rdc_hot_ohm"]),
+                (result["total_loss_w"], result["core_loss_w"] + result["copper_loss_w"]),
+                (full["self_loss_w"], result["total_loss_w"]),
+                (full["applied"]["inductance_uh"], round(result["l_full_load_peak_uh"], 2)),
+                (full["applied"]["dcr_mohm"], round(result["rdc_hot_ohm"] * 1000, 3))):
+            if not _finite_number(actual) or not math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-12):
+                raise ValueError("Magnetic application calculations/Apply/self-loss disagree")
+        loss_check = full["printed_loss_check"]
+        moment, error = loss_check["b_kg_beta_mean"], loss_check["max_curve_absolute_error_w"]
+        if (not _finite_number(moment) or moment <= 0 or not _finite_number(error) or not 0 <= error <= 1e-10):
+            raise ValueError("Invalid source double-term loss curve evidence")
+        coefficients = snapshot["loss_model"]["coefficients"]
+        frequency_khz = inputs["switching_frequency_hz"] / 1000
+        rate = coefficients["a"] * frequency_khz + coefficients["b"] * frequency_khz ** coefficients["gamma"]
+        expected_loss = moment * rate * snapshot["geometry"]["ve_cm3"] * inputs["n_cores"] / 1000
+        if not math.isclose(result["core_loss_w"], expected_loss, rel_tol=1e-12, abs_tol=1e-12):
+            raise ValueError("PFC loss differs from the selected source double-term expression")
+        if result["l_full_load_peak_uh"] < 200 or result["fill_factor"] > inputs["max_fill_factor"]:
+            raise ValueError("QA application target was not met")
+        llc = case["llc_reference_only"]
+        if llc.get("record_id") != record_id or llc.get("apply_disabled") is not True:
+            raise ValueError("LLC reference was treated as a bobbin preset")
+        supplemental = case["supplemental"]
+        if (supplemental.get("source_case") != "APP-023" or supplemental.get("source_arithmetic_only") is not True
+                or supplemental.get("solver_baseline") is not False
+                or not _finite_number(supplemental.get("Lpfc_min_uH")) or not 197.9 < supplemental["Lpfc_min_uH"] < 198
+                or not isinstance(supplemental.get("engineering_cautions"), list)
+                or not any(isinstance(note, str) and "正确性基准" in note for note in supplemental["engineering_cautions"])):
+            raise ValueError("Companion example lacks original-arithmetic-only qualification")
+    except (KeyError, TypeError, ValueError, AttributeError, StopIteration) as exc:
+        raise RuntimeError(f"packaged self-test report has invalid magnetic evidence: {exc}") from exc
+
+
 def verify_bundle(
     command: Sequence[str], *, expected_version: str,
     expected_taxonomy_sha256: str, timeout_s: float = 900.0,
+    expected_magnetic_sha256: dict[str, str] | None = None,
 ) -> dict:
     # Three advanced periodic solvers include genuine save/recompute; T18 alone
     # takes ~132 s on the qualification host. This is a safety timeout, not a
@@ -282,7 +419,7 @@ def verify_bundle(
         report = json.loads(report_path.read_text(encoding="utf-8"))
         validate_report(report, expected_version=expected_version,
                         expected_taxonomy_sha256=expected_taxonomy_sha256,
-                        expected_platform=sys.platform)
+                        expected_platform=sys.platform, expected_magnetic_sha256=expected_magnetic_sha256)
         return report
 
 

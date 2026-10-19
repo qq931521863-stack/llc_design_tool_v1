@@ -459,6 +459,213 @@ def _exercise_two_stage(host, directory):
         "model_limit": "Nominal-point ideal TD losses only; remaining operating points and commutation retain FHA assumptions; no hardware qualification"}
 
 
+def _exercise_magnetic_catalog(host, directory, app):
+    """Exercise the existing PFC editor, not a detached calculator or fake solver."""
+    import math
+    from dataclasses import fields
+
+    import numpy as np
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    from llc_design.gui.widgets.magnetic_catalog_view import MagneticCatalogDialog
+    from pfc_design.magnetics.manufacturer_catalog import CATALOG_PATH
+    from pfc_design.magnetics.supplemental_catalog import PATH as SUPPLEMENTAL_PATH
+
+    workbench = host.control_lab_view
+    control = workbench.control_lab
+    editor = control.inductor_editor
+    selector = editor.source_selector
+    devices = workbench.device_loss_view
+    workbench.tabs.setCurrentWidget(control)
+    control.input_tabs.setCurrentWidget(editor)
+    app.processEvents()
+    _require(editor.isVisible(), "Existing PFC workspace did not expose its magnetic editor")
+    for widget, value in ((control.vin_rms, 230), (control.vbus, 400),
+                          (control.pout, 1000), (control.fsw, 120), (control.inductance, 200)):
+        widget.setValue(value)
+    editor.sync_from_stage()
+    editor.target_l.setValue(200)
+    editor.n_cores.setValue(2)
+    editor.eff.setValue(.97)
+    editor.material_path.setCurrentIndex(editor.material_path.findData("source_catalog"))
+    selector.search.setText("CS400060")
+    record_id = "csc2025:part:CS400060:054"
+    _require(selector.parts.count() == 1 and selector.parts.currentData() == record_id,
+             "PFC source selector did not find the exact published part")
+    selected = selector.selection
+    _require(not editor.run_button.isEnabled() and not editor.apply_button.isEnabled()
+             and selector.declaration is None and selected.full_pfc_blockers(),
+             "Undeclared magnetic source was treated as a qualified full PFC model")
+    selector.turns.setValue(37)
+    selector.stack.setValue(2)
+    selector.reference_button.click()
+    reference = selector.reference_result
+    _require(reference is not None and reference["selection_identity"] == selected.identity
+             and math.isclose(reference["l_zero_bias_uh"], 221.778, rel_tol=1e-12),
+             "Magnetic reference failed independent 81 nH * 37^2 * 2 check")
+    reference_path = directory / "magnetic-reference.json"
+    editor.save_magnetic_to(reference_path)
+    reference_document = json.loads(reference_path.read_text(encoding="utf-8"))
+    _require(reference_document["selection"] == selected.snapshot
+             and reference_document["pfc_inputs"] is None
+             and reference_document["user_model_declaration"] is None,
+             "Reference-only project invented a full application model")
+    selector.search.setText("CM035060")
+    _require(selector.reference_result is None and selector.selection.identity != selected.identity,
+             "Magnetic reference did not invalidate when selection changed")
+    editor.open_magnetic_from(reference_path)
+    _require(selector.selection.identity == selected.identity and selector.reference_result == reference
+             and not editor.run_button.isEnabled(), "Reference project did not recompute the original source")
+    reference_report = directory / "magnetic-reference.html"
+    editor.report_magnetic_to(reference_report)
+    reference_html = reference_report.read_text(encoding="utf-8")
+    _require(selected.identity in reference_html and record_id in reference_html
+             and json.loads(unescape(reference_html.split("<pre>", 1)[1].split("</pre>", 1)[0])) == reference,
+             "Reference report did not preserve exact values and provenance")
+
+    # These are deliberately QA-only application assumptions. They must remain
+    # separate from the immutable manufacturer snapshot, in projects and reports.
+    declaration = {"B_convention": "peak_ac", "waveform": "sinusoidal_reference",
+        "dimension_basis": "after_coating_limits", "source": "QA-only assumptions; not manufacturer qualification",
+        "H_Oe": [0, 1000], "B_T": [0, 1], "frequency_Hz": [5000, 300000],
+        "temperature_C": [20, 100], "core_temperature_C": 25}
+    selector.declaration = declaration
+    selector.selection_changed.emit()
+    _require(editor.run_button.isEnabled(), "Explicit QA-only declaration did not enable the reference solver")
+    def click_with_acknowledgements(button):
+        # Dismiss native dialogs only; computation and application stay real.
+        acknowledgements = []
+        timer = QTimer(host)
+        def dismiss_acknowledgement():
+            modal = QApplication.activeModalWidget()
+            if isinstance(modal, QMessageBox):
+                acknowledgements.append(modal.windowTitle() + (": " + modal.detailedText() if modal.detailedText() else ""))
+                modal.accept()
+        timer.timeout.connect(dismiss_acknowledgement)
+        timer.start(25)
+        try:
+            button.click()
+        finally:
+            timer.stop(); timer.deleteLater()
+        return acknowledgements
+    issues = click_with_acknowledgements(editor.run_button)
+    _require(not issues, f"Real PFC Calculate reported a modal error: {issues}")
+    result = editor.last_result
+    _require(result is not None and result.inductance_target_met and result.window_ok
+             and result.request.source_snapshot == selected.snapshot,
+             "Real PFC source calculation failed or substituted another core")
+    core_identity = f"Chang Sung Corporation CS400060 [{record_id}]"
+    loss_identity = core_identity + "; user-declared reference model"
+    _require(result.request.core.core_data == core_identity
+             and devices._inductor_model_identity == loss_identity
+             and devices._inductor_self_loss_w == result.total_loss_w
+             and "CS400060" in control.inductor_result_view.summary.toPlainText(),
+             "PFC displayed core or actual Devices / Loss consumer has a different identity")
+    result_fields = ("turns", "parallel_wires", "l_no_bias_uh", "l_full_load_peak_uh", "h_peak_oe",
+                     "full_load_peak_with_ripple_a", "phase_current_rms_a", "total_current_rms_with_ripple_a",
+                     "core_loss_w", "copper_loss_w", "total_loss_w", "rdc_hot_ohm", "fill_factor", "b_ac_line_max_t")
+    measured = {name: getattr(result, name) for name in result_fields}
+    curve_fields = ("current_a", "inductance_uh", "line_angle_deg", "line_b_ac_t", "line_core_loss_w", "line_ripple_pp_a")
+    arrays = {name: getattr(result, name).copy() for name in curve_fields}
+    digest = hashlib.sha256()
+    for name, values in arrays.items():
+        _require(np.isfinite(values).all(), "PFC source calculation returned a nonfinite curve")
+        digest.update(name.encode()); digest.update(np.asarray(values, dtype="<f8").tobytes())
+    # Independently expand the selected printed double-term loss equation.
+    # This verifies formula routing, not application/waveform qualification.
+    coefficients = selected.snapshot["loss_model"]["coefficients"]
+    b_power = (10 * arrays["line_b_ac_t"]) ** coefficients["beta"]
+    frequency_khz = result.request.switching_frequency_hz / 1000
+    rate = coefficients["a"] * frequency_khz + coefficients["b"] * frequency_khz ** coefficients["gamma"]
+    expected_core_curve = b_power * rate * selected.geometry["ve_cm3"] * result.request.n_cores / 1000
+    np.testing.assert_allclose(arrays["line_core_loss_w"], expected_core_curve, rtol=1e-12, atol=1e-12)
+    _require(math.isclose(result.core_loss_w, float(np.mean(expected_core_curve)), rel_tol=1e-12),
+             "PFC core loss does not use the selected source double-term expression")
+    printed_loss_check = {"b_kg_beta_mean": float(np.mean(b_power)),
+                         "max_curve_absolute_error_w": float(np.max(abs(arrays["line_core_loss_w"] - expected_core_curve)))}
+    pfc_path = directory / "magnetic-pfc.json"
+    editor.save_magnetic_to(pfc_path)
+    document = json.loads(pfc_path.read_text(encoding="utf-8"))
+    expected_inputs = {field.name: getattr(result.request, field.name) for field in fields(result.request)
+                       if field.name not in {"core", "material", "source_snapshot", "model_declaration"}}
+    _require(document["pfc_inputs"] == expected_inputs and document["selection"] == selected.snapshot
+             and document["user_model_declaration"] == declaration,
+             "Full PFC project lost source/declaration/input identity")
+    acknowledgements = click_with_acknowledgements(editor.apply_button)
+    _require(acknowledgements == ["TTPL 电感参数已应用"]
+             and control.inductance.value() == round(result.l_full_load_peak_uh, control.inductance.decimals())
+             and control.dcr.value() == round(result.rdc_hot_ohm * 1000, control.dcr.decimals()),
+             "Real Apply did not write the calculated L / DCR to the PFC power stage")
+    applied = {"inductance_uh": control.inductance.value(), "dcr_mohm": control.dcr.value()}
+    editor.target_l.setValue(210)
+    _require(editor.last_result is None and not editor.apply_button.isEnabled()
+             and not control.inductor_result_view.figure.axes
+             and devices._inductor_self_loss_w is None and devices._inductor_model_identity is None,
+             "Changed source inputs left stale results, plots or component loss")
+    editor.open_magnetic_from(pfc_path)
+    restored = editor.last_result
+    _require(restored is not None and restored is not result and editor.magnetic_document() == document
+             and {name: getattr(restored, name) for name in result_fields} == measured
+             and devices._inductor_model_identity == loss_identity
+             and devices._inductor_self_loss_w == result.total_loss_w,
+             "Full PFC Open did not recompute and reconnect the same source")
+    for name, values in arrays.items():
+        np.testing.assert_array_equal(getattr(restored, name), values)
+    pfc_report = directory / "magnetic-pfc.html"
+    editor.report_magnetic_to(pfc_report)
+    pfc_html = pfc_report.read_text(encoding="utf-8")
+    sections = [json.loads(unescape(section.split("</pre>", 1)[0])) for section in pfc_html.split("<pre>")[1:]]
+    expected_output = {"core_identity": core_identity, "turns": result.turns,
+        "l_zero_bias_uh": result.l_no_bias_uh, "l_full_load_peak_uh": result.l_full_load_peak_uh,
+        "core_loss_reference_w": result.core_loss_w, "copper_dc_loss_w": result.copper_loss_w,
+        "fill_factor": result.fill_factor, "h_peak_oe": result.h_peak_oe,
+        "b_ac_peak_t": result.b_ac_line_max_t, "warnings": list(result.warnings)}
+    _require(sections == [reference, expected_output, selected.snapshot,
+                          {k: v for k, v in document.items() if k != "selection"}],
+             "Full PFC report mixed computed values, source snapshot or QA-only declaration")
+
+    # LLC exposes source powder records for reference, never as a complete
+    # ferrite/bobbin preset. The companion case is original arithmetic only.
+    dialog = MagneticCatalogDialog(host)
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog.search.setText("CS400060")
+        dialog.tabs.setCurrentIndex(2)
+        dialog.pdf_reference.selectRow(0)
+        _require(dialog.pdf_keys == [record_id] and not dialog.apply.isEnabled()
+                 and "不是完整 LLC" in dialog.note.text(), "LLC offered a source ring as a complete bobbin preset")
+        browser = dialog.supplemental
+        dialog.tabs.setCurrentWidget(browser)
+        browser.search.setText("APP-023")
+        _require(browser.records.count() == 1 and browser.replay.isEnabled(), "Supplemental APP-023 source is absent")
+        browser.replay.click()
+        replay = json.loads(browser.text.toPlainText())
+        _require(replay["source_case"] == "APP-023" and any("正确性基准" in note for note in replay["engineering_cautions"]),
+                 "APP-023 omitted its source-formula engineering caveat")
+    finally:
+        dialog.close(); dialog.deleteLater(); app.processEvents()
+    resource_sha = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in (CATALOG_PATH, SUPPLEMENTAL_PATH)}
+    return {"resource_sha256": resource_sha, "record_id": record_id, "selection_identity": selected.identity,
+        "selection": selected.snapshot, "source_documents_sha256": {d["filename"]: d["sha256"] for d in selected.snapshot["source_documents"]},
+        "reference": {"inputs": reference_document["reference_inputs"], "result": reference,
+                      "default_full_calculate_disabled": True, "project_roundtrip": True, "report_consistency": True},
+        "pfc": {"scope": "QA-only user-declared reference model; not manufacturer qualification",
+            "inputs": expected_inputs, "user_model_declaration": declaration, "core_identity": core_identity,
+            "selection_identity": selected.identity, "results": measured, "curve_sha256": digest.hexdigest(),
+            "printed_loss_check": printed_loss_check,
+            "curve_samples": {name: len(values) for name, values in arrays.items()},
+            "self_loss_identity": loss_identity, "self_loss_w": devices._inductor_self_loss_w,
+            "applied": applied, "real_calculate_and_apply": True, "project_roundtrip": True,
+            "recomputed_curves_identical": True, "stale_consumers_cleared": True, "report_consistency": True},
+        "llc_reference_only": {"record_id": record_id, "apply_disabled": True},
+        "supplemental": {"source_case": replay["source_case"], "source_arithmetic_only": True,
+                         "solver_baseline": False, "Lpfc_min_uH": replay["Lpfc_min_uH"],
+                         "engineering_cautions": replay["engineering_cautions"]}}
+
+
 def _run_packaged_self_test() -> int:
     """Exercise all workspaces and emit evidence only after successful cleanup."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -515,6 +722,9 @@ def _run_packaged_self_test() -> int:
             app.processEvents()
             optimizer_proof = _exercise_two_stage(controller.llc_window, Path(directory))
             priority_proof["llc_components"] = _exercise_llc_priority_components(controller.llc_window, Path(directory), app)
+            controller.show_workspace("pfc")
+            app.processEvents()
+            magnetic_proof = _exercise_magnetic_catalog(controller.pfc_window, Path(directory), app)
         workspace_names = ["llc", "pfc", "control", "fra", "dab", "power_stage"]
         for workspace, window in zip(workspace_names, windows, strict=True):
             controller.show_workspace(workspace)
@@ -529,7 +739,7 @@ def _run_packaged_self_test() -> int:
                  "frozen": bool(getattr(sys, "frozen", False)), "platform": sys.platform,
                  "workspaces": workspace_names, "guided_design": True, **psd_proof,
                  "power_stage_advanced": advanced_proof, "two_stage_optimization": optimizer_proof,
-                 "power_stage_priority": priority_proof,
+                 "power_stage_priority": priority_proof, "magnetic_catalog": magnetic_proof,
                  "brand_taxonomy_sha256": hashlib.sha256(taxonomy.read_bytes()).hexdigest()}
     finally:
         # Exercise the same final ownership boundary as normal application
