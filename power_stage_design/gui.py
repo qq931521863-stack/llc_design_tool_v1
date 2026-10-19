@@ -231,6 +231,8 @@ class PowerStageMainWindow(QMainWindow):
 
     def _topology_changed(self):
         if not self._loading:self._exact_topology=None
+        # A separate-Lm target belongs to its topology, never a hidden carryover.
+        self.suggestion_magnetizing.setValue(0)
         self._update_input_visibility();self.invalidate(); self.schematic.topology_id=self.topology_combo.currentData();self.schematic.device_keys=frozenset();self.schematic.refresh()
 
     def _mode_changed(self):
@@ -455,7 +457,7 @@ class PowerStageMainWindow(QMainWindow):
         self.suggestion_ripple=_number(.9,minimum=1e-9)
         self.suggestion_duty=_number(.45,minimum=.000001,maximum=.999999)
         self.suggestion_second=_number(.6,minimum=1e-9)
-        self.suggestion_magnetizing=_number(.1,minimum=0)
+        self.suggestion_magnetizing=_number(0,minimum=0)
         self.suggestion_reflected=_number(120,minimum=1e-9)
         self.suggestion_ratio=QCheckBox("根据最大占空比计算 Np/Ns（QR 使用反射电压目标）")
         self._suggestion_form=form
@@ -904,6 +906,8 @@ class PowerStageMainWindow(QMainWindow):
     def _restore_project(self,inputs,document):
         self._restore_corner_request_pending=False;self._sweep_enabled=False;self._sweep_request=None
         self._loop_live=False
+        # Only this project's applied record may restore an optional Lm target.
+        self.suggestion_magnetizing.setValue(0)
         self.set_inputs(inputs)
         request=document.get("loop_request") or {"target_crossover_hz":3000.0,"target_phase_margin_deg":60.0,"preferred_series":24}
         for widget,key in ((self.target_fc,"target_crossover_hz"),(self.target_pm,"target_phase_margin_deg")):
