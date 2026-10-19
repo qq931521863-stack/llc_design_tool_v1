@@ -1,5 +1,28 @@
 # Power Stage Designer development status
 
+## Large-font candidate-page correction (2026-10-19)
+
+Native run `39334695559` passes macOS 10 pt: 50 complete controls in each of
+separate/integrated modes. It then stops at the initial 12 pt window fit check
+(**220 passed / 1 failed / 2 skipped**). On the actual 1280×720 screen, PingFang SC
+12 pt resolves to height 22; the frame is 1278×740 and minimum is 1274×736.
+This is a real production minimum-size problem, separate from the earlier
+whole-widget scrolling test correction.
+
+The hidden Two-Stage candidate page propagates its largest minimum height to the
+whole tab stack. Its independent JSON editors now share a row, retaining both
+original editors, labels/buddies, font size, native minimum sizes, and all actions.
+A controlled actual-Qt regression reproduces the old overflow and passes with
+this change. It also verifies complete editor visibility, keyboard edits, long
+JSON/vertical scrolling, exact options restoration, and all 100 dock controls.
+No optimizer, converter, controller, Apply semantics, or physical-model domain
+changes. See [the focused diagnosis and acceptance boundary](NATIVE_LARGE_FONT_LAYOUT.md).
+
+The refreshed installed-wheel/Linux frozen and native qualification must retain
+this new source identity. Earlier `2e724b9` artifact and `6138f0f` full/long passes
+remain valid evidence for those sources; they are not relabeled as this tree.
+Both publication guards remain literal false.
+
 ## Latest native-gate follow-up (2026-10-19)
 
 Source `2e724b99ee13b3d66ef595768e05ca2c176106af` (same tree as main `6323518`)

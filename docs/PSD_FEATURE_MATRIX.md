@@ -1,5 +1,16 @@
 # Power Stage Designer feature matrix
 
+## Large-font platform correction (2026-10-19)
+
+The macOS 10 pt whole-control workflow now passes all 100 normal/integrated
+control checks. The following 12 pt test exposes a distinct production problem:
+the hidden Two-Stage page forces a 1278×740 frame onto a 1280×720 screen. Its JSON
+inputs are rearranged side by side without reducing fonts, hiding controls, or
+weakening frame/visibility assertions. Independent controlled-Qt and actual
+candidate Apply/save/report checks support the repair; new native full/frozen
+acceptance remains pending. This GUI correction changes no T/X/L/C/A model
+support or hardware/TI evidence. [Detailed boundary](NATIVE_LARGE_FONT_LAYOUT.md).
+
 ## Latest platform evidence boundary (2026-10-19)
 
 `2e724b9` (same tree as main `6323518`) completes refreshed installed-wheel and

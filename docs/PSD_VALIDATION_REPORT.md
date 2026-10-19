@@ -1,5 +1,43 @@
 # Power Stage Designer validation report
 
+## Native 12 pt window-height repair (2026-10-19)
+
+[Run 39334695559](https://github.com/yangshuai2022-star/power-design-toolkit/actions/runs/39334695559)
+records macOS 10 pt success: all 50 controls in separate and integrated modes
+have complete visible regions. Its next 12 pt preflight fails before control
+traversal: **220 passed / 1 failed / 2 skipped**, 576.31 s. The actual PingFang SC
+12 pt font has height 22; screen 1280×720, frame 1278×740, minimum 1274×736, dock
+viewport 247×619. The failure screenshot and JSON are preserved; native complete
+regression/freezing have not run on that failed job.
+
+The repair moves only the independent search-axis and ranking-weight JSON editors
+into parallel columns. Their original maximum heights, native minima, exact
+values, labels/buddies and all consumer signals remain. A real Qt control
+experiment using 18/34 scrollbar metrics reproduces baseline root minimum
+1233×745 and frame 1252×749. The patch reduces that minimum to 1233×679 and frame
+to 1252×683, with unchanged width. These are Linux controlled-style results, not
+macOS acceptance. The real native artifact showed the 88 px scroll-area minimum;
+new diagnostics additionally record raw style metrics and every tab's minimum.
+
+Independent candidate checks use real TD computation, mouse selection/Apply,
+project save/reload, and a waveform-source report. Editing invalidates results;
+reloaded history remains unavailable for Apply/report until recalculated.
+The original native font runs, all controls, real frame checks, negative cases,
+publication pause and full/frozen gates remain mandatory. See
+[large-font layout evidence and viewing limitation](NATIVE_LARGE_FONT_LAYOUT.md).
+
+Candidate `db413cb1ef834aa554fbfaf0c33a6ae8e3d42b89` passes all nine layout-metrics
+cases on a clean source. The independently audited 796-file snapshot is exact;
+19 final targeted cases pass, including cancel/edit/options/newer/close and late
+results. The integrated candidate passes 75 layout/publication/frozen-contract
+cases in 25.44 s. Its two changed files are byte-identical to the reviewed
+candidate. These focused results do not replace native execution.
+
+Earlier complete `6138f0f` application/long tests and `2e724b9` installed-wheel/
+Linux frozen results below retain those exact source identities. This new
+production layout requires refreshed affected/installed/frozen qualification;
+no earlier full-suite result is attributed to the new whole tree.
+
 ## Refreshed artifacts and native whole-widget scrolling (2026-10-19)
 
 Clean `2e724b99ee13b3d66ef595768e05ca2c176106af` (same 795-file tree as main
