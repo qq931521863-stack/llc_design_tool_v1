@@ -1,5 +1,27 @@
 # Power Stage Designer validation report
 
+## Fresh qualification after diagnostic repairs (2026-10-19)
+
+The diagnostic-only tail completed with 1279 pass, 2 expected failures and
+3 failures. One existing TD-loss GUI test double lacked the new cooperative
+checkpoint keyword; it now accepts and actually invokes that callback, with
+23 consumer/cancellation cases passing. Two historical v9.4.2 EOL tests wrongly
+used the evolving current publisher as their immutable old source. They now use
+the exact original workflow fixture from commit e8751d37ceb975ae0e8e13b374773e419de6643b,
+with source SHA-256/blob provenance and LF checkout protection. Nine focused
+and 87 related release-contract tests pass; negative cases now require the
+intended content/raw-proof failure, not an earlier rewrite rejection.
+Production release workflows and strict proof verification are unchanged.
+
+These diagnostic segments preserve every failure and cannot be joined into a
+complete-source PASS. All narrow repairs are committed locally; a new immutable
+full collection, opt-in long PFC and actual wheel/Linux frozen qualification are
+next. The five independent integrated-LLC consumer/identity/boundary/projection/
+TD-label scripts already pass again at clean bc18737 with unchanged source bytes.
+Publication remains paused, with native Windows/macOS, TI executable correlation
+and hardware validation still separate unfulfilled gates.
+
+
 ## Latest immutable aggregate and T15 independent diagnosis (2026-10-19)
 
 At clean source `bfb0e54067eebb973811213a671e9906dca0f6c6`, the full 4140-case

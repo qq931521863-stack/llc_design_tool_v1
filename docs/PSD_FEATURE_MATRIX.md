@@ -1,5 +1,16 @@
 # Power Stage Designer feature matrix
 
+## Qualification status after final diagnostic tail (2026-10-19)
+
+The T15 source-boundary, new shell translations, cancellation-aware test double
+and immutable historical release fixture are repaired with focused evidence.
+The historical LF/CRLF negative tests now establish the intended raw-proof/content
+failure, not a coincidental outdated rewrite rejection. No production numerical
+or release gate was weakened. A fresh complete-source run is required; separate
+red/green diagnostic segments are not an aggregate PASS. Model-domain limitations
+below remain unchanged, and publication remains paused.
+
+
 ## Latest T15 source-boundary correction (2026-10-19)
 
 T15's equal split-C/stiff-total-bus model requires instantaneous source current
