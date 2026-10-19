@@ -64,3 +64,16 @@ def test_pause_keeps_test_build_and_frozen_verification_mandatory():
     assert ('      - name: Verify frozen application and fresh evidence\n'
             '        shell: bash\n        run: |\n'
             '          python packaging/verify_bundle.py "${{ matrix.executable }}"') in JOBS["build"]
+
+
+def test_native_regression_preflight_does_not_replace_complete_test_gate():
+    block = JOBS["build"]
+    early = block.index("      - name: Check native numerical and desktop regressions first\n")
+    complete = block.index("      - name: Run tests\n        run: python -m pytest\n")
+    frozen = block.index("      - name: Build with PyInstaller\n")
+    assert early < complete < frozen
+    assert "python -m pytest -x" in block[early:complete]
+    assert "test_independent_validation.py" in block[early:complete]
+    assert "test_two_stage_desktop.py" in block[early:complete]
+    assert "test_llc_desktop_layout.py" in block[early:complete]
+    assert "continue-on-error" not in block
