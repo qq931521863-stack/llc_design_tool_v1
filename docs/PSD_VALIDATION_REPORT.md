@@ -1,5 +1,22 @@
 # Power Stage Designer validation report
 
+## Pushed-source CI dependency correction (2026-10-19)
+
+The first actual main workflow at `21f5df4e7256c67d78add8cac16f3e5ea898977b`
+([run 39221389558](https://github.com/yangshuai2022-star/power-design-toolkit/actions/runs/39221389558))
+finished **4151 passed, 1 failed, 1 skipped, 2 historical xfailed in 2773.40 s**.
+The single failure was the real PDF source-validation test importing `pdfplumber`;
+that package was declared only in the optional research extra, while CI correctly
+installed dev/web/gui/agent. This was an incomplete test-dependency declaration,
+not a numerical test failure. Windows/macOS builds and both publication jobs
+were skipped; no native proof was produced by that run.
+
+The correction declares `pdfplumber>=0.11` in the dev extra, retains the research
+extra, and adds a contract for both CI installation commands. The real PDF source
+and bundled-data tests pass locally: **24 passed in 5.97 s**. No application
+algorithm, default-test skip or publication gate changed. A new complete main CI
+run is still required; the earlier failure is retained rather than relabeled.
+
 ## Latest completed application regression and remaining gates (2026-10-19)
 
 The immutable application source

@@ -1,5 +1,20 @@
 # Power Stage Designer development status
 
+## Main push and native-CI correction (2026-10-19)
+
+Main was updated non-force to `21f5df4e7256c67d78add8cac16f3e5ea898977b`.
+All 34 logical commits preserve their exact source trees; the final 761 paths,
+modes and blobs match local `502367128c96d185c7b3d3824586a1c669e288fe`.
+Connected-API commit IDs/authorship timestamps differ from the original local
+history, whose bundle remains retained. Existing tags/releases were unchanged.
+
+The first actual main CI completed with **4151 passes and one failure**: the PDF
+source-validation test needs `pdfplumber`, previously listed only under research.
+It is now included in dev test dependencies with a CI contract; the affected real
+PDF/bundle tests give **24 passes**. The application code is unchanged. Native
+Windows/macOS tests and frozen builds remain pending a successful replacement CI
+run. Both automatic publication jobs remain disabled; no release was created.
+
 ## Latest completion checkpoint (2026-10-19)
 
 The requested software workflows and follow-on integrated-LLC/CSC additions are

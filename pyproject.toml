@@ -15,7 +15,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "pytest-cov", "mypy", "ruff", "httpx2>=2.12,<3"]
+# The default PDF regression reads exported reports; research extras are not required.
+dev = ["pytest>=7", "pytest-cov", "mypy", "ruff", "httpx2>=2.12,<3", "pdfplumber>=0.11"]
 # Release baseline: newer Qt bindings require native lifecycle qualification.
 gui = ["PySide6==6.11.2", "pyqtgraph>=0.13.7"]
 web = ["fastapi>=0.141,<1", "uvicorn[standard]>=0.30,<1", "openpyxl>=3.1,<4"]

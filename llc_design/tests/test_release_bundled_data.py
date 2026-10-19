@@ -23,6 +23,15 @@ def test_gui_release_uses_qualified_qt_baseline():
     assert "PySide6==6.11.2" in project["project"]["optional-dependencies"]["gui"]
 
 
+def test_default_pdf_regression_dependency_is_in_dev_extra():
+    """CI runs PDF source validation without installing optional research tools."""
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "pdfplumber>=0.11" in project["project"]["optional-dependencies"]["dev"]
+    workflow = (ROOT / ".github/workflows/build-release.yml").read_text(encoding="utf-8")
+    assert 'pip install -e ".[dev,web,gui,agent]"' in workflow
+    assert 'pip install -e ".[gui,dev,web,agent]"' in workflow
+
+
 def test_desktop_packaging_collects_shared_engineering_data():
     workflow = (ROOT / ".github/workflows/build-release.yml").read_text(encoding="utf-8")
     assert '--add-data "engineering_data:engineering_data"' in workflow
