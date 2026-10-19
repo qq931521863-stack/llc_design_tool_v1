@@ -36,7 +36,9 @@ pass; returning to the internal controller restores its original sample time.
 These repairs have separate 166-test and 533-test owner regressions. A final
 8-line Advanced editor correction makes an explicit same-display edit relinquish
 only that field's restored hidden precision; its 21-field and 62-test regressions
-pass. Untouched loaded values remain exact. Final merged qualification is pending.
+pass, followed by independent real-Qt/atomic-JSON checks of all 21 fields.
+Untouched loaded values remain exact. All fixed candidates are now independently
+accepted; final merged qualification is pending.
 
 Next: freeze once for full/long/installed/frozen qualification, update exact source
 identities, perform the authorized non-force main push and monitor native CI. Release/tag creation remains paused. Unsupported model domains,

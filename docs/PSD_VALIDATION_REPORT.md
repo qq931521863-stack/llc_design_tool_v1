@@ -75,8 +75,12 @@ A same-display keyboard edit formerly left that field's old precision cache inta
 because Qt emitted no valueChanged signal. The small textEdited correction releases
 only that key and emits one change. Three real Qt parameterized groups exercise
 all 21 physical fields, options, design identity and UTF-8 JSON snapshots; 62
-related tests pass. These are identity/GUI checks, not claims of measurable physical
-solver differences below display precision.
+related tests pass. Independent replay on `43ed514` also checks all 21 fields with
+real same-display keyboard edits: zero valueChanged signals, exactly one changed
+signal, target-only cache removal, preserved untouched precision, and identical
+input/identity after an actual atomic UTF-8 JSON snapshot round trip. These are
+identity/GUI checks, not claims of measurable physical solver differences below
+display precision.
 
 The actual launcher→Control Tools→LLC audit retained two further red cases: an
 invalid live digital source left old H(z) exported as current, and the external
