@@ -37,8 +37,11 @@ is diagnostic only. The affected 387-case group and one additional actual X12 me
 export case pass. Independent review reran three narrow source/consumer tests
 with exit 0. The diagnostic remainder then stopped at a separate new-feature
 i18n omission (1488 pass, 1 skip, 1 fail): 14 bound shell strings lack en/ja/ko
-entries. This real consumer omission is being repaired without weakening the
-harvest gate. Complete qualification of the corrected source remains open.
+entries. The isolated repair supplies all 42 translations and an actual Qt
+en/ja/ko/Chinese switch/restore test; all 16 i18n/lifecycle cases pass in 24.81 s.
+The harvest gate and deliberate missing-entry cleanup counterexample are unchanged.
+The later lifecycle diagnostic failure is the same missing-translation cause,
+not evidence of a second resource defect. Complete qualification of the corrected source remains open.
 
 
 ## Latest completion qualification correction (2026-10-19)

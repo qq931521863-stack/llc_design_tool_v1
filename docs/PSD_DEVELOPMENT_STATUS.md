@@ -24,7 +24,9 @@ The affected 387-case group and the new actual X12 mean-label/save/export case
 pass. Independent review reran the original T15 all-net case, new source oracle
 and actual X12 consumer (3 pass). A diagnostic remainder subsequently found 14
 missing new shell translations in en/ja/ko (1488 pass, 1 skip, 1 fail); accurate
-translations and actual switch/restore validation are being repaired separately.
+translations and actual switch/restore validation now pass in the complete
+16-case i18n/lifecycle group. The original harvest and deliberately failing
+translation/owner-cleanup counterexample remain unchanged.
 Neither diagnostic segment is a complete-source PASS.
 
 The failed run peaked at 1,836,372 KiB aggregate RSS and ended with zero retained

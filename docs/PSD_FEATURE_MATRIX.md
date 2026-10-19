@@ -8,8 +8,9 @@ ODE audit confirms source/branch currents and capacitor charge; the aggregate
 all-net test's old external-source oracle was wrong and is corrected. The current
 full-source run is RED (1353 pass, 1 skip, 1 fail), pending complete rerun after
 this repair. No topology/kernel tolerance was relaxed. A subsequent diagnostic-only remainder
-found 14 new shell strings missing from en/ja/ko; translation and actual language
-switch/restore acceptance are being repaired before the fresh aggregate.
+found 14 new shell strings missing from en/ja/ko; all 42 translations and actual language
+switch/restore acceptance now pass in the 16-case i18n/lifecycle group, pending
+the fresh aggregate.
 
 T15 remains a first-order nominal-midpoint magnetic model with finite-C ripple
 reconstruction, not a fully coupled finite-C transient simulation. The existing
