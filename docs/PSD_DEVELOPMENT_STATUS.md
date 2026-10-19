@@ -4,10 +4,11 @@
 
 Publication is paused. No remote push, CI dispatch, tag or release was performed.
 Version 9.9.0 and release preflight changes remain local preparation only.
-A new requirement-by-requirement audit is checking actual consumers and common
-minimum deliverables, rather than treating bounded row labels as completion.
-Work is continuing on explicit T05 floating-node dynamics, QR valley/data options
-and PSFB finite-Coss commutation; each remains opt-in with explicit source parameters.
+The requirement-by-requirement consumer audit and its confirmed implementation
+repairs are complete. Fresh aggregate and artifact qualification is now in progress;
+prior row labels and historical full-suite counts are not treated as this pass.
+T05 floating-node dynamics, QR valley/data options and PSFB finite-Coss commutation
+are implemented opt-in models with explicit source parameters.
 T05/QR/T18 now have independent circuit acceptance and actual desktop persistence/report tests.
 Concrete audit findings include calculator-session model identity, everyday Chinese
 result presentation and the precise documented Type-I network setup. A03 now has independent acceptance of its actual desktop/CLI candidates, Apply,
@@ -108,3 +109,15 @@ remain in the source tree.
 - After these paths stabilize: freeze sources, rerun affected modules, then full
   regression/RSS and installed/frozen application checks. Linux evidence cannot
   establish unrun Windows/macOS or hardware/TI executable equivalence.
+
+## Strengthened artifact gate
+
+Production `packaging/launcher.py --self-test` now uses proof schema 3. It retains
+all original Buck/Boost/Flyback, independent Buck VMC and six-workspace gates, then
+runs the optional T05/QR/T18 desktop solvers, all 47 branches, exact plotted arrays,
+save/recompute/report identities and the real nominal TwoStage candidate/Apply/
+save/history/report path. The verifier rejects incomplete or tampered evidence.
+The solver-inclusive safety timeout is 900 s, not a startup-performance target;
+no numerical tolerance was relaxed. The source preflight and 136 contract tests
+passed. The final wheel and actual production frozen executable must run the same
+self-test outside the repository. A separate QA executable is not substituted.

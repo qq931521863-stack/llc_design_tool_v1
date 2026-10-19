@@ -116,6 +116,192 @@ def _exercise_power_stage(stage, directory: Path) -> dict:
             "power_stage_toolbox_filter": True}
 
 
+def _require(condition, message):
+    if not condition:
+        raise RuntimeError(f"Packaged completion self-test: {message}")
+
+
+def _wait_for_worker(predicate, seconds=300):
+    """Run real Qt events while genuine solver workers own the GIL."""
+    from PySide6.QtCore import QEventLoop, QTimer
+    if predicate():
+        return
+    loop, poll, deadline = QEventLoop(), QTimer(), QTimer()
+    deadline.setSingleShot(True)
+    poll.timeout.connect(lambda: loop.quit() if predicate() else None)
+    deadline.timeout.connect(loop.quit)
+    poll.start(20)
+    deadline.start(round(seconds * 1000))
+    loop.exec()
+    poll.stop()
+    deadline.stop()
+    _require(predicate(), "real worker exceeded bounded timeout")
+
+
+def _advanced_inputs():
+    from power_stage_design.models import DesignInputs
+    from power_stage_design.psfb_dynamics import PSFBOptions
+    from power_stage_design.qr_dynamics import QROptions
+    from power_stage_design.two_switch_dynamics import T05Options
+    return (
+        DesignInputs("T05", 24, 12, .1, 100e3, 100e-6,
+            two_switch_options=T05Options(parameter_source="Explicit illustrative artifact QA constants")),
+        DesignInputs("T11", 48, 12, 1, 180e3, 200e-6, turns_ratio_np_ns=8,
+            resonant_capacitance_f=500e-12, qr_options=QROptions(valley_policy="selected", valley_index=2,
+                on_resistance_ohm=.1, capacitance_source="Independent constant-C artifact QA case")),
+        DesignInputs("T18", 400, 48, 5, 100e3, 100e-6, turns_ratio_np_ns=4,
+            magnetizing_inductance_h=1e-3, leakage_inductance_h=20e-6, dead_time_s=200e-9, diode_drop_v=.7,
+            psfb_options=PSFBOptions(coss_f=300e-12, r_on_ohm=.15, body_diode_drop_v=.8,
+                body_diode_resistance_ohm=.05, transformer_capacitance_f=100e-12,
+                rectifier_capacitance_f=1e-9, rectifier_resistance_ohm=.02,
+                parameter_source="Explicit seven-state artifact QA constants")),
+    )
+
+
+def _waveform_fingerprint(result):
+    import numpy as np
+    digest = hashlib.sha256()
+    for key, waveform in sorted(result.waveforms.items()):
+        digest.update(key.encode())
+        for signal in (waveform.current_a, waveform.voltage_v):
+            t, y = signal.sample(count=800, periods=2)
+            _require(np.isfinite(t).all() and np.isfinite(y).all(), "nonfinite advanced waveform")
+            digest.update(np.asarray(t, dtype="<f8").tobytes())
+            digest.update(np.asarray(y, dtype="<f8").tobytes())
+    return digest.hexdigest()
+
+
+def _exercise_advanced_power_stage(stage, directory, app):
+    import numpy as np
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    from power_stage_design.models import DesignInputs
+    from power_stage_design.schematic import layout, schematic_size
+
+    evidence = {}
+    for inputs in _advanced_inputs():
+        stage.set_inputs(inputs)
+        _wait_for_worker(lambda: stage.result is not None or not stage._jobs)
+        _require(stage.result is not None, stage.status.text())
+        result = stage.result
+        _require(stage.current_inputs() == inputs == result.inputs, "advanced inputs changed")
+        _require(stage.advanced_model.enabled.isChecked(), "optional model is not enabled")
+        fingerprint = _waveform_fingerprint(result)
+        app.processEvents()
+        width, height = schematic_size(inputs.topology, device_keys=result.waveforms)
+        selected = []
+        for branch in layout(inputs.topology, device_keys=result.waveforms)[0]:
+            if not branch.selectable:
+                continue
+            QTest.mouseClick(stage.schematic, Qt.MouseButton.LeftButton,
+                pos=QPoint(round(branch.x * stage.schematic.width() / width),
+                           round(branch.y * stage.schematic.height() / height)))
+            _require(stage.component_combo.currentData() == branch.key, "advanced branch hit test failed")
+            for plot, signal in ((stage.current_plot, result.waveforms[branch.key].current_a),
+                                 (stage.voltage_plot, result.waveforms[branch.key].voltage_v)):
+                curve, = plot.listDataItems()
+                t, y = signal.sample(count=800, periods=2)
+                np.testing.assert_array_equal(curve.xData, t)
+                np.testing.assert_array_equal(curve.yData, y)
+            selected.append(branch.key)
+        _require(set(selected) == set(result.waveforms), "advanced branches are incomplete")
+        project, report = directory / f"{inputs.topology}.json", directory / f"{inputs.topology}.html"
+        stage.save_to(project)
+        saved = json.loads(project.read_text(encoding="utf-8"))
+        _require(DesignInputs(**saved["inputs"]) == inputs, "advanced saved inputs changed")
+        stage.advanced_model.enabled.setChecked(False)
+        _require(stage.result is None and not stage.report_action.isEnabled(), "advanced stale result retained")
+        stage.open_from(project)
+        _wait_for_worker(lambda: stage.result is not None or not stage._jobs)
+        _require(stage.result is not None, stage.status.text())
+        _require(stage.result is not result and stage.current_inputs() == inputs == stage.result.inputs,
+                 "advanced restore did not recompute the original inputs")
+        _require(stage.advanced_model.enabled.isChecked(), "advanced optional model not restored")
+        _require(_waveform_fingerprint(stage.result) == fingerprint, "restored advanced waveforms changed")
+        stage.report_to(report)
+        html = report.read_text(encoding="utf-8")
+        data = json.loads(unescape(html.split('<h2>可复现数据</h2><pre>', 1)[1].split('</pre>', 1)[0]))
+        # JSON canonicalization preserves tuple/list equivalence in option tables.
+        _require(data["inputs"] == json.loads(json.dumps(asdict(inputs)))
+                 and data["design_id"] == result.design_id and data["metrics"] == result.metrics
+                 and data["stress"] == result.stress and data["model_revision"] == result.model_version,
+                 "advanced report differs from the recomputed result")
+        _require(all("component-" + key in html for key in selected), "advanced report lacks selected branches")
+        evidence[inputs.topology] = {"design_id": result.design_id, "inputs": asdict(inputs),
+            "waveform_sha256": fingerprint, "branches_clicked": sorted(selected),
+            "samples_per_branch": 800, "max_curve_absolute_error": 0.0,
+            "project_roundtrip": True, "recomputed_waveforms_identical": True,
+            "report_consistency": True, "mode": result.mode, "provenance": result.provenance,
+            "warnings": result.warnings}
+    return evidence
+
+
+def _exercise_two_stage(host, directory):
+    import zipfile
+    from unittest.mock import patch
+
+    from PySide6.QtWidgets import QFileDialog
+
+    from llc_design.core.config import load_project
+    from llc_design.optimization.sweep import OptimizationConfig
+
+    view = host.two_stage_optimization_view
+    _require(any("Two-Stage" in host.tabs.tabText(i) for i in range(host.tabs.count())), "TwoStage tab is missing")
+    host.tabs.setCurrentWidget(view)
+    spec = host._spec_from_widgets()
+    config = OptimizationConfig((5.5,), (spec.q_full_load,), (spec.resonant_frequency_hz,),
+        (spec.primary_turns,), (spec.secondary_turns,), (spec.primary_device,),
+        (spec.sr_parallel_devices_per_position,))
+    view.config_text.setPlainText(json.dumps(asdict(config)))
+    view.maximum_candidates.setValue(1)
+    view.top_n.setValue(1)
+    _require(view.verification_scope.currentData() == "nominal", "unexpected TwoStage verification scope")
+    view.run_button.click()
+    _wait_for_worker(lambda: not host._active_workers)
+    _require(view.result is not None, view.status.text())
+    candidate = view.selected_candidate()
+    _require(candidate is not None, str([(c.reject_reason, c.diagnostics) for c in view.result.verified]))
+    nominal = candidate.analysis.nominal
+    digest = nominal.loss_waveform_sha256
+    _require(nominal.semiconductor_source == "TIME_DOMAIN_WAVEFORM" and digest, "TwoStage lacks real TD provenance")
+    verified_points = sum(p.semiconductor_source == "TIME_DOMAIN_WAVEFORM" for p in candidate.analysis.operating_points)
+    _require(verified_points == 1 and "仅名义" in view.table.item(0, 0).text(), "nominal scope is overstated")
+    _require(host._spec_from_widgets() == spec, "selecting a candidate silently changed the project")
+    view.apply_button.click()
+    _require(host.spec == host._spec_from_widgets() == candidate.spec and host.spec.ln_ratio == 5.5
+             and host.system_analysis is candidate.analysis, "Apply changed exact inputs or TD analysis")
+    project, report = directory / "two-stage.json", directory / "two-stage.zip"
+    # Redirect file destinations only; production methods, workers and solvers run unchanged.
+    with patch.object(QFileDialog, "getSaveFileName", return_value=(str(project), "JSON")):
+        host.save_json()
+    saved = load_project(project, include_optimization=True)[-1]
+    _require(saved["request"]["verification_scope"] == "nominal"
+             and any(s.get("waveform_sha256") == digest for s in saved["candidates"][0]["sources"]),
+             "saved TwoStage source identity changed")
+    with patch.object(QFileDialog, "getSaveFileName", return_value=(str(report), "ZIP")):
+        view.report_button.click()
+    _wait_for_worker(lambda: not host._active_workers)
+    _require(report.is_file(), "TwoStage candidate report was not produced")
+    with zipfile.ZipFile(report) as archive:
+        _require(archive.testzip() is None, "TwoStage report archive is corrupt")
+        _require(digest.encode() in archive.read("LLC_calculation_book.md"), "TwoStage report lost TD provenance")
+        provenance = json.loads(archive.read("optimization_provenance.json"))
+        _require(provenance["request"]["verification_scope"] == "nominal"
+                 and provenance["selected_candidate"] == saved["candidates"][0], "TwoStage report selected another candidate")
+    with patch.object(QFileDialog, "getOpenFileName", return_value=(str(project), "JSON")):
+        host.load_json()
+    _require(host.spec.ln_ratio == 5.5 and view.result is None and not view.apply_button.isEnabled()
+             and not view.report_button.isEnabled() and "历史" in view.status.text(), "restored history authorizes stale Apply/report")
+    return {"real_stage_a_and_b": True, "verification_scope": "nominal", "verified_td_points": verified_points,
+        "fha_td_validity": candidate.fha_td_validity.value, "waveform_sha256": digest,
+        "loss_source": nominal.semiconductor_source, "total_loss_w": candidate.total_loss_w,
+        "selected_candidate": saved["candidates"][0], "applied_ln_ratio": host.spec.ln_ratio,
+        "apply_exact": True, "project_roundtrip": True, "restored_history_requires_rerun": True,
+        "report_consistency": True,
+        "model_limit": "Nominal-point ideal TD losses only; remaining operating points and commutation retain FHA assumptions; no hardware qualification"}
+
+
 def _run_packaged_self_test() -> int:
     """Exercise all workspaces and emit evidence only after successful cleanup."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -141,7 +327,7 @@ def _run_packaged_self_test() -> int:
     # This self-test process is offline. Use the updater's shutdown boundary,
     # leaving QTimer's real bound callbacks and their Qt owners intact.
     wait_for_update_checks()
-    controller = WorkspaceApplicationController(LLCDesignSpec())
+    controller = WorkspaceApplicationController(LLCDesignSpec(vbus_hold_end_v=320., bus_capacitance_f=.0033))
     windows = [controller.llc_window, controller.pfc_window, controller.control_window,
                controller.fra_window, controller.dab_window, controller.power_stage_window]
     selector = WorkspaceSelectionDialog()
@@ -167,6 +353,10 @@ def _run_packaged_self_test() -> int:
         guided.close()
         with tempfile.TemporaryDirectory(prefix="pdt-psd-self-test-") as directory:
             psd_proof = _exercise_power_stage(controller.power_stage_window, Path(directory))
+            advanced_proof = _exercise_advanced_power_stage(controller.power_stage_window, Path(directory), app)
+            controller.show_workspace("llc")
+            app.processEvents()
+            optimizer_proof = _exercise_two_stage(controller.llc_window, Path(directory))
         workspace_names = ["llc", "pfc", "control", "fra", "dab", "power_stage"]
         for workspace, window in zip(workspace_names, windows, strict=True):
             controller.show_workspace(workspace)
@@ -177,9 +367,10 @@ def _run_packaged_self_test() -> int:
         # This path is inside the frozen bundle, not relative to source/CWD.
         taxonomy = Path(part_validation.__file__).resolve().parents[1] / "engineering_data/brand_taxonomy.json"
         part_validation.load_brand_taxonomy()
-        proof = {"proof_schema": 2, "success": True, "version": __version__,
+        proof = {"proof_schema": 3, "success": True, "version": __version__,
                  "frozen": bool(getattr(sys, "frozen", False)), "platform": sys.platform,
                  "workspaces": workspace_names, "guided_design": True, **psd_proof,
+                 "power_stage_advanced": advanced_proof, "two_stage_optimization": optimizer_proof,
                  "brand_taxonomy_sha256": hashlib.sha256(taxonomy.read_bytes()).hexdigest()}
     finally:
         for window in [selector, guided, *windows]:

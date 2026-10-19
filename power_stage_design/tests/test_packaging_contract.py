@@ -73,7 +73,7 @@ def test_real_source_packaging_entry_calculates_and_restores_psd(tmp_path):
     env = dict(os.environ, QT_QPA_PLATFORM='offscreen', PYTHONPATH=str(ROOT),
                PDT_SELF_TEST_REPORT=str(report))
     completed = subprocess.run([sys.executable, str(ROOT / 'packaging/launcher.py'), '--self-test'],
-        cwd=tmp_path, env=env, text=True, capture_output=True, timeout=120, check=False)
+        cwd=tmp_path, env=env, text=True, capture_output=True, timeout=900, check=False)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     data = json.loads(report.read_text(encoding='utf-8'))
     assert data['success'] is True and data['frozen'] is False

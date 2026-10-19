@@ -21,7 +21,7 @@ def validate_report(report: dict, *, expected_version: str,
                     expected_taxonomy_sha256: str, expected_platform: str) -> None:
     """One proof contract shared by native verification and release publication."""
     required = {
-        "proof_schema": 2, "success": True, "frozen": True, "version": expected_version,
+        "proof_schema": 3, "success": True, "frozen": True, "version": expected_version,
         "platform": expected_platform,
         "workspaces": ["llc", "pfc", "control", "fra", "dab", "power_stage"],
         "guided_design": True, "power_stage_designer": True,
@@ -68,12 +68,101 @@ def validate_report(report: dict, *, expected_version: str,
     error = loop.get("max_plant_relative_error")
     if type(error) not in (int, float) or not math.isfinite(error) or not 0 <= error <= 1e-10:
         raise RuntimeError("packaged self-test report fails independent Buck VMC numerical check")
+    _validate_completion_report(report)
+
+
+def _hex_digest(value, length=64):
+    return isinstance(value, str) and len(value) == length and all(c in "0123456789abcdef" for c in value)
+
+
+def _validate_completion_report(report):
+    advanced = report.get("power_stage_advanced")
+    branches = {
+        "T05": {"Q1", "Q2", "D1", "D2", "Dbody1", "Dbody2", "Coss1", "Coss2", "L1", "Rwinding", "Cout", "Cin"},
+        "T11": {"Q1", "D1", "Dbody", "Cnode", "primary", "secondary", "Lm", "Cin", "Cout"},
+        "T18": {"L1", "Lleak", "Lm", "primary", "secondary1", "secondary2", "Q1", "Q2", "Q3", "Q4",
+                "Dbody1", "Dbody2", "Dbody3", "Dbody4", "Coss1", "Coss2", "Coss3", "Coss4",
+                "D1", "D2", "Cprimary", "Crectifier", "Cout", "Cin", "node_A", "node_B"},
+    }
+    if not isinstance(advanced, dict) or set(advanced) != set(branches):
+        raise RuntimeError("packaged self-test report lacks advanced PSD evidence")
+    options = {"T05": ("two_switch_options", "t05-switched-1"),
+               "T11": ("qr_options", "qr-dynamic-1"), "T18": ("psfb_options", "psfb-commutation-1")}
+    identities = set()
+    for topology, expected_branches in branches.items():
+        case = advanced[topology]
+        if not isinstance(case, dict):
+            raise RuntimeError("packaged self-test report has invalid advanced case")  # noqa: TRY004 - one report-validation error contract
+        selected = case.get("branches_clicked")
+        if (not isinstance(selected, list) or not all(isinstance(x, str) for x in selected)
+                or len(selected) != len(expected_branches) or set(selected) != expected_branches
+                or type(case.get("samples_per_branch")) is not int or case["samples_per_branch"] != 800
+                or type(case.get("max_curve_absolute_error")) not in (int, float)
+                or case["max_curve_absolute_error"] != 0
+                or not _hex_digest(case.get("waveform_sha256"))
+                or any(case.get(key) is not True for key in
+                       ("project_roundtrip", "recomputed_waveforms_identical", "report_consistency"))):
+            raise RuntimeError("packaged self-test report has incomplete advanced curves/project/report evidence")
+        inputs = case.get("inputs")
+        option_key, revision = options[topology]
+        if (not isinstance(inputs, dict) or inputs.get("topology") != topology
+                or not isinstance(inputs.get(option_key), dict) or inputs[option_key].get("model_revision") != revision
+                or any(inputs.get(other) is not None for other, _ in options.values() if other != option_key)
+                or not isinstance(case.get("provenance"), dict) or not case["provenance"]):
+            raise RuntimeError("packaged self-test report lacks exact advanced inputs/provenance")
+        canonical = dict(inputs)
+        for name, _ in options.values():
+            if canonical.get(name) is None:
+                canonical.pop(name, None)
+        try:
+            identity = hashlib.sha256(json.dumps({"model_version": "psd-piecewise-2", "inputs": canonical},
+                sort_keys=True, allow_nan=False).encode()).hexdigest()[:20]
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("packaged self-test report has invalid advanced identity inputs") from exc
+        if case.get("design_id") != identity:
+            raise RuntimeError("packaged self-test report has mismatched advanced identity")
+        identities.add(identity)
+    if len(identities) != 3:
+        raise RuntimeError("packaged self-test report duplicates advanced identities")
+    two_stage = report.get("two_stage_optimization")
+    if (not isinstance(two_stage, dict) or two_stage.get("verification_scope") != "nominal"
+            or type(two_stage.get("verified_td_points")) is not int or two_stage["verified_td_points"] != 1
+            or two_stage.get("loss_source") != "TIME_DOMAIN_WAVEFORM"
+            or two_stage.get("fha_td_validity") not in ("PASS", "WARN")
+            or not _hex_digest(two_stage.get("waveform_sha256"))
+            or type(two_stage.get("applied_ln_ratio")) not in (int, float) or two_stage["applied_ln_ratio"] != 5.5
+            or any(two_stage.get(key) is not True for key in ("real_stage_a_and_b", "apply_exact",
+                   "project_roundtrip", "restored_history_requires_rerun", "report_consistency"))
+            or not isinstance(two_stage.get("model_limit"), str) or "Nominal-point" not in two_stage["model_limit"]):
+        raise RuntimeError("packaged self-test report lacks genuine bounded TwoStage workflow evidence")
+    loss = two_stage.get("total_loss_w")
+    candidate = two_stage.get("selected_candidate")
+    if (type(loss) not in (int, float) or not math.isfinite(loss) or loss <= 0
+            or not isinstance(candidate, dict) or candidate.get("rejected") is not False
+            or candidate.get("total_loss_w") != loss or candidate.get("fha_td_validity") != two_stage["fha_td_validity"]
+            or not isinstance(candidate.get("spec"), dict) or not isinstance(candidate.get("sources"), list)
+            or not _hex_digest(candidate.get("candidate_id"))):
+        raise RuntimeError("packaged self-test report has invalid TwoStage candidate")
+    try:
+        identity = hashlib.sha256(json.dumps(candidate["spec"], sort_keys=True, allow_nan=False).encode()).hexdigest()
+        td_sources = [point for point in candidate["sources"]
+                      if point["components"]["semiconductor_current"] == "TIME_DOMAIN_WAVEFORM"]
+        consistent = (candidate["spec"]["fields"]["ln_ratio"] == 5.5
+                      and identity == candidate["candidate_id"] and len(td_sources) == 1
+                      and td_sources[0]["waveform_sha256"] == two_stage["waveform_sha256"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("packaged self-test report has invalid TwoStage source identity") from exc
+    if not consistent:
+        raise RuntimeError("packaged self-test report has mismatched TwoStage source identity")
 
 
 def verify_bundle(
     command: Sequence[str], *, expected_version: str,
-    expected_taxonomy_sha256: str, timeout_s: float = 300.0,
+    expected_taxonomy_sha256: str, timeout_s: float = 900.0,
 ) -> dict:
+    # Three advanced periodic solvers include genuine save/recompute; T18 alone
+    # takes ~132 s on the qualification host. This is a safety timeout, not a
+    # startup/performance acceptance target; numerical budgets are unchanged.
     if not command or timeout_s <= 0:
         raise ValueError("command and positive timeout are required")
     with tempfile.TemporaryDirectory(prefix="pdt-bundle-test-") as directory:

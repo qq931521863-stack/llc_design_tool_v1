@@ -17,9 +17,40 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
+def _completion_proof():
+    """Synthetic schema fixture; actual model evidence comes from native self-test."""
+    import hashlib
+    from dataclasses import asdict
+    spec = importlib.util.spec_from_file_location("pdt_launcher_fixture", ROOT / "packaging/launcher.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    branches = {
+        "T05": "Q1 Q2 D1 D2 Dbody1 Dbody2 Coss1 Coss2 L1 Rwinding Cout Cin",
+        "T11": "Q1 D1 Dbody Cnode primary secondary Lm Cin Cout",
+        "T18": "L1 Lleak Lm primary secondary1 secondary2 Q1 Q2 Q3 Q4 Dbody1 Dbody2 Dbody3 Dbody4 Coss1 Coss2 Coss3 Coss4 D1 D2 Cprimary Crectifier Cout Cin node_A node_B",
+    }
+    advanced = {}
+    for inputs in module._advanced_inputs():
+        advanced[inputs.topology] = {"design_id": inputs.design_id, "inputs": asdict(inputs),
+            "waveform_sha256": "d" * 64, "branches_clicked": sorted(branches[inputs.topology].split()),
+            "samples_per_branch": 800, "max_curve_absolute_error": 0.0,
+            "project_roundtrip": True, "recomputed_waveforms_identical": True, "report_consistency": True,
+            "mode": "CCM", "provenance": {"fixture": "schema only"}}
+    candidate_spec = {"fields": {"ln_ratio": 5.5}}
+    candidate = {"candidate_id": hashlib.sha256(json.dumps(candidate_spec, sort_keys=True).encode()).hexdigest(),
+        "spec": candidate_spec, "rejected": False, "fha_td_validity": "WARN", "total_loss_w": 10.,
+        "sources": [{"components": {"semiconductor_current": "TIME_DOMAIN_WAVEFORM"}, "waveform_sha256": "e" * 64}]}
+    return {"power_stage_advanced": advanced,
+        "two_stage_optimization": {"real_stage_a_and_b": True, "verification_scope": "nominal", "verified_td_points": 1,
+            "fha_td_validity": "WARN", "waveform_sha256": "e" * 64, "loss_source": "TIME_DOMAIN_WAVEFORM",
+            "total_loss_w": 10., "selected_candidate": candidate, "applied_ln_ratio": 5.5,
+            "apply_exact": True, "project_roundtrip": True, "restored_history_requires_rerun": True,
+            "report_consistency": True, "model_limit": "Nominal-point schema fixture; no physical evidence"}}
+
+
 def _proof(**overrides):
     payload = {
-        "proof_schema": 2, "success": True, "version": "9.4.1", "frozen": True, "platform": sys.platform,
+        "proof_schema": 3, "success": True, "version": "9.4.1", "frozen": True, "platform": sys.platform,
         "workspaces": ["llc", "pfc", "control", "fra", "dab", "power_stage"],
         "guided_design": True, "power_stage_designer": True, "brand_taxonomy_sha256": "a" * 64,
         "power_stage_launcher_entry": True, "power_stage_toolbox_filter": True,
@@ -39,6 +70,7 @@ def _proof(**overrides):
             "switch_rms_a": math.sqrt(duty * (average ** 2 + ripple ** 2 / 12)),
             "switch_voltage_v": voltage,
         }
+    payload.update(_completion_proof())
     payload.update(overrides)
     return payload
 

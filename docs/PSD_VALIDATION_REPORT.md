@@ -412,3 +412,16 @@ does not establish successful convergence/validity at all critical points; actua
 critical-point rejection remains a valid, explicitly retained result. No failed
 or unknown point is removed to make a candidate pass. Vendor/material/thermal,
 commutation approximations and physical operating limits remain visible.
+
+## Final qualification source freeze
+
+Artifact qualification now requires production proof schema 3, including all
+47 optional-model branches, exact recomputation/plot/report data and a real
+TwoStage TD candidate with explicit nominal scope. The prior six-workspace and
+independent M1/Buck-VMC gates remain required. 136 contract tests and a real
+source preflight passed before final source freeze; these are not frozen-binary
+or cross-platform results. Final aggregate regression, RSS, installed wheel and
+actual production frozen-process evidence are recorded separately when completed.
+The ngspice batch prerequisite is supplied from an official Debian 44.2 package,
+privately extracted and source/SHA-verified; a real RC transient agrees with the
+analytic 1τ/5τ responses within 2 µV. No system security setting was changed.
