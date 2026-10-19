@@ -31,37 +31,9 @@ def _destroy_owned_windows(app, windows):
     also drain their workers and deferred native deletion, without deleting
     unrelated windows or detaching PlotWidget objects from Qt's owner tree.
     """
-    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-    from pyqtgraph import GraphicsLayoutWidget
-    from PySide6.QtCore import QCoreApplication, QEvent, QThreadPool, QTimer
-    from shiboken6 import isValid
+    from llc_design.gui.lifetime import dispose_widgets
 
-    for window in windows:
-        if isValid(window):
-            window.close()
-            for timer in window.findChildren(QTimer):
-                timer.stop()
-    pools = [QThreadPool.globalInstance()]
-    for window in windows:
-        if isValid(window):
-            pools.extend(window.findChildren(QThreadPool))
-    for pool in pools:
-        assert pool.waitForDone(15000), "Owned workspace worker did not finish"
-    app.processEvents()
-    for window in windows:
-        if isValid(window):
-            # A busy workspace can decline the first close until its queued
-            # worker completion has run. Keep its normal closeEvent semantics.
-            assert window.close(), "Owned workspace still refuses to close"
-            for canvas in window.findChildren(FigureCanvasQTAgg):
-                canvas.figure.clear()
-            for graphics in window.findChildren(GraphicsLayoutWidget):
-                if isValid(graphics) and not graphics.closed:
-                    graphics.close()
-            window.deleteLater()
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    app.processEvents()
-    assert all(not isValid(window) for window in windows)
+    dispose_widgets(windows)
 
 
 @contextmanager

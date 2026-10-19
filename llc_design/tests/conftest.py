@@ -55,10 +55,7 @@ def isolate_desktop_background_updates(request, monkeypatch):
         yield
         return
     app = request.getfixturevalue("desktop_qapp")
-    from pyqtgraph import GraphicsLayoutWidget
-    from PySide6.QtCore import QCoreApplication, QEvent, QThreadPool
     from PySide6.QtWidgets import QMainWindow
-    from shiboken6 import isValid
 
     from llc_design.gui import main_window as llc_window_module
     from pfc_design.gui import main_window as pfc_window_module
@@ -77,19 +74,5 @@ def isolate_desktop_background_updates(request, monkeypatch):
         # internal top-level menus/viewports.
         windows = [window for window in app.topLevelWidgets()
                    if isinstance(window, QMainWindow) and window not in existing]
-        for window in windows:
-            if isValid(window):
-                window.close()
-        assert QThreadPool.globalInstance().waitForDone(15000)
-        app.processEvents()
-        for window in windows:
-            if isValid(window):
-                # Busy workspaces can initially decline close. Queued worker
-                # completion must run before their owners are deleted.
-                window.close()
-                for graphics in window.findChildren(GraphicsLayoutWidget):
-                    if isValid(graphics) and not graphics.closed:
-                        graphics.close()
-                window.deleteLater()
-        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-        app.processEvents()
+        from llc_design.gui.lifetime import dispose_widgets
+        dispose_widgets(windows)

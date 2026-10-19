@@ -5,6 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QFrame,
     QGridLayout,
@@ -24,6 +25,7 @@ from llc_design.gui.contact import add_toolbar_contacts
 from llc_design.gui.device_library_install import install_device_library
 from llc_design.gui.help import show_help
 from llc_design.gui.main_window import LLCMainWindow
+from llc_design.gui.lifetime import dispose_dialog, dispose_widgets
 from llc_design.gui.solution_map_install import install_llc_solution_map
 from llc_design.gui.system_modeling import (
     SystemModelingDesignDialog,
@@ -244,47 +246,79 @@ class WorkspaceApplicationController:
     """Own top-level windows and switch without destroying user state."""
 
     def __init__(self, initial_spec: LLCDesignSpec, *, power_stage_window=None) -> None:
-        self.llc_window = LLCMainWindow(initial_spec)
-        install_device_library(self.llc_window)
-        install_closed_loop_verification(self.llc_window)
-        install_llc_solution_map(self.llc_window)
-        self.pfc_window = PFCMainWindow()
-        self.dab_window = DABMainWindow()
-        install_ttpl_solution_map(self.pfc_window)
-        self.control_window = ControlToolsMainWindow()
-        self.fra_window = FRALoopDesignerWindow()
-        install_advanced_fra_actions(self.fra_window)
-        self.power_stage_window = PowerStageMainWindow() if power_stage_window is None else power_stage_window
-        self.power_stage_window.workspace_switch_requested.connect(self._handle_request)
-        self.power_stage_window.open_existing_llc = self._show_psd_llc
-        self.active_workspace: str | None = None
-        self.llc_window.workspace_switch_requested.connect(self._handle_request)
-        self.pfc_window.workspace_switch_requested.connect(self._handle_request)
-        self.control_window.workspace_switch_requested.connect(self._handle_request)
-        self.fra_window.workspace_switch_requested.connect(self._handle_request)
-        self.dab_window.workspace_switch_requested.connect(self._handle_request)
-        self.control_window.digital_design_updated.connect(self.llc_window.set_external_control_design)
-        self.control_window.digital_design_updated.connect(
-            lambda digital, label="": self.llc_window.refresh_closed_loop_controller()
-        )
-        install_guided_context_actions(
-            self.llc_window,
-            lambda: self._edit_guided_definition("llc"),
-        )
-        install_guided_context_actions(
-            self.pfc_window,
-            lambda: self._edit_guided_definition("pfc"),
-        )
+        self._disposed = False
+        try:
+            self.llc_window = LLCMainWindow(initial_spec)
+            install_device_library(self.llc_window)
+            install_closed_loop_verification(self.llc_window)
+            install_llc_solution_map(self.llc_window)
+            self.pfc_window = PFCMainWindow()
+            self.dab_window = DABMainWindow()
+            install_ttpl_solution_map(self.pfc_window)
+            self.control_window = ControlToolsMainWindow()
+            self.fra_window = FRALoopDesignerWindow()
+            install_advanced_fra_actions(self.fra_window)
+            self.active_workspace: str | None = None
+            self.llc_window.workspace_switch_requested.connect(self._handle_request)
+            self.pfc_window.workspace_switch_requested.connect(self._handle_request)
+            self.control_window.workspace_switch_requested.connect(self._handle_request)
+            self.fra_window.workspace_switch_requested.connect(self._handle_request)
+            self.dab_window.workspace_switch_requested.connect(self._handle_request)
+            self.control_window.digital_design_updated.connect(self.llc_window.set_external_control_design)
+            self.control_window.digital_design_updated.connect(
+                lambda digital, label="": self.llc_window.refresh_closed_loop_controller()
+            )
+            install_guided_context_actions(
+                self.llc_window,
+                lambda: self._edit_guided_definition("llc"),
+            )
+            install_guided_context_actions(
+                self.pfc_window,
+                lambda: self._edit_guided_definition("pfc"),
+            )
+            # Do not change an injected owner's callbacks until every new
+            # workspace and installer has successfully been constructed.
+            self.power_stage_window = PowerStageMainWindow() if power_stage_window is None else power_stage_window
+            self.power_stage_window.workspace_switch_requested.connect(self._handle_request)
+            self.power_stage_window.open_existing_llc = self._show_psd_llc
+        except BaseException:
+            # Construction can fail after some native roots exist. An injected
+            # PSD owner predates this controller and must survive that failure.
+            dispose_widgets(window for window in self._windows()
+                            if window is not power_stage_window)
+            raise
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.dispose)
+
+    def _windows(self):
+        return tuple(getattr(self, name) for name in (
+            "llc_window", "pfc_window", "dab_window", "control_window",
+            "fra_window", "power_stage_window",
+        ) if hasattr(self, name))
+
+    def dispose(self) -> None:
+        """Destroy cached owners only when the application is finished."""
+        if self._disposed:
+            return
+        dispose_widgets(self._windows())
+        self._disposed = True
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.disconnect(self.dispose)
 
     def start(self) -> bool:
         dialog = WorkspaceSelectionDialog()
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        try:
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+            workspace = dialog.selected_workspace
+        finally:
+            dispose_dialog(dialog)
+        if not accepted or workspace is None:
             return False
-        if dialog.selected_workspace is None:
-            return False
-        if dialog.selected_workspace == "system_modeling":
+        if workspace == "system_modeling":
             return self._run_system_modeling(previous=None)
-        self.show_workspace(dialog.selected_workspace)
+        self.show_workspace(workspace)
         return True
 
     def _hide_all(self) -> None:
@@ -296,6 +330,8 @@ class WorkspaceApplicationController:
         self.power_stage_window.hide()
 
     def show_workspace(self, workspace: str) -> None:
+        if self._disposed:
+            raise RuntimeError("Workspace controller is disposed")
         if workspace == "system_modeling":
             self._run_system_modeling(previous=self.active_workspace)
             return
@@ -324,12 +360,16 @@ class WorkspaceApplicationController:
         """Run V9.3 guided definition, then hand off to maintained engines."""
         self._hide_all()
         wizard = SystemModelingDesignDialog(initial_definition=seed_definition)
-        if wizard.exec() != QDialog.DialogCode.Accepted or wizard.definition is None:
+        try:
+            accepted = wizard.exec() == QDialog.DialogCode.Accepted
+            definition = wizard.definition
+        finally:
+            dispose_dialog(wizard)
+        if not accepted or definition is None:
             if previous is not None:
                 self.show_workspace(previous)
             return previous is not None
 
-        definition = wizard.definition
         if definition.topology == SystemTopology.LLC:
             apply_definition_to_llc_window(self.llc_window, definition)
             self.show_workspace("llc")
@@ -365,11 +405,16 @@ class WorkspaceApplicationController:
         previous = self.active_workspace
         self._hide_all()
         dialog = WorkspaceSelectionDialog()
-        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected_workspace:
-            if dialog.selected_workspace == "system_modeling":
+        try:
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+            workspace = dialog.selected_workspace
+        finally:
+            dispose_dialog(dialog)
+        if accepted and workspace:
+            if workspace == "system_modeling":
                 self._run_system_modeling(previous=previous)
             else:
-                self.show_workspace(dialog.selected_workspace)
+                self.show_workspace(workspace)
         elif previous is not None:
             self.show_workspace(previous)
 

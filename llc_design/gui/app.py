@@ -24,9 +24,14 @@ def run_gui(config_path: str | None = None) -> int:
     # the translation and make the switch back to Chinese impossible.  The stored
     # language is applied immediately afterwards, before anything is shown.
     controller = WorkspaceApplicationController(spec)
-    apply_language(load_language(), app)
-    if not controller.start():
-        return 0
-    # Keep the controller strongly reachable for the lifetime of the Qt event loop.
-    app._power_design_controller = controller  # type: ignore[attr-defined]
-    return int(app.exec())
+    try:
+        apply_language(load_language(), app)
+        if not controller.start():
+            return 0
+        # Keep the controller reachable only for this event-loop lifetime.
+        app._power_design_controller = controller  # type: ignore[attr-defined]
+        return int(app.exec())
+    finally:
+        controller.dispose()
+        if getattr(app, "_power_design_controller", None) is controller:
+            del app._power_design_controller
