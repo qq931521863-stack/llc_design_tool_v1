@@ -2,6 +2,13 @@
 
 ## Latest completion qualification correction (2026-10-19)
 
+New integrated-LLC leakage-resonance acceptance is pending. Independent model
+review found that the existing ampere-turn-balanced leakage-energy estimate is
+not generally the APR short-circuit Lr, and APR magnetizing flux is not generally
+the physical-core flux when secondary leakage is nonzero. The new implementation
+must validate the two-port transformation and physical loss consumers rather
+than reuse either quantity without conversion.
+
 The immutable `0dfd790569b8f28935020bc1f3d3f78a5f57e7f0` run collected 3763
 cases. It was operator-interrupted (tool session exit 130) after a reproducible
 ownership defect, with **965 PASS and 1 FAIL**, no complete JUnit and no aggregate
@@ -652,3 +659,45 @@ frequency equality incorrectly rejected 99999.99999999999 versus 100000 Hz; a
 that oracle without changing model tolerances. All 210 contract cases and an
 84.51 s actual source-helper preflight pass with worker/Qt cleanup. These remain
 source evidence until the clean frozen source is built and exercised separately.
+
+
+## Source magnetic catalog integration (2026-10-19)
+
+The four supplied PDFs contain 105 physical pages. The source inventory preserves
+630 complete explicit part numbers, 318 source-specific geometries, 1294
+availability rows and 44 printed formulas (28 DC-bias and 16 two-term loss).
+Availability entries do not create invented complete SKUs. Unknown loss waveform,
+B convention, temperature/domain and density remain unknown. Thirty-one source
+conflicts, including questionable volume units and contradictory material labels,
+are retained; declarations cannot override source conflicts.
+
+Local commits `d51739d` and `3c07a0f` connect selection, exact source formula,
+explicit modeling declarations, actual PFC sizing, atomic Apply, save/open, report,
+and separately labeled inductor self-loss to TTPL/Vienna consumers. LLC exposes
+the source catalog as a reference, not an invented complete ferrite/bobbin design.
+Fifty-two focused cases and 20 independent probes pass. Independent real-window
+replays cover both PFC workspaces, oversize-Apply rejection, current-request
+invalidation, full saved hidden fields, repeated LLC catalog reuse and disposal.
+A negative-copper-resistance temperature and stale saved design-context bug were
+reproduced and repaired before acceptance.
+
+The PFC window previously had a 1520×1044 minimum even before the catalog change.
+A real two-direction scroll host now preserves original pages/callbacks while
+allowing 1280×720 and 1366×768; actual Calculate/Save/Open/Report controls remain
+reachable. No minimum-size ignore, font shrinking or clipped hidden controls were
+used as a substitute. The source self-loss label includes its own Vin/Vbus/P/fs/η,
+so a different Devices operating point cannot silently appear to share its source.
+
+The reference CS400060 geometry's L0=221.778 µH and a declared QA-only full PFC
+case gives 39 turns, 209.479802629 µH at full load, 2.249745373 W core and
+1.013325789 W copper loss. These are explicit model declarations, not manufacturer
+qualification. The uploaded application example remains arithmetic replay only: its
+printed ripple expression differs from standard boost volt-second balance, so its
+3.464085382 W result is not a production physics golden reference.
+
+Packaging commit `3f09c4b` retains all old gates and requires this real magnetic
+consumer proof. Seventy-six affected contract cases plus the actual helper and
+validator pass after the final layout change. The installed wheel and Linux frozen
+executable have not yet been rebuilt for these new sources. Evidence sets are
+`magnetic-catalog-integration`, `magnetic-catalog-independent` and
+`magnetic-artifact-qa`; their manifests record the exact source/resource hashes.

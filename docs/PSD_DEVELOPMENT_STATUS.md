@@ -2,11 +2,23 @@
 
 ## Active completion extension and lifecycle gate (2026-10-19)
 
+The latest user addition is integrated LLC resonant magnetics: preserve the
+separate-Lr default and add transformer-leakage resonance with actual electrical,
+physical winding/flux, loss, thermal, selection, persistence and report consumers.
+This is in isolated implementation and independent physical review. A renamed
+Lr field or an unmatched short-circuit inductance is not acceptance. Final-source
+qualification must include this new scope.
+
 The user additionally requested completion of the magnetic-core selection database
 from four supplied CSC documents. This is a new acceptance item alongside the
 50 original T/X/L/C/A IDs. Source extraction, strict source-specific data adapters,
 actual PFC selection/calculation/persistence/report consumers and LLC reference
-catalog integration are in progress. Missing conventions and parameters remain
+catalog integration are implemented in `d51739d`, with small-screen navigation
+and explicit self-loss operating-point labels added in `3c07a0f`. Fifty-two
+focused cases, 20 independent probes and actual TTPL/Vienna/LLC consumers pass.
+The `3f09c4b` mandatory packaging gate also passes 76 affected contract cases and
+a real-source helper replay. Actual new-source wheel/frozen qualification remains
+pending; these are not artifact results. Missing conventions and parameters remain
 explicit; legacy default bias/loss/material values must not fill new records.
 No final source freeze or publication is authorized while this work is unfinished.
 

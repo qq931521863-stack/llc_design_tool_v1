@@ -269,6 +269,32 @@ The catalog also opens measured sinusoidal core-loss CSV comparison and an
 optional bounded 3C90 waveform predictor. It never substitutes that predictor
 for PC40/PC44 or another material. See [magnetic validation (Chinese)](docs/engineering-expansion.md#数据库与磁计算基准).
 
+### Source-backed powder-core selection
+
+The added CSC reference catalog preserves **630 printed part numbers**, **318
+source-specific geometry records**, **1,294 availability rows** and **44 printed
+bias/loss formulas** from the supplied 2025 catalog. These counts are separate:
+a geometry or an availability row is not a manufactured SKU. Three companion
+documents remain separately searchable, including their application example and
+source conflicts. The original PDFs are not bundled as application assets.
+
+Open **PFC → TTPL Engineering / Vienna → 电感设计 → CSC PDF 来源磁环**.
+Search a printed part, inspect its source pages and missing fields, and calculate
+zero-bias inductance or bounded native-unit formula references. **保存磁件工程**,
+**打开磁件工程** and **磁件报告** preserve the selected source snapshot and
+recompute its outputs. The LLC transformer catalog also exposes these records as
+reference data; powder-core geometry does not become a complete ferrite/bobbin
+preset.
+
+Full PFC reference estimation requires an explicit, saved user model declaration
+when the PDFs do not define the loss-flux convention, waveform or application
+range. Defaults remain UNKNOWN. Conflicting identities cannot be overridden by a
+generic declaration, and legacy High Flux coefficients are never silently used.
+The worked 120 kHz / 1 kW document is an arithmetic replay of its own assumptions,
+not a production-solver acceptance case or manufacturer/hardware qualification.
+Current source/consumer and final artifact acceptance are tracked in the
+[validation report](docs/PSD_VALIDATION_REPORT.md).
+
 ### ngspice boundary
 
 The current ngspice layer is a **switching-correlation model**, not a vendor semiconductor sign-off model. It does not claim release-accurate nonlinear Coss commutation, Qrr, switching loss, ringing or SR device stress.

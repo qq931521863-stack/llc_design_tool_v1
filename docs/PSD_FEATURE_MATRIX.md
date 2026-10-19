@@ -2,6 +2,12 @@
 
 ## Latest acceptance additions and corrections (2026-10-19)
 
+- New user requirement: integrated LLC transformer-leakage resonance alongside
+  the existing separate inductor. This is a pending end-to-end item, separate
+  from the original 50 IDs. Physical turns ratio, effective APR ratio, open/short
+  inductances, secondary leakage and physical core flux must remain distinct.
+  Shared magnetic loss/BOM/thermal accounting must not add a nonexistent Lr part.
+
 - T18 parameter suggestions: the optional Lm target must be off by default and
   must not silently carry between topologies or new projects. A real aggregate
   counterexample found the old 0.1 A default changing untargeted Lm. The unchanged
@@ -14,8 +20,10 @@
   aggregate qualification remains a cross-cutting gate, not another topology.
 - New user requirement: complete the CSC magnetic-core selection database from
   four supplied PDFs, including source-specific models, actual selection,
-  calculations, saved identity and reports where the data permits. Extraction and
-  implementation are in progress. This requirement is separate from the original
+  calculations, saved identity and reports where the data permits. Source
+  integration, strict declaration gates and real TTPL/Vienna/LLC consumers are
+  implemented (`d51739d`, `3c07a0f`); 52 focused tests and 20 independent probes
+  pass, with final artifact/aggregate qualification pending. This is separate from the original
   50 IDs; geometry-only data and missing model conventions must not be promoted to
   fully calculable material records through legacy defaults.
 
