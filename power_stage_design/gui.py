@@ -131,6 +131,9 @@ class PowerStageMainWindow(QMainWindow):
         self.result = None; self.loop_result = None; self._loop_settings = None;self.corner_sweep=None;self._sweep_request=None;self._sweep_enabled=False;self._sweep_generation=0
         self._generation = 0; self._loading = False; self._restored_loop = None
         self._exact_inputs = {}; self._exact_loop = {}; self._exact_comp = {}; self._hidden_comp = {}
+        self._exact_topology=None;self._exact_mode=None;self._exact_loop_request={};self._loop_live=False
+        self._open_debounce=(False,False)
+        self._active_open_token=None;self._open_cancel_event=None
         self._loop_generation=0;self._jobs={};self._cancel_events=[];self._synthesis_events=[];self._closing=False;self._restore_corner_request_pending=False
         self._suggestion_generation=0;self._suggestion_events=[]
         self.parameter_proposal=None;self._applied_suggestion=None
@@ -138,6 +141,8 @@ class PowerStageMainWindow(QMainWindow):
         self.database = DeviceDatabase()
         self._timer = QTimer(self); self._timer.setSingleShot(True); self._timer.setInterval(120)
         self._timer.timeout.connect(self.calculate)
+        self._loop_timer=QTimer(self);self._loop_timer.setSingleShot(True);self._loop_timer.setInterval(120)
+        self._loop_timer.timeout.connect(self.analyze_loop)
         toolbar = self.addToolBar("工作区")
         toolbar.addAction("返回工作区", lambda: self.workspace_switch_requested.emit("home"))
         toolbar.addAction("重算", self.calculate)
@@ -169,7 +174,7 @@ class PowerStageMainWindow(QMainWindow):
         self.mode_combo=QComboBox();self.mode_combo.addItem("自动判断 CCM / DCM","auto")
         self.mode_combo.addItem("要求 CCM","ccm");self.mode_combo.addItem("要求 DCM","dcm")
         self.mode_combo.addItem("要求边界模式 BCM","bcm");form.addRow("导通模式",self.mode_combo)
-        self.mode_combo.currentIndexChanged.connect(self.invalidate)
+        self.mode_combo.currentIndexChanged.connect(self._mode_changed)
         self.topology_combo.currentIndexChanged.connect(self._topology_changed)
         self.device_combo=QComboBox();self.device_combo.addItem("未指定器件",None)
         seen=set()
@@ -225,7 +230,12 @@ class PowerStageMainWindow(QMainWindow):
         self.load_preset()
 
     def _topology_changed(self):
+        if not self._loading:self._exact_topology=None
         self._update_input_visibility();self.invalidate(); self.schematic.topology_id=self.topology_combo.currentData();self.schematic.device_keys=frozenset();self.schematic.refresh()
+
+    def _mode_changed(self):
+        if not self._loading:self._exact_mode=None
+        self.invalidate()
 
     def _update_input_visibility(self):
         topology=self.topology_combo.currentData()
@@ -255,19 +265,27 @@ class PowerStageMainWindow(QMainWindow):
         for key in OPTIONAL_INPUTS:
             if values[key]==0:values[key]=None
         if values["primary_output_current_a"]==-1:values["primary_output_current_a"]=None
-        return DesignInputs(topology=self.topology_combo.currentData(),mode=self.mode_combo.currentData(),**values,**self.advanced_model.options())
+        return DesignInputs(topology=self._exact_topology or self.topology_combo.currentData(),
+            mode=self._exact_mode or self.mode_combo.currentData(),**values,**self.advanced_model.options())
 
     def set_inputs(self, inputs):
+        from .topologies import _topology_id
+        index=self.topology_combo.findData(_topology_id(inputs.topology))
+        mode_index=self.mode_combo.findData(inputs.mode.casefold())
+        if index<0 or mode_index<0:raise ValueError("Unknown topology or conduction mode")
         self._loading=True
         try:
-            index=self.topology_combo.findData(inputs.topology)
-            if index<0:raise ValueError("Unknown topology")
             self.topology_combo.setCurrentIndex(index)
             for key,_,scale,_ in INPUT_FIELDS:
                 self.input_widgets[key].setValue((-1 if key=="primary_output_current_a" and getattr(inputs,key) is None else getattr(inputs,key) or 0)*scale)
-            self.mode_combo.setCurrentIndex(self.mode_combo.findData(inputs.mode))
+            self.mode_combo.setCurrentIndex(mode_index)
             self._exact_inputs={key:getattr(inputs,key) for key,_,_,_ in INPUT_FIELDS}
-            self.advanced_model.restore(inputs)
+            self._exact_topology=inputs.topology;self._exact_mode=inputs.mode
+            # Display identity is canonical; raw accepted aliases remain in the
+            # exact input snapshot. An alias must not look like a topology switch
+            # to the advanced editor and silently disable its physical model.
+            from dataclasses import replace
+            self.advanced_model.restore(replace(inputs,topology=_topology_id(inputs.topology)))
         finally:self._loading=False
         self._update_input_visibility();self.invalidate();self._timer.stop();self.calculate()
 
@@ -292,6 +310,8 @@ class PowerStageMainWindow(QMainWindow):
 
     def invalidate(self, *_):
         if self._loading:return
+        self._open_debounce=(False,False)
+        self._loop_timer.stop()
         if hasattr(self,"advanced_model"):self._update_suggestion_visibility()
         self._generation+=1;self._loop_generation+=1
         self._invalidate_suggestions(clear_record=True)
@@ -309,7 +329,7 @@ class PowerStageMainWindow(QMainWindow):
         self._timer.start()
 
     def calculate(self):
-        self._timer.stop();self._generation+=1;self._loop_generation+=1
+        self._timer.stop();self._loop_timer.stop();self._generation+=1;self._loop_generation+=1
         for cancellation in self._cancel_events:cancellation.set()
         self.invalidate_corners()
         self.result=None;self.loop_result=None;self._loop_settings=None
@@ -321,10 +341,11 @@ class PowerStageMainWindow(QMainWindow):
             inputs=self.current_inputs()
         except (ValueError,TypeError,ArithmeticError) as exc:
             self.status.setText("输入无效："+str(exc));return
-        if inputs.topology in {"T20","T21"}:
+        topology=self.topology_combo.currentData()
+        if topology in {"T20","T21"}:
             self.status.setText("此桥型使用既有 LLC 工作区的谐振模型、波形、器件、控制与报告。点击左侧进入；原LLC参数保留，半桥参考匝数30:8、全桥30:4。")
             return
-        if inputs.topology in {"T04","T11","T18"} or inputs.two_switch_options is not None:
+        if topology in {"T04","T11","T18"} or inputs.two_switch_options is not None:
             token=self._generation;event=threading.Event();self._cancel_events.append(event)
             def compute():
                 try:return token,calculate_stage(inputs,cancelled=event.is_set),None
@@ -372,6 +393,9 @@ class PowerStageMainWindow(QMainWindow):
             self._show_suggestion_summary(self._applied_suggestion,result.inputs,"已应用建议；当前结果已重新计算。",result)
         for action in (self.save_action,self.report_action,self.csv_action):action.setEnabled(True)
         self.loop_status.setText("功率级已更新，点击分析以建立本工况的环路结果。")
+        if self._loop_live:
+            self.loop_status.setText("功率级已更新，正在重算当前元件环路…")
+            self._loop_timer.start()
         if self._restore_corner_request_pending:
             self._restore_corner_request_pending=False;self.run_corners()
 
@@ -468,14 +492,15 @@ class PowerStageMainWindow(QMainWindow):
         advanced=hasattr(self,"advanced_model") and self.advanced_model.enabled.isChecked()
         if topology in {"T04","T18"}:scope+=" 此拓扑使用有限漏感模型数值求解；勾选变比时联合求解 L 和 Np/Ns，可能无解或不收敛。"
         if topology=="T18":
+            scope+=" 独立 ΔIm 目标只在明确填写时求解 Lm，否则保留用户 Lm；实际输出与励磁纹波逐项复算。"
             scope+=(" 已启用有限 Coss/Ron 换流模型：每个候选保留实际死区与器件参数，并报告各开关门极时刻 Vds/ZVS 判据；不保证实现 ZVS 或硬件性能。" if advanced
                     else " 理想有限电感模型不验证 ZVS；如需门极时刻换流检查，请在“扩展物理参数”明确提供 Coss/Ron 等参数并启用。")
         if topology=="T11":
             scope+=" QR 固定功率下仅凭最大占空比不能唯一确定变比，需明确反射电压目标。"
             scope+=(" 候选逐次求解所选谷底策略、延迟、节点 Q(V)/C(V) 或常数 C，以及实际开通路径；频率上限和数据覆盖限制保持有效。" if advanced
                     else " 未启用扩展模型时采用恒定 Cnode：正谷底可选谷，反射电压不低于输入时仅支持首个零电压谷底，超出频率上限即报无解。")
-        if topology in {"T15","T16"}:scope+=" 桥型建议限普通 CCM；输出纹波频率为 2×fsw，Np/Ns 的 Ns 指半副边；单管占空比为此比例的一半。"
-        if topology=="T17":scope+=" 全桥建议按实际电荷/磁通平衡求解普通 CCM、联合退磁 CCM/BCM/DCM；输出纹波频率 2×fsw，Ns 指半副边。固定变比时占空比是上限，勾选变比时是实际目标；每项均以最终波形复算。"
+        if topology in {"T15","T16","T17"}:scope+=" 桥型建议按实际电荷/磁通平衡求解普通 CCM、联合退磁 CCM/BCM/DCM；输出纹波频率 2×fsw，Ns 指半副边。固定变比时占空比是上限，勾选变比时是实际目标；每项均以最终波形复算。"
+        if topology=="T15":scope+=" 半桥采用等值分压电容与刚性输入总母线；单个电容纹波须不超过 Vin/2 的10%，磁件仍按名义中点一阶模型。"
         if topology=="T05":
             scope+=(" 两管同时驱动；候选保留 Coss/Ron、体二极管和绕组参数，逐次求解浮空节点与实际 CCM/DCM 周期，不替换为四开关模型。" if advanced
                     else " 两管同时驱动的理想模型仅支持 CCM/BCM；DCM 请在“扩展物理参数”明确提供有限 Coss/Ron 等参数并启用。")
@@ -609,16 +634,21 @@ class PowerStageMainWindow(QMainWindow):
         for key,label,scale in comp_fields:
             box=_number(getattr(Compensator(),key)*scale);self.comp_widgets[key]=box;self._comp_scales[key]=scale;form.addRow(label,box)
         self.ota_output_resistance=QLineEdit();self.ota_output_resistance.setPlaceholderText("留空：按 AOL/gm 推导")
-        form.addRow("OTA 输出电阻 / Ω",self.ota_output_resistance);self.ota_output_resistance.textChanged.connect(self.invalidate_loop)
+        form.addRow("OTA 输出电阻 / Ω",self.ota_output_resistance);self.ota_output_resistance.textChanged.connect(self._request_loop_update)
         self.target_fc=_number(3000);form.addRow("目标交越 / Hz",self.target_fc)
-        self.target_pm=_number(60,maximum=150);form.addRow("目标相位裕量 / °",self.target_pm)
-        self.target_fc.valueChanged.connect(self.invalidate_loop);self.target_pm.valueChanged.connect(self.invalidate_loop)
+        self.target_pm=_number(60,maximum=179.999999);form.addRow("目标相位裕量 / °",self.target_pm)
+        self.preferred_series=QComboBox()
+        for label,value in (("E24",24),("E12",12),("不取整",None)):self.preferred_series.addItem(label,value)
+        form.addRow("建议元件系列",self.preferred_series)
+        self.target_fc.valueChanged.connect(lambda:self._loop_request_changed("target_crossover_hz"))
+        self.target_pm.valueChanged.connect(lambda:self._loop_request_changed("target_phase_margin_deg"))
+        self.preferred_series.currentIndexChanged.connect(lambda:self._loop_request_changed("preferred_series"))
         synth=QPushButton("建议元件并重新验算");synth.clicked.connect(self.synthesize_loop);form.addRow(synth)
         cancel=QPushButton("取消元件搜索");cancel.clicked.connect(self.cancel_synthesis);form.addRow(cancel)
         analyze=QPushButton("分析当前元件");analyze.setObjectName("psd_analyze_loop");analyze.clicked.connect(self.analyze_loop);form.addRow(analyze)
         for key,box in self.loop_widgets.items():box.valueChanged.connect(lambda _value,key=key:self._loop_numeric_changed(key,False))
         for key,box in self.comp_widgets.items():box.valueChanged.connect(lambda _value,key=key:self._loop_numeric_changed(key,True))
-        for combo in (self.loop_control,self.network_combo,self.slope_mode):combo.currentIndexChanged.connect(self.invalidate_loop)
+        for combo in (self.loop_control,self.network_combo,self.slope_mode):combo.currentIndexChanged.connect(self._request_loop_update)
         scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setWidget(settings);scroll.setMinimumWidth(330);split.addWidget(scroll)
         charts=QWidget();charts_layout=QVBoxLayout(charts)
         self.loop_status=QLabel("仅适用于所列模型的 CCM 小信号范围。");self.loop_status.setWordWrap(True);charts_layout.addWidget(self.loop_status)
@@ -643,9 +673,32 @@ class PowerStageMainWindow(QMainWindow):
 
     def _loop_numeric_changed(self,key,comp):
         if not self._loading:(self._exact_comp if comp else self._exact_loop).pop(key,None)
+        self._request_loop_update()
+
+    def _request_loop_update(self,*_):
+        if self._loading or self._closing:return
+        self._open_debounce=(False,False)
+        self._loop_live=True
         self.invalidate_loop()
+        self._loop_timer.start()
+
+    def _loop_request_changed(self,key):
+        if self._loading:return
+        self._exact_loop_request.pop(key,None)
+        self._loop_generation+=1
+        for event in self._synthesis_events:event.set()
+        self._cancel_open_for_edit()
+        # A target is a new request, not a component edit. Retain the current
+        # actual response while preventing an old search from applying itself.
+        self.loop_status.setText("建议目标已改变；当前元件及其实际环路不变，点击建议以求解新目标。")
+
+    def _current_loop_request(self):
+        return {"target_crossover_hz":self._exact_loop_request.get("target_crossover_hz",self.target_fc.value()),
+                "target_phase_margin_deg":self._exact_loop_request.get("target_phase_margin_deg",self.target_pm.value()),
+                "preferred_series":self.preferred_series.currentData()}
 
     def invalidate_loop(self,*_):
+        self._loop_timer.stop()
         self.invalidate_corners()
         self._loop_generation+=1
         for event in self._synthesis_events:event.set()
@@ -673,6 +726,8 @@ class PowerStageMainWindow(QMainWindow):
 
     def analyze_loop(self):
         from .loop import analyze_loop
+        if self._closing:return
+        self._loop_live=True
         self.invalidate_loop()
         try:
             plant,comp=self.loop_parameters();result=analyze_loop(plant,comp)
@@ -695,10 +750,12 @@ class PowerStageMainWindow(QMainWindow):
             self.loop_status.setText(f"元件建议不可用：{exc}");return
         generation=self._loop_generation
         cancel=threading.Event();self._cancel_events.append(cancel);self._synthesis_events.append(cancel)
-        fc,pm=self.target_fc.value(),self.target_pm.value()
+        request=self._current_loop_request()
+        fc,pm=request["target_crossover_hz"],request["target_phase_margin_deg"]
         def compute():
             try:
-                outcome=synthesize_compensator(plant,fc,pm,network=comp.network,template=comp,cancelled=cancel.is_set)
+                outcome=synthesize_compensator(plant,fc,pm,network=comp.network,template=comp,
+                    preferred_series=request["preferred_series"],cancelled=cancel.is_set)
                 return generation,outcome
             except InterruptedError:
                 return generation,None
@@ -721,7 +778,10 @@ class PowerStageMainWindow(QMainWindow):
         if self._closing or not isinstance(key,tuple):return
         kind,token=key
         if kind=="stage" and token==self._generation:self.status.setText("计算失败，结果不可用："+message.splitlines()[-1])
-        if kind=="open" and token==(self._generation,self._loop_generation,self._sweep_generation):self.status.setText("项目未载入，当前设计保留："+message.splitlines()[-1])
+        if kind=="open" and token==(self._generation,self._loop_generation,self._sweep_generation):
+            self._active_open_token=None
+            self.status.setText("项目未载入，当前设计保留："+message.splitlines()[-1])
+            self._resume_open_debounce()
         if kind=="corners" and token==self._sweep_generation:self.corner_status.setText("扫描失败，结果不可用："+message.splitlines()[-1])
 
     def _synthesis_error(self,message):
@@ -732,6 +792,7 @@ class PowerStageMainWindow(QMainWindow):
 
     def cancel_synthesis(self):
         self._loop_generation+=1
+        self._cancel_open_for_edit()
         for event in self._synthesis_events:event.set()
         self.loop_status.setText("已请求取消元件搜索；该搜索的结果不会应用。")
 
@@ -766,6 +827,7 @@ class PowerStageMainWindow(QMainWindow):
 
     def invalidate_corners(self,*_):
         self._sweep_generation+=1;self.corner_sweep=None
+        self._cancel_open_for_edit()
         if hasattr(self,"_sweep_cancel"):self._sweep_cancel.set()
         if hasattr(self,"corner_table"):
             self.corner_table.setRowCount(0);self.corner_status.setText("工况或设计已改变；请重新扫描。")
@@ -833,7 +895,7 @@ class PowerStageMainWindow(QMainWindow):
     def save_to(self,path):
         if self.result is None:raise ValueError("当前没有有效结果，不能保存过期设计")
         device=self.device_combo.currentData()
-        return save_project(self.result.inputs,path,loop_settings=self._loop_settings,selected_device=asdict(device) if device else None,corner_request=asdict(self._parse_corner_request()) if self._sweep_enabled else None,parameter_suggestion=self._applied_suggestion)
+        return save_project(self.result.inputs,path,loop_settings=self._loop_settings,selected_device=asdict(device) if device else None,corner_request=asdict(self._parse_corner_request()) if self._sweep_enabled else None,parameter_suggestion=self._applied_suggestion,loop_request=self._current_loop_request())
 
     def open_from(self,path):
         inputs,document=read_project(path)
@@ -841,7 +903,14 @@ class PowerStageMainWindow(QMainWindow):
 
     def _restore_project(self,inputs,document):
         self._restore_corner_request_pending=False;self._sweep_enabled=False;self._sweep_request=None
+        self._loop_live=False
         self.set_inputs(inputs)
+        request=document.get("loop_request") or {"target_crossover_hz":3000.0,"target_phase_margin_deg":60.0,"preferred_series":24}
+        for widget,key in ((self.target_fc,"target_crossover_hz"),(self.target_pm,"target_phase_margin_deg")):
+            widget.blockSignals(True);widget.setValue(request[key]);widget.blockSignals(False)
+        self.preferred_series.blockSignals(True)
+        self.preferred_series.setCurrentIndex(self.preferred_series.findData(request.get("preferred_series",24)))
+        self.preferred_series.blockSignals(False);self._exact_loop_request=dict(request)
         self._applied_suggestion=document.get("parameter_suggestion")
         if self._applied_suggestion is not None:
             targets=self._applied_suggestion["targets"]
@@ -887,7 +956,7 @@ class PowerStageMainWindow(QMainWindow):
         if self.result is None:raise ValueError("当前没有有效结果，不能导出旧报告")
         device=self.device_combo.currentData()
         return write_report(self.result,path,loop_result=self.loop_result,loop_settings=self._loop_settings,
-                            selected_device=asdict(device) if device else None,device_assessment=self.device_assessment(),corner_sweep=self.corner_sweep,parameter_suggestion=self._applied_suggestion)
+                            selected_device=asdict(device) if device else None,device_assessment=self.device_assessment(),corner_sweep=self.corner_sweep,parameter_suggestion=self._applied_suggestion,loop_request=self._current_loop_request())
 
     def _modal_revision(self):
         if self._closing:
@@ -909,6 +978,7 @@ class PowerStageMainWindow(QMainWindow):
         token=(self._generation,self._loop_generation,self._sweep_generation)
         inputs=self.result.inputs;settings=self._loop_settings
         suggestion=self._applied_suggestion
+        loop_request=self._current_loop_request()
         selected=self.device_combo.currentData()
         device=asdict(selected) if selected else None
         request=asdict(self._parse_corner_request()) if self._sweep_enabled else None
@@ -916,7 +986,7 @@ class PowerStageMainWindow(QMainWindow):
         def compute():
             try:
                 document=project_document(inputs,loop_settings=settings,selected_device=device,
-                    corner_request=request,parameter_suggestion=suggestion,cancelled=event.is_set)
+                    corner_request=request,parameter_suggestion=suggestion,loop_request=loop_request,cancelled=event.is_set)
                 return token,path,document,None
             except (ValueError,OSError,InterruptedError) as exc:return token,path,None,str(exc)
         worker=FunctionWorker(compute);key=("save",id(worker));self._jobs[key]=worker
@@ -946,10 +1016,16 @@ class PowerStageMainWindow(QMainWindow):
         if path and token==self._modal_revision():self._start_project_open(path)
 
     def _start_project_open(self,path):
+        # Pending analysis of the old project must not invalidate this new open
+        # request's generation while its worker is validating the candidate.
+        self._open_debounce=(self._timer.isActive() or self._open_debounce[0],
+                             self._loop_timer.isActive() or self._open_debounce[1])
+        self._timer.stop();self._loop_timer.stop()
         self._invalidate_suggestions()
         self._generation+=1;token=(self._generation,self._loop_generation,self._sweep_generation)
         for cancellation in self._cancel_events:cancellation.set()
         event=threading.Event();self._cancel_events.append(event)
+        self._active_open_token=token;self._open_cancel_event=event
         def compute():
             try:return token,read_project(path,cancelled=event.is_set),None
             except (ValueError,OSError,InterruptedError) as exc:return token,None,str(exc)
@@ -962,8 +1038,24 @@ class PowerStageMainWindow(QMainWindow):
     def _on_project_opened(self,payload):
         token,value,error=payload
         if self._closing or token!=(self._generation,self._loop_generation,self._sweep_generation):return
-        if error:self.status.setText("项目未载入，当前设计保留："+error);return
+        self._active_open_token=None
+        if error:
+            self.status.setText("项目未载入，当前设计保留："+error)
+            self._resume_open_debounce();return
+        self._open_debounce=(False,False)
         self._restore_project(*value)
+
+    def _resume_open_debounce(self):
+        stage,loop=self._open_debounce;self._open_debounce=(False,False)
+        if stage:self._timer.start()
+        elif loop:self._loop_timer.start()
+
+    def _cancel_open_for_edit(self):
+        if self._active_open_token is None:return
+        self._active_open_token=None
+        if self._open_cancel_event is not None:self._open_cancel_event.set()
+        self._resume_open_debounce()
+        self.status.setText("打开请求已因当前工程变化取消；继续计算当前工程。")
 
     def _report_dialog(self):
         token=self._modal_revision()
@@ -990,7 +1082,8 @@ class PowerStageMainWindow(QMainWindow):
 
     def closeEvent(self,event):
         self._invalidate_suggestions()
-        self._timer.stop();self._generation+=1;self._loop_generation+=1;self._closing=True
+        self._timer.stop();self._loop_timer.stop();self._generation+=1;self._loop_generation+=1;self._closing=True
+        self._active_open_token=None;self._open_debounce=(False,False)
         for cancellation in self._cancel_events:cancellation.set()
         self._pool.waitForDone()
         if not self.toolbox.stop_background_work():

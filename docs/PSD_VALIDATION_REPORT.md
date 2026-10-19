@@ -1,5 +1,77 @@
 # Power Stage Designer validation report
 
+## Current re-audit and terminated aggregate run (2026-10-19)
+
+Source `3d2f9fbd020fd0b9513f6f9e5950de5c31dfb38e`: 3502 collected;
+2508 PASS + 1 SKIP recorded before SIGKILL (-9), 1741.417 s. No completed
+JUnit or normal interpreter exit exists. Peak group RSS 4,983,292 KiB, parent
+4,620,500 KiB, lowest sampled system MemAvailable 1,180,168 KiB. The last
+completed case was the i18n translated-start test; termination occurred while
+entering the lifecycle subprocess test. This run is retained as a red resource
+gate, not counted as full success, and OOM causation remains unconfirmed.
+
+Native ownership diagnostics distinguish a real retention path from mere cache:
+three LLC create/close/drop-reference/GC cycles retain three windows, three scenes
+and 24 canvases; three PFC cycles retain three windows and 111 canvases. Explicit
+owned disposal clears all corresponding weakrefs/native wrappers; allocator trim
+alone does not. In actual production controller probes, six workspace caches are
+bounded and reused, but three cancelled Home selectors leave three dialogs and
+Qt event-loop return leaves all six owners alive. Repairs require both test and
+production ownership acceptance, including failure/close/reopen and unrelated
+window controls.
+
+Full-task re-audit correction: previous completion language missed reachable
+T15/T16 inverse modes, T18 Lm targeting, T15 stiff-bus split-cap reconstruction,
+fast tool/loop updates, page-local source provenance, invalid-temperature handling,
+inactive branch inputs, canonical loop restore and saved synthesis intent.
+These are actual implementable requirements, not TI-access limitations.
+
+Current narrow evidence (new development source, aggregate qualification pending):
+- Independent bridge observer: 64 inverse recoveries, 8 node/RMS/charge/energy
+  checks; fixed-bus sum error zero, node KCL residual <=2.09e-17 A, RMS discrepancy
+  <=6.51e-18 A. The observer independently propagates diode states and does not
+  consume the production inverse or author's test oracle. Original wrong bus
+  sum and 1 pF acceptance were reproduced before checking the repair.
+- Bridge owner tests: 202 targeted numeric cases passed with original T17
+  compatibility preserved. This count is separate from the independent observer.
+- Loop/A06: 15 new real Qt tests cover sparse default normalization, actual failed
+  open callback retaining the previous design, exact accepted alias identity,
+  debounce/current arrays, invalid-to-valid recovery, exact request persistence,
+  preferred series, HTML/CLI and legacy absent-request reset. A first collection
+  error using pytest's reserved parameter name was retained then corrected.
+- Toolbox: focused real Qt and legacy input/result-identity checks are passing;
+  heavy restore consumer and final independent review remain in progress.
+
+Final pre-freeze consumer follow-up:
+- 369 toolbox/loop/desktop cases passed (132.290 s); 187 modal/identity/bridge
+  consumers passed (94.994 s). One earlier 197-case run had 196 passes plus an
+  obsolete manual-only loop expectation. Its red log is preserved; the replacement
+  checks actual current 22 kΩ response and that the cancelled synthesis did not
+  apply its components.
+- Independent consumer audit found inactive loop-field type/enum restore, advanced
+  alias options, sparse suggestion defaults and async-open/debounce races. All
+  original counterexamples were replayed after repair; seven final failure/edit
+  branches preserve the correct current model. The expanded focused module is
+  33 passed, 19.417 s, including actual callback failure atomicity.
+- Independent toolbox audit found an additional actual malformed-library partial
+  mutation/stale-export path. Full-update prevalidation and contained device-load
+  failure close it. Five original/category/real-button probes pass; malformed
+  hidden/page-state/source mappings fail closed.
+- Explicit finite-Coss PSFB Lout/Lm/ratio inverse acceptance ran in 456.36 s,
+  18 actual model evaluations. A separately written Radau state/event observer
+  rechecked current extrema, periodicity and output charge. This optional test
+  passed, rather than being counted from its default skip. Its executed observer
+  source and kernel hashes are retained; later import/cache/explicit closure-binding
+  lint edits did not change the physical equations or production kernels.
+- Native lifecycle suite: 24 passed, 72.27 s; repeated controller-drop probe has
+  zero surviving controller weakrefs and zero native top-level roots, with wrapper
+  count stable at 676 across three cycles. An accepted-start test harness initially
+  scheduled quit before outer app.exec; its timeout is retained and corrected by
+  waiting for the real outer-loop entry, with no production workaround.
+
+No result here upgrades TI executable correlation, native Windows/macOS, hardware
+qualification or the whole newly edited source to a completed pass.
+
 ## Evidence levels and source provenance
 
 Software correctness, model validity and hardware correlation are separate.

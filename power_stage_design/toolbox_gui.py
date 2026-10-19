@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 import pyqtgraph as pg
-from PySide6.QtCore import QThreadPool, Signal
+from PySide6.QtCore import QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -66,6 +66,7 @@ from .toolbox_presentation import choice_label, details_text, result_text, statu
 
 INPUT_SCHEMA = "psd-toolbox-inputs-2"
 MAX_INPUT_BYTES = 256_000
+AUTO_UPDATE_DELAY_MS = 75
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,15 @@ def _units_run(v):
     return convert_units(**v)
 
 
+def _filter_run(v):
+    # LC has no source-side capacitor. None records an absent component rather
+    # than silently feeding hidden editor values or a fabricated capacitance.
+    if v["configuration"] == "lc":
+        for key in ("filter_capacitance_f", "filter_esr_ohm", "filter_esl_h"):
+            v.setdefault(key, None)
+    return differential_filter(FilterInputs(**v))
+
+
 # Tool definitions are UI adapters only: all computation is in toolbox.py.
 TOOLS: dict[str, tuple[str, str, list[Field], Callable]] = {
     "X01": ("FET 损耗与器件比较", "主开关 / SR 模型；空白器件数据保持未知。内置器件仅参考数据，导入不补造栅电荷。", _fet_fields(), _fet_run),
@@ -201,7 +211,7 @@ TOOLS: dict[str, tuple[str, str, list[Field], Callable]] = {
         choice("points", "频率点数", 401, [101, 401, 1001, 4001]),
         number("damping_frequency_hz", "阻尼评估频率 / kHz（空=解RC谐振）", None, 1e-3, True),
         number("noise_frequency_hz", "噪声评估频率 / kHz", 500e3, 1e-3), number("ripple_amplitude_v", "同口径噪声幅度 / mV", .015, 1e3),
-        number("limit_dbuv", "噪声限值 / dBµV", 65)], lambda v: differential_filter(FilterInputs(**v))),
+        number("limit_dbuv", "噪声限值 / dBµV", 65)], _filter_run),
     "G04": ("恒功率保持时间（补充）", "恒功率能量关系，复用已有母线电容内核；此算例不能替代 AC/DC 整流电容验收。", [
         number("start_voltage_v", "起始电压 / V", 400), number("end_voltage_v", "结束电压 / V", 300),
         number("input_power_w", "从电容取走的功率 / W", 100), number("hold_time_s", "保持时间 / ms", .02, 1e3)], lambda v: hold_up_capacitance(**v)),
@@ -210,6 +220,7 @@ TOOLS: dict[str, tuple[str, str, list[Field], Callable]] = {
 
 class _InputPage(QWidget):
     changed = Signal()
+    validation_failed = Signal(str)
 
     def __init__(self, tool_id, database, parent=None):
         super().__init__(parent)
@@ -262,27 +273,27 @@ class _InputPage(QWidget):
         self._update_visibility()
         self.changed.emit()
 
+    def inactive_keys(self):
+        """Branch-local editing state is retained, but is not a model input."""
+        if self.tool_id == "X01" and not self.widgets["compare"].isChecked():
+            return {key for key in self.widgets if key.startswith("b_")}
+        if self.tool_id == "X02" and self.widgets["control"].currentData() == "CMC":
+            return {"inductance_h"}
+        if self.tool_id == "X03" and self.widgets["branch_count"].currentData() == 2:
+            return {"c3", "esr3", "esl3"}
+        if self.tool_id == "X07":
+            return ({"high_ohm", "low_ohm"} if self.widgets["operation"].currentData() == "design"
+                    else {"known_arm", "known_resistance_ohm", "series", "parallel"})
+        if self.tool_id == "X12" and self.widgets["configuration"].currentData() == "lc":
+            return {"filter_capacitance_f", "filter_esr_ohm", "filter_esl_h"}
+        return set()
+
     def _update_visibility(self):
-        if self.tool_id == "X01":
-            for key, widget in self.widgets.items():
-                if key.startswith("b_"):
-                    self._form.setRowVisible(widget, self.widgets["compare"].isChecked())
-        elif self.tool_id == "X02":
-            self._form.setRowVisible(self.widgets["inductance_h"], self.widgets["control"].currentData() == "VMC")
-        elif self.tool_id == "X03":
-            for key in ("c3", "esr3", "esl3"):
-                self._form.setRowVisible(self.widgets[key], self.widgets["branch_count"].currentData() == 3)
-        elif self.tool_id == "X07":
-            design = self.widgets["operation"].currentData() == "design"
-            for key in ("known_arm", "known_resistance_ohm", "series", "parallel"):
-                self._form.setRowVisible(self.widgets[key], design)
-            for key in ("high_ohm", "low_ohm"):
-                self._form.setRowVisible(self.widgets[key], not design)
-        elif self.tool_id == "X10":
+        inactive = self.inactive_keys()
+        for key, widget in self.widgets.items():
+            self._form.setRowVisible(widget, key not in inactive)
+        if self.tool_id == "X10":
             self._sync_units()
-        elif self.tool_id == "X12":
-            for key in ("filter_capacitance_f", "filter_esr_ohm", "filter_esl_h"):
-                self._form.setRowVisible(self.widgets[key], self.widgets["configuration"].currentData() == "pi")
 
     def _sync_units(self):
         units = list(UNIT_CATEGORIES[self.widgets["category"].currentData()])
@@ -307,16 +318,18 @@ class _InputPage(QWidget):
         try:
             temperature = float(temperature_text)
             parameters = fet_parameters_from_device(device, temperature)
-        except (ValueError, TypeError):
-            self.widgets[prefix+"_temperature_c"].setText("100")
-            temperature = 100.
-            parameters = fet_parameters_from_device(device, temperature)
-        self.set_values({prefix+"_"+key: value for key, value in asdict(parameters).items()})
+            self.set_values({prefix+"_"+key: value for key, value in asdict(parameters).items()})
+        except (ValueError, TypeError, ArithmeticError) as exc:
+            self.validation_failed.emit(prefix.upper() + " · 结温或器件参数无效，未载入器件：" + str(exc))
+            return
         self.changed.emit()
 
-    def values(self):
+    def values(self, *, active_only=False):
         values = {}
+        inactive = self.inactive_keys() if active_only else set()
         for field in self.fields:
+            if field.key in inactive:
+                continue
             widget = self.widgets[field.key]
             if field.kind == "choice":
                 values[field.key] = widget.currentData()
@@ -331,61 +344,122 @@ class _InputPage(QWidget):
                 else:
                     try:
                         values[field.key] = self._exact_values[field.key] if field.key in self._exact_values else float(text)/field.scale
-                    except ValueError as exc:
+                    except (ValueError, OverflowError) as exc:
                         raise ModelDomainError(field.label + "：请输入有限数字") from exc
+                    if not math.isfinite(values[field.key]):
+                        raise ModelDomainError(field.label + "：请输入有限数字")
         return values
 
-    def set_values(self, values):
+    def snapshot(self):
+        """Typed SI values plus lossless incomplete numeric editor text."""
+        values, raw = {}, {}
+        for field in self.fields:
+            widget = self.widgets[field.key]
+            if field.kind == "choice":
+                values[field.key] = widget.currentData()
+            elif field.kind == "bool":
+                values[field.key] = widget.isChecked()
+            elif field.kind == "text":
+                values[field.key] = widget.text()
+            else:
+                text = widget.text().strip()
+                try:
+                    value = (None if not text and field.optional else
+                             self._exact_values[field.key] if field.key in self._exact_values else float(text)/field.scale)
+                    if value is not None and not math.isfinite(value):
+                        raise ValueError("nonfinite")
+                    values[field.key] = value
+                except (ValueError, OverflowError):
+                    raw[field.key] = widget.text()
+        return {"values": values, **({"raw_inputs": raw} if raw else {})}
+
+    def restore_snapshot(self, snapshot):
+        values, raw = snapshot["values"], snapshot.get("raw_inputs", {})
+        fields = {field.key: field for field in self.fields}
+        if (not isinstance(values, dict) or not isinstance(raw, dict)
+                or set(values) & set(raw) or set(values) | set(raw) != set(fields)):
+            raise ValueError("Invalid toolbox input fields")
+        for key, text in raw.items():
+            if (fields[key].kind != "number" or not isinstance(text, str)
+                    or len(text.encode("utf-16-le")) // 2 > self.widgets[key].maxLength()):
+                raise ValueError("Invalid raw toolbox input")
+        self.set_values(values)
+        self._loading = True
+        try:
+            for key, text in raw.items():
+                self._exact_values.pop(key, None)
+                self.widgets[key].setText(text)
+        finally:
+            self._loading = False
+        self._update_visibility()
+
+    def _validated_text(self, values):
+        """Validate the entire update before changing any live editor state."""
+        if not isinstance(values, dict) or any(not isinstance(key, str) for key in values):
+            raise ValueError("Toolbox inputs must be a field-value object")
         unknown = set(values)-set(self.widgets)
         if unknown:
             raise ValueError("Unknown toolbox inputs: " + ", ".join(sorted(unknown)))
+        category = (values.get("category", self.widgets["category"].currentData())
+                    if self.tool_id == "X10" else None)
+        text = {}
+        for field in self.fields:
+            if field.key not in values:
+                continue
+            widget, value = self.widgets[field.key], values[field.key]
+            if field.kind == "choice":
+                # X10 units must be checked against the proposed category,
+                # without first replacing the current category/unit widgets.
+                options = (UNIT_CATEGORIES[category] if self.tool_id == "X10" and field.key in ("from_unit", "to_unit")
+                           else field.options)
+                if not any(type(option) is type(value) and option == value for option in options):
+                    raise ValueError("Unsupported value/type for " + field.key)
+            elif field.kind == "bool":
+                if not isinstance(value, bool):
+                    raise ValueError(field.key + " requires boolean")
+            elif field.kind == "text":
+                if not isinstance(value, str):
+                    raise ValueError(field.label + "：必须为文字")
+                if len(value.encode("utf-16-le")) // 2 > widget.maxLength():
+                    raise ValueError(field.label + "：文字超出长度上限")
+                text[field.key] = value
+            else:
+                if value is None:
+                    if not field.optional:
+                        raise ValueError(field.label + "：不能为空")
+                elif type(value) not in (int, float):
+                    raise ValueError(field.label + "：请输入有限数字")
+                else:
+                    try:
+                        finite = math.isfinite(value * field.scale)
+                    except OverflowError:
+                        finite = False
+                    if not finite:
+                        raise ValueError(field.label + "：数字超出可表示范围")
+                text[field.key] = "" if value is None else format(float(value)*field.scale, ".15g")
+        return text
+
+    def set_values(self, values):
+        text = self._validated_text(values)
         self._loading = True
         try:
-            # Category first, before setting its units.
+            # Every choice, type and rendered number was checked above.
             if self.tool_id == "X10" and "category" in values:
                 widget = self.widgets["category"]
-                index = widget.findData(values["category"])
-                if index < 0:
-                    raise ValueError("Unknown unit category")
-                widget.setCurrentIndex(index)
+                widget.setCurrentIndex(widget.findData(values["category"]))
                 self._sync_units()
             for field in self.fields:
                 if field.key not in values:
                     continue
                 widget, value = self.widgets[field.key], values[field.key]
                 if field.kind == "choice":
-                    options = [widget.itemData(k) for k in range(widget.count())]
-                    if not any(type(option) is type(value) and option == value for option in options):
-                        raise ValueError("Unsupported value/type for " + field.key)
-                    index = widget.findData(value)
-                    if index < 0:
-                        raise ValueError("Unsupported choice for " + field.key)
-                    widget.setCurrentIndex(index)
+                    widget.setCurrentIndex(widget.findData(value))
                 elif field.kind == "bool":
-                    if not isinstance(value, bool):
-                        raise ValueError(field.key + " requires boolean")
                     widget.setChecked(value)
-                elif field.kind == "text":
-                    if not isinstance(value, str):
-                        raise ValueError(field.label + "：必须为文字")
-                    if len(value.encode("utf-16-le")) // 2 > widget.maxLength():
-                        raise ValueError(field.label + "：文字超出长度上限")
-                    widget.setText(value)
                 else:
-                    if value is None:
-                        if not field.optional:
-                            raise ValueError(field.label + "：不能为空")
-                    elif type(value) not in (int, float):
-                        raise ValueError(field.label + "：请输入有限数字")
-                    else:
-                        try:
-                            finite = math.isfinite(value * field.scale)
-                        except OverflowError:
-                            finite = False
-                        if not finite:
-                            raise ValueError(field.label + "：数字超出可表示范围")
-                    self._exact_values[field.key] = value
-                    widget.setText("" if value is None else format(float(value)*field.scale, ".15g"))
+                    if field.kind == "number":
+                        self._exact_values[field.key] = value
+                    widget.setText(text[field.key])
         finally:
             self._loading = False
         self._update_visibility()
@@ -409,11 +483,15 @@ class ToolBoxWidget(QWidget):
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(1)
         self._pending = False
+        self._restore_pending = False
         self.latest_result: CalculatorResult | None = None
         self._stage_result = None
-        self._imported_stage_id = None
-        self._imported_tool_id = None
-        self._imported_values = {}
+        self._stage_imports = {}
+        self._edited_pages = set()
+        self._auto_timer = QTimer(self)
+        self._auto_timer.setSingleShot(True)
+        self._auto_timer.setInterval(AUTO_UPDATE_DELAY_MS)
+        self._auto_timer.timeout.connect(self.calculate)
         self.database = DeviceDatabase()
         root = QVBoxLayout(self)
         top = QHBoxLayout(); root.addLayout(top)
@@ -437,6 +515,7 @@ class ToolBoxWidget(QWidget):
         for key in TOOLS:
             page = _InputPage(key, self.database)
             page.changed.connect(lambda k=key: self._edited(k))
+            page.validation_failed.connect(lambda message, k=key: self._input_rejected(k, message))
             self.pages[key] = page
             scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setWidget(page)
             self.stack.addWidget(scroll)
@@ -481,14 +560,18 @@ class ToolBoxWidget(QWidget):
         self.stack.setCurrentIndex(self.tool_combo.currentIndex())
         self.description.setText(TOOLS[self.current_tool_id][1])
         self._clear_result("参数准备就绪，请计算。空白器件参数代表未知。")
+        if self.current_tool_id in self._edited_pages:
+            self._schedule_update()
         self._update_import_button()
 
     def _clear_result(self, message):
+        self._auto_timer.stop()
         self._generation += 1
         for worker in self._workers[:]:
             if self._pool.tryTake(worker):
                 self._workers.remove(worker)
         self._pending = False
+        self._restore_pending = False
         self.cancel_button.setEnabled(False)
         self.save_inputs_button.setEnabled(False)
         self.latest_result = None
@@ -498,16 +581,24 @@ class ToolBoxWidget(QWidget):
         self.status.setText(message)
         self.result_changed.emit(None)
 
+    def _schedule_update(self):
+        if not self._closing and not getattr(self.window(), "_closing", False):
+            self._auto_timer.start()
+
     def _edited(self, tool_id):
+        if self._restore_pending:
+            self._cancel_restore("输入已改变，未采用正在校验的文件。")
+        self._edited_pages.add(tool_id)
+        # Only an explicit edit of this page relinquishes its stage binding.
+        self._stage_imports.pop(tool_id, None)
         if tool_id == self.current_tool_id:
-            self._clear_result("输入已改变，旧结果与导出已失效。请重新计算。")
-        # A manual edit never silently keeps a claim that values are identical
-        # to the imported stage; re-import establishes that association again.
-        if tool_id == self._imported_tool_id:
-            self._imported_stage_id = None
-            self._imported_values = {}
-            self._imported_tool_id = None
+            self._clear_result("输入正在编辑，旧结果已失效；有效输入将自动更新。")
+            self._schedule_update()
         self._update_import_button()
+
+    def _input_rejected(self, tool_id, message):
+        if tool_id == self.current_tool_id:
+            self._clear_result("无有效结果：" + message)
 
     def set_values(self, values):
         self.pages[self.current_tool_id].set_values(values)
@@ -517,9 +608,11 @@ class ToolBoxWidget(QWidget):
         previous = self._stage_result
         self._stage_result = result_or_none
         changed = result_or_none is None or previous is None or result_or_none.design_id != previous.design_id
+        if changed and self._restore_pending:
+            self._cancel_restore("功率级已改变，未采用正在校验的文件。")
         # Keep the provenance marker so recalculation cannot turn stale
         # imported numbers into apparently current stage-derived output.
-        if changed and self._imported_stage_id and self.current_tool_id == self._imported_tool_id:
+        if changed and self.current_tool_id in self._stage_imports:
             self._clear_result("功率级已改变，导入参数已过期。请重新导入或手动编辑独立计算。")
         self._update_import_button()
 
@@ -529,15 +622,17 @@ class ToolBoxWidget(QWidget):
     def import_stage(self):
         if self._stage_result is None:
             raise ModelDomainError("没有当前有效功率级结果")
-        values = self.pages[self.current_tool_id].values()
+        widgets = self.pages[self.current_tool_id].widgets
         mapped = stage_import_values(self.current_tool_id, self._stage_result,
-                                     control=values.get("control", "VMC"), role=values.get("role", "main"))
+                                     control=widgets["control"].currentData() if "control" in widgets else "VMC",
+                                     role=widgets["role"].currentData() if "role" in widgets else "main")
         self.pages[self.current_tool_id].set_values(mapped)
-        self._imported_stage_id = self._stage_result.design_id
-        self._imported_tool_id = self.current_tool_id
-        self._imported_values = mapped
+        self._stage_imports[self.current_tool_id] = {
+            "design_id": self._stage_result.design_id, "mapped_inputs": mapped.copy()}
+        self._edited_pages.add(self.current_tool_id)
         labels = {field.key: field.label for field in self.pages[self.current_tool_id].fields}
         self._clear_result("已导入 " + "、".join(labels[key] for key in mapped) + "；其余输入保留，需自行核对。")
+        self._schedule_update()
         return mapped
 
     def _import_clicked(self):
@@ -547,27 +642,30 @@ class ToolBoxWidget(QWidget):
             self._clear_result("无法映射：" + str(exc))
 
     def calculate(self):
+        if self._closing or getattr(self.window(), "_closing", False):
+            return None
         self._clear_result("正在计算…")
         generation = self._generation
         tool_id = self.current_tool_id
         try:
-            if (self._imported_tool_id == tool_id and self._imported_stage_id
-                    and (self._stage_result is None or self._stage_result.design_id != self._imported_stage_id)):
-                raise ModelDomainError("Imported stage inputs are stale; re-import or explicitly edit for independent calculation")
-            values = self.pages[tool_id].values()
+            imported = self._stage_imports.get(tool_id)
+            if (imported and (self._stage_result is None or self._stage_result.design_id != imported["design_id"])):
+                raise ModelDomainError("导入参数已过期 (stale)；请重新导入，或明确手动编辑为独立计算")
+            values = self.pages[tool_id].values(active_only=True)
+            if imported:
+                imported = self._check_import(tool_id, self._page_state(tool_id), require_current=True)
         except (ValueError, TypeError, ArithmeticError) as exc:
             self.status.setText("无有效结果：" + str(exc))
             return None
-        imported = None
-        if self._imported_tool_id == tool_id and self._imported_stage_id:
-            imported = {"design_id": self._imported_stage_id, "mapped_inputs": self._imported_values.copy()}
+        imported = ({"design_id": imported["design_id"], "mapped_inputs": imported["mapped_inputs"].copy()}
+                    if imported else None)
         def compute():
             result = TOOLS[tool_id][3](values.copy())
             return replace(result, inputs={**result.inputs, "stage_import": imported}) if imported else result
         # Large explicit maps run through the established reusable worker.
         # Cancellation discards the result; a bounded CPU calculation may finish
         # in the background, but can never update a newer UI generation.
-        if (tool_id == "X09" and values["bits"] > 12) or (tool_id == "X12" and values["points"] > 1001):
+        if self._heavy_inputs(tool_id, values):
             self._pending = True
             self.cancel_button.setEnabled(True)
             self.status.setText("正在后台计算完整档位/频率数据；可编辑、切换或取消采用结果。")
@@ -590,7 +688,7 @@ class ToolBoxWidget(QWidget):
 
     def _async_ready(self, payload):
         generation, result, error = payload
-        if generation != self._generation:
+        if generation != self._generation or self._closing:
             return
         self._pending = False
         self.cancel_button.setEnabled(False)
@@ -599,8 +697,25 @@ class ToolBoxWidget(QWidget):
             return
         self._apply_result(result)
 
+    @staticmethod
+    def _heavy_inputs(tool_id, values):
+        return (tool_id == "X09" and values["bits"] > 12) or (tool_id == "X12" and values["points"] > 1001)
+
     def cancel_pending(self):
-        self._clear_result("已取消采用结果；后台短计算结束后也不会覆盖当前输入。")
+        if self._restore_pending:
+            self._cancel_restore("已取消打开文件；当前输入与结果保持不变。")
+        else:
+            self._clear_result("已取消采用结果；后台短计算结束后也不会覆盖当前输入。")
+
+    def _cancel_restore(self, message):
+        self._auto_timer.stop()
+        self._generation += 1
+        self._pending = self._restore_pending = False
+        self.cancel_button.setEnabled(False)
+        for worker in self._workers[:]:
+            if self._pool.tryTake(worker):
+                self._workers.remove(worker)
+        self.status.setText(message)
 
     def _apply_result(self, result):
         self.latest_result = result
@@ -684,7 +799,9 @@ class ToolBoxWidget(QWidget):
         # Reuse the project writer's temporary-file/atomic-replace contract.
         return write_json(document, path)
 
-    def open_inputs_from(self, path):
+    def open_inputs_from(self, path, *, background=False):
+        if self._restore_pending:
+            self._cancel_restore("正在检查新文件；先前打开请求已失效。")
         path = Path(path)
         if path.stat().st_size > MAX_INPUT_BYTES:
             raise ValueError("计算器输入文件超过 256 kB；结果导出文件不能作为输入会话")
@@ -707,7 +824,7 @@ class ToolBoxWidget(QWidget):
                 or set(provenance) != {"tool_id", "model_version", "result_id", "status", "source"}
                 or any(not isinstance(value, str) or not value for value in provenance.values())):
             raise ValueError("计算器输入来源记录不完整或无效")
-        self.restore_state(document["state"], expected_provenance=provenance)
+        self.restore_state(document["state"], expected_provenance=provenance, background=background)
 
     def _save_inputs_dialog(self):
         token = self._modal_revision()
@@ -727,61 +844,165 @@ class ToolBoxWidget(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, "打开计算器输入并重算", "", "JSON (*.json)")
         if path and token == self._modal_revision():
             try:
-                self.open_inputs_from(path)
+                self.open_inputs_from(path, background=True)
             except (ValueError, OSError) as exc:
                 self.status.setText("打开失败："+str(exc))
 
-    def state(self):
-        return {"tool_id": self.current_tool_id, "values": self.pages[self.current_tool_id].values(),
-                "stage_import": None if self._imported_tool_id != self.current_tool_id else
-                    {"design_id": self._imported_stage_id, "mapped_inputs": self._imported_values.copy()}}
+    def _page_state(self, tool_id):
+        imported = self._stage_imports.get(tool_id)
+        return {**self.pages[tool_id].snapshot(), "stage_import": None if imported is None else
+                {"design_id": imported["design_id"], "mapped_inputs": imported["mapped_inputs"].copy()}}
 
-    def restore_state(self, state, *, expected_provenance=None):
-        if not isinstance(state, dict) or set(state) != {"tool_id", "values", "stage_import"}:
-            raise ValueError("Invalid toolbox state fields")
-        tool_id, values = state["tool_id"], state["values"]
-        if not isinstance(tool_id, str) or tool_id not in TOOLS or not isinstance(values, dict) or set(values) != {f.key for f in TOOLS[tool_id][2]}:
-            raise ValueError("Invalid toolbox tool or input fields")
-        # Validate choices/types as well as physics in a temporary widget before
-        # mutating the active page. Historical outputs are never accepted.
-        temporary = _InputPage(tool_id, self.database)
+    def state(self):
+        state = {"tool_id": self.current_tool_id, **self._page_state(self.current_tool_id)}
+        others = {key: self._page_state(key) for key in sorted(self._edited_pages | set(self._stage_imports))
+                  if key != self.current_tool_id}
+        if others:
+            state["page_states"] = others
+        return state
+
+    def _check_import(self, tool_id, snapshot, *, require_current):
+        imported = snapshot["stage_import"]
+        if imported is None:
+            return None
+        if not isinstance(imported, dict) or set(imported) != {"design_id", "mapped_inputs"}:
+            raise ValueError("Invalid imported-stage snapshot")
+        mapped = imported["mapped_inputs"]
         try:
-            temporary.set_values(values)
-            checked = temporary.values()
-            result = TOOLS[tool_id][3](checked.copy())
-        finally:
-            temporary.deleteLater()
-        imported = state["stage_import"]
-        if imported is not None:
-            if not isinstance(imported, dict) or set(imported) != {"design_id", "mapped_inputs"}:
-                raise ValueError("Invalid imported-stage snapshot")
-            if (not isinstance(imported["design_id"], str) or not isinstance(imported["mapped_inputs"], dict)
-                    or any(type(value) not in (int, float)
-                           for value in imported["mapped_inputs"].values())):
-                raise ValueError("Invalid imported-stage provenance")
-            if self._stage_result is None or imported["design_id"] != self._stage_result.design_id:
-                raise ValueError("Toolbox import does not match the current stage")
-            mapped = stage_import_values(tool_id, self._stage_result, control=checked.get("control", "VMC"), role=checked.get("role", "main"))
-            if mapped != imported["mapped_inputs"] or any(checked[key] != value for key, value in mapped.items()):
+            finite_mapping = (isinstance(mapped, dict) and bool(mapped)
+                              and all(type(value) in (int, float) and math.isfinite(value) for value in mapped.values()))
+        except OverflowError:
+            finite_mapping = False
+        if (not isinstance(imported["design_id"], str) or not imported["design_id"]
+                or not finite_mapping
+                or any(key not in snapshot["values"] or snapshot["values"][key] != value for key, value in mapped.items())):
+            raise ValueError("Invalid imported-stage provenance")
+        current = self._stage_result is not None and imported["design_id"] == self._stage_result.design_id
+        if require_current and not current:
+            raise ValueError("Toolbox import does not match the current stage")
+        if current:
+            values = snapshot["values"]
+            expected = stage_import_values(tool_id, self._stage_result,
+                                          control=values.get("control", "VMC"), role=values.get("role", "main"))
+            if mapped != expected:
                 raise ValueError("Toolbox mapped values do not match the current stage")
+        # A nonselected stale origin is kept only as an input binding. It cannot
+        # authorize output and will be blocked when that page is revisited.
+        return {"design_id": imported["design_id"], "mapped_inputs": mapped.copy()}
+
+    def _prepare_restore(self, state):
+        required = {"tool_id", "values", "stage_import"}
+        if (not isinstance(state, dict) or not required <= set(state)
+                or set(state) - required - {"raw_inputs", "page_states"}):
+            raise ValueError("Invalid toolbox state fields")
+        tool_id = state["tool_id"]
+        if not isinstance(tool_id, str) or tool_id not in TOOLS:
+            raise ValueError("Invalid toolbox tool")
+        others = state.get("page_states", {})
+        if (not isinstance(others, dict) or tool_id in others
+                or any(key not in TOOLS for key in others)):
+            raise ValueError("Invalid toolbox page states")
+        candidates = {**others, tool_id: {key: state[key] for key in ("values", "stage_import", "raw_inputs") if key in state}}
+        snapshots, imports, legacy_values = {}, {}, None
+        # Prevalidate every field on the GUI thread. No QObject enters the
+        # worker; other pages are retained editing state, never cached results.
+        for key, snapshot in candidates.items():
+            if (not isinstance(snapshot, dict) or not {"values", "stage_import"} <= set(snapshot)
+                    or set(snapshot) - {"values", "stage_import", "raw_inputs"}):
+                raise ValueError("Invalid toolbox page state fields")
+            temporary = _InputPage(key, self.database)
+            try:
+                temporary.restore_snapshot(snapshot)
+                imports[key] = self._check_import(key, snapshot, require_current=key == tool_id)
+                snapshots[key] = {**temporary.snapshot(), "stage_import": imports[key]}
+                if key == tool_id:
+                    checked = temporary.values(active_only=True)
+                    if key == "X12" and set(state) == required and checked["configuration"] == "lc":
+                        legacy_values = temporary.values()
+            finally:
+                temporary.deleteLater()
+        return tool_id, snapshots, imports, checked, legacy_values
+
+    def _compute_restore(self, prepared, expected_provenance):
+        tool_id, _snapshots, imports, checked, legacy_values = prepared
+        result = TOOLS[tool_id][3](checked.copy())
+        imported = imports[tool_id]
+        if imported:
             result = replace(result, inputs={**result.inputs, "stage_import": imported})
+        migrated_lc = False
         if expected_provenance is not None and expected_provenance != self._result_provenance(result):
-            raise ValueError("输入来源与当前模型重算结果不一致；未采用历史结果")
+            legacy_result = None
+            if legacy_values is not None:
+                # Old schema-2 included unused CF values in the input identity.
+                # Freshly verify that identity, then publish absent-CF inputs.
+                legacy_result = TOOLS[tool_id][3](legacy_values.copy())
+                if imported:
+                    legacy_result = replace(legacy_result, inputs={**legacy_result.inputs, "stage_import": imported})
+            if legacy_result is None or expected_provenance != self._result_provenance(legacy_result):
+                raise ValueError("输入来源与当前模型重算结果不一致；未采用历史结果")
+            migrated_lc = True
+        return result, migrated_lc
+
+    def _adopt_restore(self, prepared, computed):
+        tool_id, snapshots, imports, _checked, _legacy = prepared
+        result, migrated_lc = computed
         self.select_tool(tool_id)
-        self.pages[tool_id].set_values(checked)
-        self._imported_tool_id = tool_id if imported else None
-        self._imported_stage_id = imported["design_id"] if imported else None
-        self._imported_values = imported["mapped_inputs"].copy() if imported else {}
-        # Publish only the just-validated calculation, never historical output.
-        # Avoid a second calculation or a partially adopted asynchronous restore.
+        for key, snapshot in snapshots.items():
+            self.pages[key].restore_snapshot(snapshot)
+            if imports[key] is None:
+                self._stage_imports.pop(key, None)
+            else:
+                self._stage_imports[key] = imports[key]
+        self._edited_pages.update(snapshots)
         self._clear_result("输入已恢复，已用当前模型重新计算。")
         self._apply_result(result)
+        if migrated_lc:
+            self.status.setText("已核对旧版 LC 输入并重算；未接入的 CF 保留在编辑器，结果中记为不使用。")
+
+    def restore_state(self, state, *, expected_provenance=None, background=False):
+        """Transactional recomputation; file-open UI requests heavy background work.
+
+        The default remains synchronous for existing programmatic callers.
+        """
+        prepared = self._prepare_restore(state)
+        if not background or not self._heavy_inputs(prepared[0], prepared[3]):
+            self._adopt_restore(prepared, self._compute_restore(prepared, expected_provenance))
+            return
+        self._cancel_restore("正在后台校验并重算文件；成功前保留当前输入与结果，可取消。")
+        generation = self._generation
+        self._pending = self._restore_pending = True
+        self.cancel_button.setEnabled(True)
+
+        def job():
+            try:
+                return generation, prepared, self._compute_restore(prepared, expected_provenance), None
+            except Exception as exc:  # noqa: BLE001 - bounded worker preserves transactional failure and generation
+                return generation, prepared, None, f"{type(exc).__name__}: {exc}"
+
+        worker = FunctionWorker(job)
+        self._workers.append(worker)
+        worker.signals.result.connect(self._restore_ready)
+        worker.signals.finished.connect(lambda w=worker: self._workers.remove(w) if w in self._workers else None)
+        self._pool.start(worker)
+
+    def _restore_ready(self, payload):
+        generation, prepared, computed, error = payload
+        if (generation != self._generation or self._closing
+                or getattr(self.window(), "_closing", False)):
+            return
+        self._pending = self._restore_pending = False
+        self.cancel_button.setEnabled(False)
+        if error:
+            self.status.setText("打开失败，当前输入与结果保持不变：" + error)
+            return
+        self._adopt_restore(prepared, computed)
 
     def stop_background_work(self, timeout_ms=2000):
         """Invalidate/drain this tab's jobs without hiding a reusable tab page."""
+        self._auto_timer.stop()
         self._generation += 1
         was_pending = self._pending
-        self._pending = False
+        self._pending = self._restore_pending = False
         self.cancel_button.setEnabled(False)
         for worker in self._workers[:]:
             if self._pool.tryTake(worker):

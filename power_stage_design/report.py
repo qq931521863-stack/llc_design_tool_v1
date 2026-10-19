@@ -35,11 +35,14 @@ def _curve_svg(t, y, title: str, unit: str, *, logx=False) -> str:
 
 def write_report(result, path: str | Path, *, loop_result=None, loop_settings=None,
                  selected_device=None, device_assessment=None, corner_sweep=None, parameter_suggestion=None,
-                 junction_temperature_c: float | None = None) -> Path:
+                 junction_temperature_c: float | None = None, loop_request=None) -> Path:
     """No cached curves or statistics are accepted independently from result."""
     from .corners import CornerLoopIdentity
     from .devices import assess_component
     from .project import _validate_device
+    if loop_request is not None:
+        from .project import validate_loop_request
+        loop_request=validate_loop_request(loop_request)
     if junction_temperature_c is None:
         junction_temperature_c = corner_sweep.junction_temperature_c if corner_sweep is not None else 100.0
     if (type(junction_temperature_c) not in (int, float)
@@ -94,7 +97,7 @@ def write_report(result, path: str | Path, *, loop_result=None, loop_settings=No
         '<h2>工作点与物理约束</h2>', _table(result.metrics), _table(result.diagnostics)]
     if parameter_suggestion is not None:
         from .suggestions import validate_suggestion_record
-        validate_suggestion_record(parameter_suggestion, result)
+        parameter_suggestion=validate_suggestion_record(parameter_suggestion, result)
         sections += ['<h2>参数建议：目标、来源与实际验算</h2>',
                      '<p>记录为用户应用的模型校核建议；历史数值与当前模型比较容差为 2 ppm 或 1e-9 SI，当前波形另行重算。不表示 TI 软件相关性、器件定型或硬件验证。</p>',
                      '<pre>'+escape(json.dumps(parameter_suggestion, ensure_ascii=False, indent=2, allow_nan=False))+'</pre>']
@@ -118,13 +121,17 @@ def write_report(result, path: str | Path, *, loop_result=None, loop_settings=No
                          _curve_svg(loop_result.frequency_hz,np.unwrap(np.angle(response))*180/np.pi,name+' / deg','Hz',logx=True)]
     else:
         sections += ['<h2>环路状态</h2><p>此报告没有当前工况的有效模拟环路结果。</p>']
+    if loop_request is not None:
+        sections += ['<h2>环路元件建议：用户目标</h2>',
+                     '<p>保存的搜索意图，不表示当前元件已达到目标；实际交越与裕量以上述当前环路复算为准。元件取整后始终重新验算。</p>',
+                     _table(loop_request)]
     if corner_sweep is not None:
         sections += ['<h2>逐指标多工况极值</h2>', '<p>'+escape(corner_sweep.evidence_scope)+'</p>',
                      _table(asdict(corner_sweep.request)),_table(corner_sweep.extrema),
                      '<p>point_id 标识完整工况，包括环路参数；design_id 只标识功率级。同一功率级可对应不同 C2/ESR/DCR 的环路工况。下列逐点记录保留实际 SI 参数，不把环路 C2 合并进理想功率级 C1。</p>',
                      '<pre>'+escape(json.dumps(asdict(corner_sweep),ensure_ascii=False,indent=2,allow_nan=False))+'</pre>']
     snapshot = {'inputs':asdict(result.inputs),'design_id':result.design_id,'model_revision':result.model_version,'framework_model_revision':MODEL_REVISION,
-                'metrics':result.metrics,'stress':result.stress,'loop_settings':loop_settings,
+                'metrics':result.metrics,'stress':result.stress,'loop_settings':loop_settings,'loop_request':loop_request,
                 'parameter_suggestion':parameter_suggestion, 'selected_device':selected_device,
                 'junction_temperature_c':junction_temperature_c, 'device_assessment':device_assessment,
                 'component_assessments':component_assessments}

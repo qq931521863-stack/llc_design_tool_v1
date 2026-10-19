@@ -29,3 +29,16 @@ The listed component constants are illustrative test inputs, not vendor data or
 recommended hardware. Inspect their source fields and model assumptions. Restore
 recomputes the numerical model and may take tens of seconds; reports include all
 branch evidence and can be several megabytes.
+
+## Explicit bridge component-target examples
+
+- `half-bridge-dcm-suggestion.json`: T15 light-load joint-magnetic DCM,
+  finite equal split capacitors on a stiff total bus, actual Lout/Lm/ratio targets.
+- `push-pull-joint-ccm-suggestion.json`: T16 partial joint demagnetization in CCM.
+- `psfb-magnetizing-suggestion.json`: ideal finite-Llk PSFB with explicit output
+  and magnetizing ripple targets and an actual phase-duty target.
+
+Each includes the applied source/target/change record and is recomputed on open.
+These are model-validation examples, not component or transformer recommendations.
+The finite-Coss PSFB inverse is a separate opt-in model and may take minutes; its
+input options and cancellation remain explicit.

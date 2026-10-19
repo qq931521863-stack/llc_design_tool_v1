@@ -488,6 +488,32 @@ def _forward(inputs: DesignInputs, topology_id: str) -> StageResult:
                             "magnetizing_ripple_pp_a": imag,"discharge_fraction": discharge})
 
 
+_HALF_BRIDGE_SPLIT_ASSUMPTION = (
+    "Equal split input capacitors: iCsplit1=-ip/2 and iCsplit2=ip/2, with their voltages summing to Vin. "
+    "Current slopes and primary voltage use the nominal Vin/2 midpoint; reconstructed capacitor voltages "
+    "must stay positive with peak-to-peak ripple no greater than 10% of Vin/2. Midpoint ripple is not fed back into the magnetic states."
+)
+
+
+def _bridge_split_capacitors(inputs: DesignInputs, primary_current: Waveform) -> dict[str, DeviceWaveforms]:
+    """Equal series-capacitor node KCL with a stiff total DC-bus voltage."""
+    devices = {}
+    # Primary current enters the midpoint. Ctop+Cbottom therefore carries ip,
+    # while d(Vtop+Vbottom)/dt=0: the two positive-plate currents are opposite.
+    # The source current is then Q1+iCtop=(Q1+Q2)/2, not its cycle average.
+    for key, scale, reference in (("Csplit1", -.5, "input positive to midpoint"),
+                                  ("Csplit2", .5, "midpoint to input return")):
+        current = primary_current.affine(scale=scale, reference="into split-capacitor positive plate")
+        voltage = capacitor_voltage(current, inputs.transfer_capacitance_f, inputs.vin_v/2, reference)
+        stats = voltage.statistics()
+        if stats["min"] <= 0:
+            raise ModelDomainError(f"Half Bridge {key} reconstructed voltage reaches or crosses zero; increase split capacitance or use a dynamic midpoint model")
+        if stats["peak_to_peak"] > .1*(inputs.vin_v/2):
+            raise ModelDomainError(f"Half Bridge {key} ripple exceeds 10% of Vin/2; the fixed-midpoint model is outside its domain")
+        devices[key] = DeviceWaveforms("Split DC-input capacitor", current, voltage)
+    return devices
+
+
 def _bridge(inputs: DesignInputs, topology_id: str) -> StageResult:
     """Symmetric PWM bridges with center-tapped secondary.
 
@@ -548,14 +574,13 @@ def _bridge(inputs: DesignInputs, topology_id: str) -> StageResult:
         devices["primary2"] = DeviceWaveforms("Second center-tapped primary half",q2,vp.affine(scale=-1))
         del devices["primary"]
     if half:
-        for key,q in (("Csplit1",q1),("Csplit2",q2)):
-            cap_current = q.affine(scale=-1,offset=supply.statistics()["mean"])
-            devices[key] = DeviceWaveforms("Split DC-input capacitor",cap_current,capacitor_voltage(cap_current,inputs.transfer_capacitance_f,vin/2))
+        devices.update(_bridge_split_capacitors(inputs, ip))
     return _finish(inputs,topology_id,mode,duty,devices,supply,il,vf*inputs.iout_a,
                    assumptions=("fsw is a full bipolar bridge period; output-inductor ripple frequency is 2*fsw. Each main switch conducts D/2 of a full period.",
                                 "Center-tapped secondary; n=Np/Ns uses one secondary half. Push-pull Np is one primary half.",
                                 "Both main diagonals are off during freewheel; secondary current imbalance sustains magnetizing flux. Symmetric device blocking-voltage sharing is assumed.",
-                                "This result uses the ordinary CCM branch; joint magnetic-state CCM/BCM/DCM is resolved separately. Commutation, leakage and parasitic ringing are outside these ideal bridge branches."),
+                                "This result uses the ordinary CCM branch; joint magnetic-state CCM/BCM/DCM is resolved separately. Commutation, leakage and parasitic ringing are outside these ideal bridge branches.")
+                               + ((_HALF_BRIDGE_SPLIT_ASSUMPTION,) if half else ()),
                    diagnostics={"inductor_mean_voltage_v":vl.statistics()["mean"],"transformer_mean_voltage_v":vp.statistics()["mean"]},
                    metrics={"per_switch_duty":duty/2,"rectified_ripple_frequency_hz":2*inputs.fsw_hz,"magnetizing_ripple_pp_a":imag})
 
@@ -1242,14 +1267,13 @@ def _bridge_demagnetizing(inputs: DesignInputs, topology_id: str) -> StageResult
         devices["primary2"]=DeviceWaveforms("Second primary half",q2,vp.affine(scale=-1))
         del devices["primary"]
     if half:
-        for key,q in (("Csplit1",q1),("Csplit2",q2)):
-            current=q.affine(scale=-1,offset=source.statistics()["mean"])
-            devices[key]=DeviceWaveforms("Split DC-input capacitor",current,capacitor_voltage(current,inputs.transfer_capacitance_f,vin/2))
+        devices.update(_bridge_split_capacitors(inputs, ip))
     return _finish(inputs,topology_id,mode,duty,devices,source,il,vf*inputs.iout_a,
-                   assumptions=("Full bipolar bridge period is 1/fsw; output ripple repeats at 2*fsw. Center-tapped secondary n uses one secondary half.",
+                   assumptions=("Full bipolar bridge period is 1/fsw; output ripple repeats at 2*fsw. Center-tapped secondary n uses one secondary half; Push-pull Np is one primary half.",
                                 "Each half-cycle explicitly resolves on, two-diode freewheel, single-diode Lm/output-L demagnetization and any zero-current idle interval.",
                                 "During single-diode demagnetization the effective secondary inductance is Lout+Lm/n². Magnetizing and output currents are not independently clipped.",
-                                "Primary leakage, nonlinear capacitances, switching transitions and body-diode clamp states are excluded; symmetric blocking-voltage sharing is assumed."),
+                                "Primary leakage, nonlinear capacitances, switching transitions and body-diode clamp states are excluded; symmetric blocking-voltage sharing is assumed.")
+                               + ((_HALF_BRIDGE_SPLIT_ASSUMPTION,) if half else ()),
                    diagnostics={"inductor_mean_voltage_v":vl.statistics()["mean"],"transformer_mean_voltage_v":vp.statistics()["mean"]},
                    metrics={"per_switch_duty":duty/2,"rectified_ripple_frequency_hz":2*inputs.fsw_hz,
                             "secondary_demagnetization_fraction":2*ts*inputs.fsw_hz,"idle_fraction":2*idle*inputs.fsw_hz})

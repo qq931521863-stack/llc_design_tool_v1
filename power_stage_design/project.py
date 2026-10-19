@@ -42,28 +42,29 @@ def write_json(document: dict, path: str | Path) -> Path:
 
 def save_project(inputs: DesignInputs, path: str | Path, *, loop_settings: dict | None = None,
                  selected_device: dict | None = None, corner_request: dict | None = None,
-                 parameter_suggestion: dict | None = None) -> Path:
+                 parameter_suggestion: dict | None = None, loop_request: dict | None = None) -> Path:
     return write_json(project_document(inputs, loop_settings=loop_settings,
-        selected_device=selected_device, corner_request=corner_request, parameter_suggestion=parameter_suggestion), path)
+        selected_device=selected_device, corner_request=corner_request,
+        parameter_suggestion=parameter_suggestion, loop_request=loop_request), path)
 
 
 def project_document(inputs: DesignInputs, *, loop_settings: dict | None = None,
                      selected_device: dict | None = None, corner_request: dict | None = None,
-                     parameter_suggestion: dict | None = None, cancelled=None) -> dict:
+                     parameter_suggestion: dict | None = None, loop_request: dict | None = None,
+                     cancelled=None) -> dict:
     """Validate a snapshot without writing, so expensive checks can run off the UI thread."""
     result = calculate_stage(inputs, cancelled=cancelled)
     if loop_settings is not None:
-        from .loop import Compensator, LoopPlant, analyze_loop
-        plant = LoopPlant(**loop_settings["plant"])
-        _check_loop_identity(inputs, plant)
-        analyze_loop(plant, Compensator(**loop_settings["compensator"]))
+        loop_settings = _canonical_loop_settings(inputs, loop_settings)
+    if loop_request is not None:
+        loop_request = validate_loop_request(loop_request)
     if selected_device is not None:
         _validate_device(selected_device)
     if corner_request is not None:
         corner_request = _validate_corners(corner_request, inputs, loop_settings)
     if parameter_suggestion is not None:
         from .suggestions import validate_suggestion_record
-        validate_suggestion_record(parameter_suggestion, result)
+        parameter_suggestion=validate_suggestion_record(parameter_suggestion, result)
     if cancelled and cancelled():
         raise InterruptedError("Project save cancelled")
     return {
@@ -73,7 +74,7 @@ def project_document(inputs: DesignInputs, *, loop_settings: dict | None = None,
         "result_identity": result.design_id,
         "result_policy": "Historical identity only; always recompute on restore",
         "loop_settings": loop_settings, "selected_device": selected_device, "corner_request": corner_request,
-        "parameter_suggestion": parameter_suggestion,
+        "parameter_suggestion": parameter_suggestion, "loop_request": loop_request,
     }
 
 
@@ -108,18 +109,13 @@ def read_project(path: str | Path, *, cancelled=None) -> tuple[DesignInputs, dic
     suggestion = document.get("parameter_suggestion")
     if suggestion is not None:
         from .suggestions import validate_suggestion_record
-        validate_suggestion_record(suggestion, result)
+        document["parameter_suggestion"]=validate_suggestion_record(suggestion, result)
     settings = document.get("loop_settings")
     if settings is not None:
-        from .loop import Compensator, LoopPlant, analyze_loop
-        if not isinstance(settings, dict) or set(settings) != {"plant", "compensator"}:
-            raise ValueError("Invalid saved loop settings")
-        try:
-            plant, compensator = LoopPlant(**settings["plant"]), Compensator(**settings["compensator"])
-        except (TypeError, KeyError) as exc:
-            raise ValueError("Invalid loop parameter fields") from exc
-        _check_loop_identity(inputs, plant)
-        analyze_loop(plant, compensator)
+        settings = _canonical_loop_settings(inputs, settings)
+        document["loop_settings"] = settings
+    if document.get("loop_request") is not None:
+        document["loop_request"] = validate_loop_request(document["loop_request"])
     selected = document.get("selected_device")
     if selected is not None:
         _validate_device(selected)
@@ -127,6 +123,62 @@ def read_project(path: str | Path, *, cancelled=None) -> tuple[DesignInputs, dic
     if corners is not None:
         document["corner_request"] = _validate_corners(corners, inputs, settings)
     return inputs, document
+
+
+def _canonical_loop_settings(inputs, settings):
+    """Return the exact validated dataclasses, including accepted defaults.
+
+    Validation and restoration must consume the same parameter set. Returning
+    the sparse input dictionary used to let defaulted fields pass analysis and
+    then fail in the GUI after replacing the active stage.
+    """
+    from .loop import Compensator, LoopPlant, analyze_loop
+
+    if not isinstance(settings, dict) or set(settings) != {"plant", "compensator"}:
+        raise ValueError("Invalid saved loop settings")
+    try:
+        plant = LoopPlant(**settings["plant"])
+        compensator = Compensator(**settings["compensator"])
+    except (TypeError, KeyError) as exc:
+        raise ValueError("Invalid loop parameter fields") from exc
+    # The active model does not consume every stored field (e.g. VMC does not
+    # use sense_gain). All fields are nevertheless restored by the desktop, so
+    # validate their representation before it replaces any existing project.
+    enums = {"topology":{"buck","boost","inverting_buck_boost","flyback","forward"},
+             "control_mode":{"vmc","peak_cmc"},"slope_mode":{"fixed","multiplier"},
+             "network":{"type_ii","type_ii_gm","type_iii","isolated_zener","isolated_inner"}}
+    for model in (plant,compensator):
+        for key,value in asdict(model).items():
+            if key in enums:
+                if not isinstance(value,str) or value not in enums[key]:
+                    raise ValueError(f"Invalid loop {key}")
+            elif key=="output_resistance_ohm" and value is None:
+                continue
+            elif type(value) not in (int,float) or not math.isfinite(value):
+                raise ValueError(f"Invalid loop {key}: a finite numeric value is required")
+    _check_loop_identity(inputs, plant)
+    analyze_loop(plant, compensator)
+    return {"plant": asdict(plant), "compensator": asdict(compensator)}
+
+
+def validate_loop_request(request):
+    """Preserve synthesis intent separately from achieved controller evidence."""
+    keys = {"target_crossover_hz", "target_phase_margin_deg"}
+    if not isinstance(request, dict) or not keys <= set(request) or set(request) - keys - {"preferred_series"}:
+        raise ValueError("Invalid loop synthesis request")
+    for key in keys:
+        value = request[key]
+        if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+            raise ValueError(f"Invalid {key}: a finite positive target is required")
+    if request["target_phase_margin_deg"] >= 180:
+        raise ValueError("Target phase margin must be below 180 degrees")
+    # A target above the model's useful band can be saved as intent. Only the
+    # actual synthesis action determines reachability; a saved request is not
+    # evidence that the current compensator achieves it.
+    series = request.get("preferred_series", 24)
+    if series is not None and (type(series) is not int or series not in (12, 24)):
+        raise ValueError("Preferred series must be E12, E24, or unrounded")
+    return {**request, "preferred_series": series}
 
 
 def _validate_corners(corners, inputs=None, loop_settings=None):

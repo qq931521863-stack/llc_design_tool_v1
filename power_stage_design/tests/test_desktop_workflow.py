@@ -412,7 +412,17 @@ def test_edit_or_cancel_discards_actual_inflight_synthesis(app, window, edit):
         window.cancel_synthesis()
     _drain_synthesis(app, window)
     QTest.qWait(180)
-    assert window.loop_result is None
+    if edit == "compensator":
+        # The old optimization must not apply. Fast current-R/C analysis now
+        # refreshes automatically and must represent the user's 22 kΩ edit.
+        from power_stage_design.loop import analyze_loop
+        assert window.loop_result is not None
+        plant, comp = window.loop_parameters()
+        assert comp.r2_ohm == 22000
+        np.testing.assert_array_equal(window.loop_result.loop_response,
+                                      analyze_loop(plant, comp).loop_response)
+    else:
+        assert window.loop_result is None
     assert {key: widget.value() for key, widget in window.comp_widgets.items()} == before
     if edit == "stage":
         assert window.result.inputs.vin_v == 13.

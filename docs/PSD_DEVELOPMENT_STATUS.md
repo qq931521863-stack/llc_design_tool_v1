@@ -18,10 +18,38 @@ save/restore, reports and same-source formula PDF. The
 report/corner temperature mismatch is repaired and independently verified. A05
 real C99/FRA/LLC/PFC export boundaries are independently accepted after the fixes.
 
+## Active full-matrix repair and aggregate resource gate
+
+The frozen priority snapshot `3d2f9fbd020fd0b9513f6f9e5950de5c31dfb38e`
+collected 3502 cases but its single-process pytest child exited by SIGKILL (-9)
+after 2508 passes and 1 skip. There was no assertion failure before termination,
+but this is **not a completed regression**. Peak process-tree RSS was 4,983,292 KiB;
+parent peak was 4,620,500 KiB. A kernel OOM cause is not proven.
+
+Independent full-task re-audit found ten actual remaining model/consumer gaps.
+They are being repaired in `feat/psd-baseline-completion`, based on that frozen
+snapshot, with the original qualification tree unchanged. The current matrix
+repair section distinguishes numerical kernel checks, actual consumer checks and
+remaining aggregate/artifact gates. Previous blanket enhancement/baseline
+completion statements are superseded by this specific re-audit.
+
+Ownership probes established that close-only test cleanup retained native LLC/PFC
+owners and their canvases despite GC. Real workspace switching deliberately reuses
+one instance of each workspace, but Home selector cancellation leaked transient
+dialogs and application event-loop return omitted explicit shutdown. The repair
+must prove both bounded reuse and destruction of discarded/exit-owned objects;
+allocator trimming or split-process test counts alone cannot establish a fix.
+
+The identified matrix/consumer repairs and independent counterexample replays are
+now complete. Lifecycle focused tests pass; exact-source aggregate qualification
+remains the next gate. Next: checkpoint exact source; run complete configured regression with RSS/object lifetime evidence,
+opt-in long switched-PFC GUI, then newly built wheel and real Linux freeze. Native
+Windows/macOS and TI executable correlation remain separate unrun gates.
+
 ## 9.9.0 integration
 
-The M0–M5 implementation and follow-on requirement repairs are integrated for
-release qualification. The maintained scope is the [50-ID matrix](PSD_FEATURE_MATRIX.md);
+The M0–M5 implementation exists; the new full-matrix repair cycle remains active
+before fresh release qualification. The maintained scope is the [50-ID matrix](PSD_FEATURE_MATRIX.md);
 its bounded-model statuses are not a declaration of complete TI equivalence.
 Native Windows/macOS release tests and frozen executable proofs are separate
 publication gates, recorded by the release workflow and its public proof assets.

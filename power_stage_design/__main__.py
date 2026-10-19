@@ -28,7 +28,7 @@ def main():
                 selected_device=_validate_device(selected) if selected else None)
         output=write_report(calculate_stage(inputs),args.report,loop_result=loop,loop_settings=settings,
             selected_device=document.get("selected_device"),corner_sweep=sweep,
-            parameter_suggestion=document.get("parameter_suggestion"))
+            parameter_suggestion=document.get("parameter_suggestion"),loop_request=document.get("loop_request"))
         print(output);return 0
     import sys
 

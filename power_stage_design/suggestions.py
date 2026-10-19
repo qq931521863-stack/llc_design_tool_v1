@@ -15,7 +15,7 @@ from .topologies import _topology_id, _validate, calculate_stage
 
 RATIO_TOPOLOGIES = frozenset({"T09", "T10", "T12", "T13", "T14", "T15", "T16", "T17"})
 TWO_INDUCTOR_TOPOLOGIES = frozenset({"T06", "T07", "T08", "T19"})
-MAGNETIZING_TOPOLOGIES = frozenset({"T12", "T13", "T14", "T15", "T16", "T17"})
+MAGNETIZING_TOPOLOGIES = frozenset({"T12", "T13", "T14", "T15", "T16", "T17", "T18"})
 NUMERICAL_TOPOLOGIES = frozenset({"T04", "T11", "T18"})
 SUGGESTION_VERSION = "volt-second-targets-1"
 
@@ -205,7 +205,7 @@ def suggest_parameters(inputs: DesignInputs, targets: SuggestionTargets, *, canc
     if targets.secondary_ripple_pp_a is not None and topology not in TWO_INDUCTOR_TOPOLOGIES:
         raise ModelDomainError("This topology has no separately sized second inductor")
     if targets.magnetizing_ripple_pp_a is not None and topology not in MAGNETIZING_TOPOLOGIES:
-        raise ModelDomainError("Separate Lm sizing is available only for Forward/PWM bridges; for Flyback/Fly-Buck use the main ripple target, and PSFB retains its supplied Lm")
+        raise ModelDomainError("Separate Lm sizing is available only for Forward/PWM/phase-shift bridges; for Flyback/Fly-Buck use the main ripple target")
     if targets.size_turns_ratio and topology not in RATIO_TOPOLOGIES | NUMERICAL_TOPOLOGIES:
         raise ModelDomainError("This nonisolated topology has no transformer ratio to size")
     if targets.reflected_voltage_v is not None and (topology != "T11" or not targets.size_turns_ratio):
@@ -218,16 +218,27 @@ def suggest_parameters(inputs: DesignInputs, targets: SuggestionTargets, *, canc
     ]
     vin, vo, vf, fs, ripple = inputs.vin_v, inputs.vout_v, inputs.diode_drop_v, inputs.fsw_hz, targets.ripple_pp_a
     candidate = inputs
-    if topology == "T17":
-        from .bridge_sizing import size_full_bridge
-        result = size_full_bridge(inputs, ripple, max_duty=targets.max_duty,
+    if topology in {"T15", "T16", "T17"}:
+        from .bridge_sizing import size_symmetric_bridge
+        result = size_symmetric_bridge(inputs, ripple, max_duty=targets.max_duty,
                                   magnetizing_ripple_pp_a=targets.magnetizing_ripple_pp_a,
                                   size_turns_ratio=targets.size_turns_ratio, cancelled=cancelled)
         candidate = result.inputs
         assumptions.extend((
-            "Full Bridge sizing resolves ordinary CCM, partial joint Lout/Lm demagnetization, BCM and DCM from charge/flux balance; actual full-period waveforms recheck every target.",
+            "Symmetric PWM bridge sizing resolves ordinary CCM, partial joint Lout/Lm demagnetization, BCM and DCM from charge/flux balance; actual full-period waveforms recheck every target.",
             "At fixed Np/Ns maximum duty is an upper bound; when sizing Np/Ns it is the actual duty target. Lm changes only when its ripple is targeted.",
             "Symmetric center-tapped-secondary/open-primary model only; supplied capacitances are retained. Leakage, switching transitions, asymmetric timing and body-diode clamp states are not added.",
+        ))
+    elif topology == "T18":
+        from .psfb_sizing import size_phase_shifted_bridge
+        result = size_phase_shifted_bridge(inputs,ripple,max_duty=targets.max_duty,
+            magnetizing_ripple_pp_a=targets.magnetizing_ripple_pp_a,
+            size_turns_ratio=targets.size_turns_ratio,cancelled=cancelled)
+        candidate=result.inputs
+        assumptions.extend((
+            "PSFB sizing uses the selected finite-inductance or explicit finite-Coss/Ron periodic model; actual full-period Lo and Lm extrema recheck targets.",
+            "Lm is changed only for an explicit magnetizing ripple target. At fixed Np/Ns maximum phase duty is an upper bound; joint ratio sizing makes it a target.",
+            "Supplied commutation parameters are retained; target recovery does not establish hardware ZVS or TI-executable equivalence.",
         ))
     elif topology in NUMERICAL_TOPOLOGIES or inputs.two_switch_options is not None:
         if targets.size_turns_ratio and topology in {"T04", "T18"}:
@@ -288,22 +299,6 @@ def suggest_parameters(inputs: DesignInputs, targets: SuggestionTargets, *, canc
             if targets.magnetizing_ripple_pp_a is not None:
                 candidate = replace(candidate, magnetizing_inductance_h=vin*duty/(fs*targets.magnetizing_ripple_pp_a))
             assumptions.append("Output L uses the forward secondary pulse; Lm uses primary Vin * on-time / ΔIm. Reset time is checked by the production model.")
-        elif topology in {"T15", "T16", "T17"}:
-            amplitude = vin/2 if topology == "T15" else vin
-            if amplitude/n <= vo+vf:
-                raise ModelDomainError("Bridge secondary pulse cannot support the output voltage")
-            duty = n*(vo+vf)/amplitude
-            if ripple >= 2*inputs.iout_a:
-                raise ModelDomainError("PWM bridge suggestion currently sizes strict CCM only; reduce output ripple below 2*Iout, or size the demagnetizing/DCM branch manually")
-            inductance = (amplitude/n-vo-vf)*duty/(2*fs*ripple)
-            if targets.magnetizing_ripple_pp_a is not None:
-                candidate = replace(candidate, magnetizing_inductance_h=amplitude*duty/(2*fs*targets.magnetizing_ripple_pp_a))
-            if candidate.magnetizing_inductance_h is None:
-                raise ModelDomainError("Specify Lm or a magnetizing ripple target")
-            im = amplitude*duty/(2*fs*candidate.magnetizing_inductance_h)
-            if inputs.iout_a-ripple/2 < n*im/2:
-                raise ModelDomainError("PWM bridge target enters the magnetizing-demagnetization branch; reduce output/magnetizing ripple or increase Lm. Automatic sizing covers ordinary CCM only")
-            assumptions.append("PWM bridge output ripple repeats at 2*fsw. Lm peak-to-peak ripple = primary amplitude * D/(2*fsw*Lm); ordinary CCM branch only.")
         elif topology == "T19":
             second = targets.secondary_ripple_pp_a
             if second is None:
@@ -383,10 +378,10 @@ def validate_suggestion_record(record: dict, result: StageResult) -> dict:
         ratio = result.inputs.turns_ratio_np_ns
         if topology in {"T09", "T10"}:
             expected_ratio = vin*targets.max_duty/((vo+vf)*(1-targets.max_duty))
-        elif topology == "T17":
+        elif topology in {"T15", "T16", "T17"}:
             expected_ratio = ratio
             if not math.isclose(result.duty, targets.max_duty, rel_tol=2e-6, abs_tol=1e-9):
-                raise ValueError("Full Bridge ratio proposal no longer meets its actual duty target")
+                raise ValueError("PWM Bridge ratio proposal no longer meets its actual duty target")
         elif topology in RATIO_TOPOLOGIES:
             expected_ratio = (vin/2 if topology == "T15" else vin)*targets.max_duty/(vo+vf)
         elif topology == "T11" and targets.reflected_voltage_v is not None:
@@ -416,4 +411,6 @@ def validate_suggestion_record(record: dict, result: StageResult) -> dict:
                        and math.isclose(saved, fresh, rel_tol=2e-6, abs_tol=1e-9))
         if not matches:
             raise ValueError("Parameter-suggestion achieved values do not match current recomputation")
-    return record
+    # Accepted dataclass defaults must be the exact fields restored by the GUI,
+    # not a sparse original mapping that can fail after replacing the stage.
+    return {**record,"targets":asdict(targets)}

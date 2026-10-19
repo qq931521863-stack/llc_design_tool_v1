@@ -629,7 +629,7 @@ def convert_units(value: float, category: str, from_unit: str, to_unit: str) -> 
 class FilterInputs:
     inductance_h: float
     converter_capacitance_f: float
-    filter_capacitance_f: float
+    filter_capacitance_f: float | None
     damping_capacitance_f: float
     damping_resistance_ohm: float
     input_voltage_v: float
@@ -638,8 +638,8 @@ class FilterInputs:
     inductor_srf_hz: float = 1e6
     converter_esr_ohm: float = .01
     converter_esl_h: float = 0.0
-    filter_esr_ohm: float = .01
-    filter_esl_h: float = 0.0
+    filter_esr_ohm: float | None = .01
+    filter_esl_h: float | None = 0.0
     damping_esr_ohm: float = .01
     damping_esl_h: float = 0.0
     minimum_frequency_hz: float = 10.0
@@ -659,14 +659,16 @@ def differential_filter(inputs: FilterInputs) -> CalculatorResult:
     LC omits CF: noise→other-side current attenuation is then unity for this
     ideal current-source model; source→converter voltage still has LC filtering.
     """
+    if inputs.configuration not in ("lc", "pi"):
+        raise ModelDomainError("configuration must be lc or pi")
     positive = {"inductance_h", "converter_capacitance_f", "filter_capacitance_f", "damping_capacitance_f",
                 "input_voltage_v", "inductor_srf_hz", "minimum_frequency_hz", "maximum_frequency_hz", "noise_frequency_hz", "ripple_amplitude_v"}
     for key, value in asdict(inputs).items():
         if key in ("points", "configuration", "damping_frequency_hz", "limit_dbuv"):
             continue
+        if inputs.configuration == "lc" and key in ("filter_capacitance_f", "filter_esr_ohm", "filter_esl_h"):
+            continue
         _number(key, value, positive=key in positive, nonnegative=True)
-    if inputs.configuration not in ("lc", "pi"):
-        raise ModelDomainError("configuration must be lc or pi")
     if isinstance(inputs.points, bool) or not isinstance(inputs.points, int) or not 16 <= inputs.points <= 10000:
         raise ModelDomainError("Frequency points must be an integer 16–10000")
     if inputs.maximum_frequency_hz <= inputs.minimum_frequency_hz:
@@ -674,7 +676,8 @@ def differential_filter(inputs: FilterInputs) -> CalculatorResult:
     _number("limit_dbuv", inputs.limit_dbuv)
     i = inputs
     cin = CapacitorBranch(i.converter_capacitance_f, i.converter_esr_ohm, i.converter_esl_h)
-    cf = CapacitorBranch(i.filter_capacitance_f, i.filter_esr_ohm, i.filter_esl_h)
+    cf = (CapacitorBranch(i.filter_capacitance_f, i.filter_esr_ohm, i.filter_esl_h)
+          if i.configuration == "pi" else None)
     cd = CapacitorBranch(i.damping_capacitance_f, i.damping_resistance_ohm+i.damping_esr_ohm, i.damping_esl_h)
     cl = 1/(i.inductance_h*(2*math.pi*i.inductor_srf_hz)**2)
     def parallel(*zs):
@@ -687,7 +690,8 @@ def differential_filter(inputs: FilterInputs) -> CalculatorResult:
     def calc(f):
         s = 2j*math.pi*f
         zl = (i.inductor_dcr_ohm+s*i.inductance_h)/(1+s*cl*(i.inductor_dcr_ohm+s*i.inductance_h))
-        zi, zf, zd = cin.impedance(f), cf.impedance(f), cd.impedance(f)
+        zi, zd = cin.impedance(f), cd.impedance(f)
+        zf = cf.impedance(f) if cf is not None else None
         shunt = parallel(zi, zd)
         return {"noise_to_other": 1+0j if i.configuration == "lc" else zf/(zf+zl),
                 "other_to_noise_undamped": zi/(zi+zl), "other_to_noise_damped": shunt/(shunt+zl),
