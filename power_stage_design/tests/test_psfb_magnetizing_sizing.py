@@ -119,6 +119,41 @@ def test_targets_from_independent_event_integrator_recover_components(mode, size
             assert getattr(result.inputs, field.name) == getattr(source, field.name)
 
 
+@pytest.mark.parametrize("current_scale", [1e-3, 1., 1e3])
+@pytest.mark.parametrize("target_lm", [False, True])
+@pytest.mark.parametrize("ripple_offset,mode", [
+    (-1e-6, "CCM"), (-1e-12, "BCM"), (0., "BCM"), (1e-12, "BCM"), (1e-6, "DCM"),
+])
+def test_boundary_target_roundoff_keeps_physical_mode_across_current_scales(current_scale, target_lm, ripple_offset, mode):
+    p = example()
+    p = replace(p, iout_a=p.iout_a*current_scale, inductance_h=p.inductance_h/current_scale,
+                magnetizing_inductance_h=p.magnetizing_inductance_h/current_scale,
+                leakage_inductance_h=p.leakage_inductance_h/current_scale)
+    ripple, magnetic, duty, load = reference(p, "BCM")
+    p = replace(p, iout_a=load)
+    source = replace(p, inductance_h=1.7*p.inductance_h, turns_ratio_np_ns=3.5,
+                     magnetizing_inductance_h=2*p.magnetizing_inductance_h if target_lm else p.magnetizing_inductance_h)
+    result = size_phase_shifted_bridge(source, ripple*(1+ripple_offset), max_duty=duty,
+        magnetizing_ripple_pp_a=magnetic if target_lm else None, size_turns_ratio=True)
+    assert result.mode == mode
+    assert result.stress["L1"]["current_pp_a"] == pytest.approx(ripple*(1+ripple_offset), rel=2e-6)
+    assert result.duty == pytest.approx(duty, rel=2e-6)
+    assert abs(result.diagnostics["output_capacitor_mean_current_a"])/load < 1e-10
+    assert abs(result.diagnostics["modeled_power_balance_w"])/(p.vout_v*load) < 1e-10
+    if mode == "BCM":
+        assert result.inputs.inductance_h == pytest.approx(p.inductance_h, rel=1e-10)
+        assert result.inputs.turns_ratio_np_ns == pytest.approx(p.turns_ratio_np_ns, rel=1e-10)
+        assert result.inputs.magnetizing_inductance_h == pytest.approx(p.magnetizing_inductance_h, rel=1e-10)
+        assert result.stress["L1"]["current_min_a"] == 0.
+        assert result.metrics["idle_fraction"] == 0.
+    elif mode == "DCM":
+        assert result.stress["L1"]["current_min_a"] == 0.
+        assert result.metrics["idle_fraction"] > 0.
+    else:
+        assert result.stress["L1"]["current_min_a"] > 0.
+        assert result.metrics["commutation_time_s"] > 0.
+
+
 @pytest.mark.parametrize("mode", ["CCM", "BCM", "DCM"])
 def test_missing_lm_can_be_sized_from_an_explicit_absolute_target(mode):
     p = example(.1 if mode == "DCM" else 5.)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -105,6 +106,42 @@ class _ReferenceCycle:
         return float(total)
 
 
+def _assert_reference_residual(cycle):
+    """Re-evaluate Kirchhoff state and quadrature charge, never cached fun/qtf.
+
+    MINPACK may report stagnation after reaching roundoff. Its success flag is
+    neither necessary nor sufficient: retain the original absolute 1e-10 A
+    budget and also bound each dimensionless residual to 1e-10. State closure
+    is scaled by cycle current; output charge by the requested load, so a
+    large ripple cannot conceal a poor light-load charge solution.
+    """
+    assert np.isfinite([cycle.on, cycle.off, cycle.initial_current]).all()
+    assert 0 < cycle.on < 1 and 0 < cycle.off < 1, "nonphysical conduction intervals"
+    closure = cycle.peak_current + cycle.slopes_per_period[1]*cycle.off - cycle.initial_current
+    residual = np.asarray([closure, cycle.moment("output") - cycle.circuit.iout])
+    scales = [max(abs(cycle.initial_current), abs(cycle.peak_current), cycle.circuit.iout),
+              cycle.circuit.iout]
+    assert np.isfinite(residual).all()
+    assert np.linalg.norm(residual) < 1e-10, f"absolute circuit residual: {residual}"
+    assert np.max(np.abs(residual)/scales) < 1e-10, f"normalized circuit residual: {residual/scales}"
+
+
+def _assert_physical_reference(cycle):
+    """Admit only a diode-compatible periodic orbit with power balance."""
+    _assert_reference_residual(cycle)
+    assert cycle.initial_current >= 0 and cycle.peak_current > 0, "negative diode current"
+    assert cycle.slopes_per_period[0] > 0 > cycle.slopes_per_period[1]
+    if cycle.mode == "DCM":
+        assert cycle.initial_current == 0 and cycle.on + cycle.off < 1, "invalid DCM idle interval"
+    else:
+        assert cycle.on + cycle.off == 1, "invalid continuous conduction interval"
+    c = cycle.circuit
+    power_in = c.vin * cycle.moment("input")
+    power_out = c.vout*c.iout + c.diode_drop*cycle.moment("diode")
+    assert abs(power_in-power_out)/power_out < 1e-10, "nonphysical power balance"
+    return cycle
+
+
 def _solve_circuit(circuit):
     """Solve periodic state + capacitor charge, trying CCM before DCM.
 
@@ -118,12 +155,12 @@ def _solve_circuit(circuit):
         return (closure, cycle.moment("output") - circuit.iout)
 
     continuous = root(residual_ccm, (.5, circuit.iout), tol=1e-11)
-    assert continuous.success, continuous.message
-    assert np.linalg.norm(residual_ccm(continuous.x)) < 1e-10
     on, initial = continuous.x
+    _assert_reference_residual(_ReferenceCycle(circuit, on, 1. - on, initial, "CCM"))
     if initial >= -1e-10:
         mode = "BCM" if abs(initial) < 1e-10 else "CCM"
-        return _ReferenceCycle(circuit, float(on), 1. - float(on), max(0., float(initial)), mode)
+        return _assert_physical_reference(
+            _ReferenceCycle(circuit, float(on), 1. - float(on), max(0., float(initial)), mode))
 
     def residual_dcm(unknown):
         on, off = unknown
@@ -132,11 +169,8 @@ def _solve_circuit(circuit):
         return (closure, cycle.moment("output") - circuit.iout)
 
     discontinuous = root(residual_dcm, (max(float(on) / 2, .01), max((1. - float(on)) / 2, .01)), tol=1e-11)
-    assert discontinuous.success, discontinuous.message
-    assert np.linalg.norm(residual_dcm(discontinuous.x)) < 1e-10
     on, off = discontinuous.x
-    assert on > 0 and off > 0 and on + off < 1
-    return _ReferenceCycle(circuit, float(on), float(off), 0., "DCM")
+    return _assert_physical_reference(_ReferenceCycle(circuit, float(on), float(off), 0., "DCM"))
 
 
 GOLDEN_CIRCUITS = (
@@ -144,6 +178,56 @@ GOLDEN_CIRCUITS = (
     _Circuit("boost", 24., 48., 2., 100e3, 100e-6),
     _Circuit("flyback", 48., 12., 1., 100e3, 1e-3, 4.),
 )
+
+
+@pytest.mark.parametrize("circuit", GOLDEN_CIRCUITS, ids=lambda c: c.topology)
+@pytest.mark.parametrize("load_multiplier", [1., .005])
+def test_reference_accepts_stagnated_root_only_after_independent_checks(monkeypatch, circuit, load_multiplier):
+    solver = root
+    calls = []
+
+    def stagnated(*args, **kwargs):
+        solved = solver(*args, **kwargs)
+        calls.append(solved.x)
+        # Reproduce MINPACK's status-5 roundoff result without depending on OS.
+        # Deliberately misleading cached residuals must not affect validation.
+        return SimpleNamespace(x=solved.x, success=False, status=5,
+                               fun=np.ones(2), qtf=np.ones(2), message="stagnation")
+
+    monkeypatch.setattr(f"{__name__}.root", stagnated)
+    cycle = _solve_circuit(replace(circuit, iout=circuit.iout*load_multiplier))
+    assert cycle.mode == ("CCM" if load_multiplier == 1. else "DCM")
+    assert len(calls) == (1 if cycle.mode == "CCM" else 2)
+    _assert_physical_reference(cycle)
+
+
+@pytest.mark.parametrize("success", [False, True])
+@pytest.mark.parametrize("unknown", [[.5, 10.], [1.1, 4.], [float("nan"), 4.]])
+def test_reference_rejects_bad_root_regardless_of_status_and_zero_cached_residual(monkeypatch, unknown, success):
+    fake = SimpleNamespace(x=np.asarray(unknown), success=success, fun=np.zeros(2), qtf=np.zeros(2))
+    monkeypatch.setattr(f"{__name__}.root", lambda *args, **kwargs: fake)
+    with pytest.raises(AssertionError):
+        _solve_circuit(GOLDEN_CIRCUITS[1])
+
+
+def test_reference_normalization_rejects_small_absolute_but_bad_charge_residual():
+    c = GOLDEN_CIRCUITS[0]
+    cycle = _ReferenceCycle(c, .1, .14, 0., "DCM")
+    cycle = replace(cycle, circuit=replace(c, iout=cycle.moment("output")+5e-11))
+    with pytest.raises(AssertionError, match="normalized circuit residual"):
+        _assert_reference_residual(cycle)
+
+
+@pytest.mark.parametrize("on,off,initial,mode,reason", [
+    (.5, .7, 0., "DCM", "invalid DCM idle interval"),
+    (5/12, 7/12, -.01, "CCM", "negative diode current"),
+])
+def test_zero_residual_does_not_override_diode_or_interval_constraints(on, off, initial, mode, reason):
+    cycle = _ReferenceCycle(GOLDEN_CIRCUITS[0], on, off, initial, mode)
+    cycle = replace(cycle, circuit=replace(cycle.circuit, iout=cycle.moment("output")))
+    _assert_reference_residual(cycle)
+    with pytest.raises(AssertionError, match=reason):
+        _assert_physical_reference(cycle)
 
 
 @pytest.mark.parametrize("circuit", GOLDEN_CIRCUITS, ids=lambda c: c.topology)

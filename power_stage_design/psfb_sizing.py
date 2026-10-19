@@ -32,6 +32,19 @@ def _cancel(cancelled):
         raise InterruptedError("PSFB parameter suggestion cancelled")
 
 
+def _discontinuous_target(load, ripple):
+    """Diode-secondary BCM has DeltaIo = 2*Io; larger ripple implies DCM.
+
+    Charge/event integration can place an exact boundary on either side of
+    this equality. Use the forward model's 1e-11 relative boundary budget,
+    with no fixed ampere floor, before selecting the inverse branch. Otherwise
+    roundoff alone can trigger a 10% CCM ratio seed change and leave a spurious
+    positive current at the nonlinear solver's looser convergence tolerance.
+    The final forward calculation still checks the actual mode and balances.
+    """
+    return ripple >= 2*load or math.isclose(ripple, 2*load, rel_tol=1e-11, abs_tol=0.)
+
+
 def _seed(inputs, ripple, duty, magnetic, ratio):
     """Charge/flux seed; exact only for the ideal diode-secondary DCM/BCM.
 
@@ -48,7 +61,7 @@ def _seed(inputs, ripple, duty, magnetic, ratio):
     if ratio:
         n = ((inputs.vin_v*duty*h-lk*magnetic)/(u*conduction*h) if magnetic is not None
              else inputs.vin_v*duty/((1+lk/lm)*u*conduction))
-        if ripple < 2*inputs.iout_a:
+        if not _discontinuous_target(inputs.iout_a, ripple):
             n *= .9  # Start below the no-overlap phase limit; solve actual duty.
     if n <= 0:
         raise ModelDomainError("No PSFB ratio solution: leakage volt-seconds for the requested magnetizing ripple consume the phase pulse")
@@ -215,7 +228,7 @@ def size_phase_shifted_bridge(
         seeds.append(_seed(inputs, ripple_pp_a, max_duty, magnetic, size_turns_ratio))
     except ModelDomainError as exc:
         seed_error = exc
-    if inputs.psfb_options is None and ripple_pp_a >= 2*inputs.iout_a:
+    if inputs.psfb_options is None and _discontinuous_target(inputs.iout_a, ripple_pp_a):
         if seed_error is not None:
             raise seed_error
         result = calculate_stage(seeds[0], cancelled=cancelled)
