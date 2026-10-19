@@ -4,15 +4,47 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 
-from PySide6.QtCore import Signal, Qt, QSignalBlocker
+from PySide6.QtCore import QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QFormLayout, QHBoxLayout, QHeaderView, QLabel,
-    QPlainTextEdit, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QAbstractItemView,
+    QComboBox,
+    QFormLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ...optimization.sweep import OptimizationConfig
 from ...optimization.two_stage import DEFAULT_WEIGHTS
+
+
+class _StatusScrollArea(QScrollArea):
+    """Keep complete diagnostics reachable without growing the desktop frame."""
+
+    def __init__(self, label):
+        super().__init__()
+        self.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self.setWidget(label)
+
+    def minimumSizeHint(self):
+        return QSize(super().minimumSizeHint().width(), self.widget().fontMetrics().lineSpacing())
+
+    def sizeHint(self):
+        # Re-evaluate real font metrics instead of a platform-specific pixel cap.
+        lines = self.widget().fontMetrics().lineSpacing()
+        return QSize(super().sizeHint().width(), 3 * lines)
 
 
 class TwoStageOptimizationView(QWidget):
@@ -63,7 +95,9 @@ class TwoStageOptimizationView(QWidget):
             button.clicked.connect(lambda _checked=False, signal=signal: signal.emit()); actions.addWidget(button)
         layout.addLayout(actions)
         self.status = QLabel("尚未运行")
-        self.status.setWordWrap(True); layout.addWidget(self.status)
+        self.status.setWordWrap(True)
+        self.status_scroll = _StatusScrollArea(self.status)
+        layout.addWidget(self.status_scroll)
         headers = ("状态", "Ln", "Q", "fr / kHz", "Np:Ns", "器件 / SR", "验证点最坏损耗 W", "验证点最低效率 %", "ZVS 裕量", "FHA↔TD", "原因 / 来源")
         self.table = QTableWidget(0, len(headers)); self.table.setHorizontalHeaderLabels(headers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)

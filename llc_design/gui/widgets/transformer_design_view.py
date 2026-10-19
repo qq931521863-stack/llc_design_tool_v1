@@ -141,6 +141,9 @@ class TransformerDesignView(QWidget):
         title.setStyleSheet(f"font-size:18px;font-weight:700;color:{theme.active_theme().text_strong};")
         subtitle = QLabel("规格书磁芯参数 → 自动匝数 / 0.1 mm Litz → 绕组、磁芯损耗与工况校核")
         subtitle.setStyleSheet(f"color:{theme.active_theme().text_muted};")
+        # A descriptive sentence must wrap rather than set the minimum width
+        # of every workspace tab, including while this page is hidden.
+        subtitle.setWordWrap(True)
         header.addWidget(title); header.addWidget(subtitle); header.addStretch(1)
         self.run_btn = QPushButton("自动设计变压器")
         self.run_btn.setStyleSheet("font-weight:600;padding:6px 16px;")

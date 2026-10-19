@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -591,11 +590,11 @@ class LLCMainWindow(QMainWindow):
         self.detail_wave_button.clicked.connect(lambda: self.run_waveforms(True))
         self.small_signal_button.clicked.connect(lambda: self.run_small_signal({}))
         action_layout.addWidget(self.run_button)
-        row = QHBoxLayout()
-        row.addWidget(self.fast_wave_button)
-        row.addWidget(self.hb_wave_button)
-        row.addWidget(self.detail_wave_button)
-        action_layout.addLayout(row)
+        # Keep each solver action reachable at the dock's minimum width,
+        # including native fonts with wider glyphs and scroll-bar metrics.
+        action_layout.addWidget(self.fast_wave_button)
+        action_layout.addWidget(self.hb_wave_button)
+        action_layout.addWidget(self.detail_wave_button)
         action_layout.addWidget(self.small_signal_button)
         layout.addWidget(actions)
         layout.addStretch(1)
