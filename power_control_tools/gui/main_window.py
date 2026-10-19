@@ -117,6 +117,7 @@ class SliderSpin(QWidget):
 class ControlToolsMainWindow(QMainWindow):
     workspace_switch_requested = Signal(str)
     digital_design_updated = Signal(object, str)
+    digital_design_invalidated = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -171,11 +172,12 @@ class ControlToolsMainWindow(QMainWindow):
             pr = self.workspace_pages.currentWidget() is self.pr_view
             self.export_action.setEnabled(self.pr_view.export_button.isEnabled() if pr else enabled)
 
-    def _invalidate_design(self, *, clear_plots=False):
+    def _invalidate_design(self, *, clear_plots=False, reason="Control Tools inputs changed; recalculation pending"):
         self._design_generation += 1
         self.current_analog = None
         self.current_digital = None
         self.current_analysis = None
+        self.digital_design_invalidated.emit(reason)
         self._set_export_enabled(False)
         for output in (self.live_hs, self.live_hz, self.coeff, self.tf, self.c99):
             output.clear()
@@ -448,6 +450,7 @@ class ControlToolsMainWindow(QMainWindow):
     def recalculate(self):
         self.timer.stop()
         if hasattr(self, "workspace_pages") and self.workspace_pages.currentWidget() is self.pr_view:
+            self._invalidate_design(reason="Control Tools current page is not the linked controller designer")
             self.pr_view.recalculate()
             self._set_export_enabled(False)
             return
@@ -471,7 +474,7 @@ class ControlToolsMainWindow(QMainWindow):
             for canvas in (self.bode_canvas, self.step_canvas, self.imp_canvas, self.pz_canvas, self.gd_canvas):
                 canvas.setEnabled(True)
         except Exception as exc:
-            self._invalidate_design(clear_plots=True)
+            self._invalidate_design(clear_plots=True, reason="Control Tools ERROR: " + str(exc))
             self.live_hz.setPlainText("ERROR: " + str(exc)); self.status.setText("ERROR: " + str(exc))
 
     def _render(self):

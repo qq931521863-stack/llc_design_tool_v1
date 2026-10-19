@@ -11,6 +11,7 @@ from llc_design.user_messages import show_operation_issue
 from llc_design.i18n import t
 
 import math
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -48,6 +49,7 @@ from ...control.digital_loop import (
     CommandTimingConfig,
     ControllerKind,
     DigitalLoopAnalysis,
+    DigitalTransferFunction,
     FMLUTMode,
     FrequencyModulatorLUT,
     PIControllerConfig,
@@ -145,6 +147,10 @@ class DigitalLoopView(QWidget):
         root.addLayout(external_row)
         self._external_controller = None
         self._external_controller_label = ""
+        self._external_controller_live = True
+        self._external_controller_metadata = None
+        self._external_sample_time_s = None
+        self._external_period_locked = False
 
         self._diagram_blocks = [
             BlockSpec("sum", "Σ", "Vref − Vfb", 15, 20, 82, 62),
@@ -203,7 +209,8 @@ class DigitalLoopView(QWidget):
                 widget.toggled.connect(self.invalidate_analysis)
             elif isinstance(widget, QPlainTextEdit) and not widget.isReadOnly():
                 widget.textChanged.connect(self.invalidate_analysis)
-        self.external_controller_check.toggled.connect(self.invalidate_analysis)
+        self._local_sample_us = self.sample_us.value()
+        self.external_controller_check.toggled.connect(self._external_mode_changed)
         self.codegen_button.setEnabled(False)
 
     def resizeEvent(self, event):
@@ -779,27 +786,113 @@ class DigitalLoopView(QWidget):
         for widget in (self.b0, self.b1, self.b2, self.a1, self.a2):
             widget.setEnabled(kind == ControllerKind.TWO_P_TWO_Z)
 
-    def set_external_controller(self, digital, label: str = "") -> None:
-        """Link the exact H(z) currently designed in Control Tools."""
-        self._external_controller = digital
-        self._external_controller_label = label or getattr(digital, "name", "Control Tools")
-        self.external_controller_check.setEnabled(True)
-        self.external_controller_check.setChecked(True)
-        fs = float(getattr(digital, "sample_rate_hz"))
-        self.sample_us.setValue(1.0e6 / fs)
-        self.external_controller_status.setText(
-            f"已联动：{self._external_controller_label} | Fs={fs/1e3:.3f} kHz | "
-            f"H(z) 系数直接用于 LLC 小信号闭环"
-        )
-        # Same-Fs, same-checkbox replacement still changes the actual b/a.
+    def _external_mode_changed(self, *_args) -> None:
+        selected = self.external_controller_check.isChecked()
+        if selected:
+            if not self._external_period_locked:
+                self._local_sample_us = self.sample_us.value()
+            self._external_period_locked = True
+            with QSignalBlocker(self.sample_us):
+                self.sample_us.setDecimals(12)
+                if self._external_sample_time_s is not None:
+                    value = self._external_sample_time_s * 1e6
+                    self.sample_us.setRange(min(.5, value), max(1000., value))
+                    self.sample_us.setValue(value)
+        elif self._external_period_locked:
+            self._external_period_locked = False
+            with QSignalBlocker(self.sample_us):
+                self.sample_us.setRange(.5, 1000.)
+                self.sample_us.setDecimals(3)
+                self.sample_us.setValue(self._local_sample_us)
+        self.sample_us.setReadOnly(selected)
+        self.sample_us.setSuffix(" µs（外部锁定）" if selected else " µs")
+        self.sample_us.setToolTip(
+            "外部精确 H(z) 的 Fs 决定控制器、功率级与 ADC 周期；取消外部模式可恢复内部周期。"
+            if selected else "LLC 内部控制器周期")
+        if not selected:
+            self.external_controller_status.setText("LLC 内部控制器；外部 H(z) 未启用")
+        elif self._external_controller is None:
+            self.external_controller_status.setText(
+                "外部 live H(z) 尚无有效当前结果；请到 Control Tools 重新计算，或取消勾选使用内部控制器。")
+        else:
+            self.external_controller_status.setText(
+                self._external_controller_label + f"\nTs={self._external_sample_time_s*1e6:.12g} µs（外部锁定）"
+                + ("" if self._external_controller_live else
+                   "；重新联动：取消勾选，再到 Control Tools 点击“重新计算”。"))
+        self.set_busy(self._busy)
         self.invalidate_analysis()
+
+    def set_external_controller(self, digital, label: str = "", *, live: bool = True,
+                                captured_at_utc: str | None = None,
+                                local_sample_time_s: float | None = None,
+                                sample_time_s: float | None = None) -> None:
+        """Use exact coefficients, with an explicit live or detached-snapshot owner."""
+        from ...control.design_session import controller_fingerprint
+        sample_time_s = 1.0 / digital.sample_rate_hz if sample_time_s is None else sample_time_s
+        native = DigitalTransferFunction(digital.b, digital.a, sample_time_s, name=digital.name)
+        self._external_controller = digital
+        self._external_sample_time_s = native.sample_time_s
+        self._external_controller_live = live
+        source = label or getattr(digital, "name", "Control Tools")
+        captured = (datetime.now(timezone.utc).isoformat(timespec="seconds")
+                    if live else captured_at_utc)
+        self._external_controller_metadata = {
+            "mode": "snapshot", "source": source, "captured_at_utc": captured,
+            "sha256": controller_fingerprint(native),
+        }
+        ownership = "Control Tools live" if live else "Saved independent H(z) snapshot"
+        self._external_controller_label = (
+            f"{ownership}: {source} | captured UTC={captured or 'unknown (legacy session)'} | "
+            f"SHA256={self._external_controller_metadata['sha256']}"
+        )
+        self.external_controller_check.setText(
+            "使用 Control Tools 当前 H(z)" if live else "使用已保存的独立 H(z) 快照")
+        self.external_controller_check.setToolTip(
+            "自动跟随 Control Tools 当前控制器；来源失效时必须重新计算。" if live else
+            "独立快照不会跟随 Control Tools 编辑。重新联动：取消此勾选，再进入 Control Tools 点击“重新计算”。")
+        self.external_controller_check.setEnabled(True)
+        with QSignalBlocker(self.external_controller_check):
+            self.external_controller_check.setChecked(True)
+        self._external_mode_changed()
+        if local_sample_time_s is not None:
+            self._local_sample_us = local_sample_time_s * 1e6
+        self.external_controller_status.setText(
+            f"{self._external_controller_label}\nFs={1/sample_time_s:.12g} Hz | "
+            f"Ts={sample_time_s*1e6:.12g} µs（外部锁定） | 精确 b/a 直接用于 LLC / ADC / C99"
+            + ("" if live else "\n独立快照；重新联动：取消勾选，再到 Control Tools 点击“重新计算”。")
+        )
+
+    def invalidate_external_controller(self, reason: str) -> None:
+        if not self._external_controller_live:
+            return  # Independent saved snapshots have no live-editor lifetime.
+        self._external_controller = None
+        self._external_controller_metadata = None
+        self._external_controller_label = ""
+        if self.external_controller_check.isChecked():
+            self.external_controller_status.setText(
+                f"外部 live H(z) 不可用：{reason}。等待有效来源，或取消外部模式使用内部控制器。")
+            self.set_busy(self._busy)
+            self.invalidate_analysis()
+
+    def clear_external_controller(self) -> None:
+        with QSignalBlocker(self.external_controller_check):
+            self.external_controller_check.setChecked(False)
+        self._external_controller = None
+        self._external_controller_label = ""
+        self._external_controller_metadata = None
+        self._external_controller_live = True
+        self._external_sample_time_s = None
+        self.external_controller_check.setEnabled(False)
+        self.external_controller_check.setText("使用 Control Tools 当前 H(z)")
+        self._external_mode_changed()
 
     def set_nominal_work_point(self, vbus_v: float) -> None:
         self.vbus.setValue(vbus_v)
 
     def set_busy(self, busy: bool) -> None:
         self._busy = busy
-        self.run_button.setEnabled(not busy)
+        self.run_button.setEnabled(not busy and (
+            not self.external_controller_check.isChecked() or self._external_controller is not None))
         self.research_export.set_busy(busy)
         if hasattr(self, "codegen_button"):
             self.codegen_button.setEnabled(not busy and self.result is not None)
@@ -877,13 +970,16 @@ class DigitalLoopView(QWidget):
             timer_clock_hz=self.timer_mhz.value() * 1e6,
             count_mode=self.count_mode.currentData(),
         )
-        use_external = bool(
-            self.external_controller_check.isChecked()
-            and self._external_controller is not None
-        )
+        use_external = self.external_controller_check.isChecked()
+        external = None
         if use_external:
-            external_fs = float(getattr(self._external_controller, "sample_rate_hz"))
-            sample_time_s = 1.0 / external_fs
+            if self._external_controller is None:
+                raise ValueError("外部 live H(z) 尚无有效当前结果；请等待来源重算或取消外部模式。")
+            if not math.isclose(sample_time_s, self._external_sample_time_s, rel_tol=1e-12, abs_tol=5.1e-19):
+                raise ValueError("可见控制周期与外部 H(z) 的精确 Ts 不一致；请重新接收控制器。")
+            sample_time_s = self._external_sample_time_s
+            external = DigitalTransferFunction(self._external_controller.b, self._external_controller.a,
+                                               sample_time_s, name=self._external_controller.name)
             controller = None
         else:
             controller = self._controller_config(sample_time_s)
@@ -921,7 +1017,7 @@ class DigitalLoopView(QWidget):
             },
             "loop": {
                 "controller_config": controller,
-                "controller_transfer_function": self._external_controller if use_external else None,
+                "controller_transfer_function": external,
                 "controller_source": self._external_controller_label if use_external else "LLC local controller",
                 "fm_lut": lut,
                 "command_pu": None if self.auto_pcmd.isChecked() else self.pcmd.value(),
@@ -942,7 +1038,10 @@ class DigitalLoopView(QWidget):
         self.result = result
         self.research_export.set_analysis(result)
         self.external_controller_status.setText(
-            f"闭环控制器来源：{result.controller_source} | C(z)={result.controller.name}"
+            f"闭环控制器来源：{result.controller_source} | C(z)={result.controller.name}\n"
+            f"控制 / ADC Ts={result.controller.sample_time_s*1e6:.12g} µs | Fs={1/result.controller.sample_time_s:.12g} Hz"
+            + ("\n独立快照；重新联动：取消勾选，再到 Control Tools 点击“重新计算”。"
+               if self.external_controller_check.isChecked() and not self._external_controller_live else "")
         )
         # This displays the solved operating point; it is not a user edit.
         with QSignalBlocker(self.pcmd):
@@ -1122,6 +1221,9 @@ class DigitalLoopView(QWidget):
             f"Load={r.small_signal.operating_point.load_fraction*100:.3g}%, "
             f"fs={r.small_signal.operating_point.switching_frequency_hz/1e3:.7g} kHz",
             f"控制器: {r.controller.name}",
+            f"来源: {r.controller_source}",
+            (f"控制周期 Ts={r.controller.sample_time_s*1e6:.12g} µs; Fs={1/r.controller.sample_time_s:.12g} Hz; "
+             f"ADC Ts={r.adc_sampling.control_sample_time_s*1e6:.12g} µs"),
             f"C(z) numerator={np.array2string(r.controller.numerator, precision=9, separator=', ')}",
             f"C(z) denominator={np.array2string(r.controller.denominator, precision=9, separator=', ')}",
             f"差分方程: {r.controller.difference_equation(precision=9)}",

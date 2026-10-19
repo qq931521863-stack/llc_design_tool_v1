@@ -85,6 +85,8 @@ def render_c99_single_file(digital: DigitalTransferFunction, *, prefix: str = "C
         f'#ifndef {P}_H',
         f'#define {P}_H',
         '',
+        '/* Controller source: ' + json.dumps(d.source, ensure_ascii=True).replace('*/', '* /') + ' */',
+        '',
         '#include <stdint.h>',
         '',
         '#ifndef POWER_CTRL_FLOAT32_T_DEFINED',
@@ -259,7 +261,8 @@ def export_verified_c99_filter(
             "message": result.message,
             "impulse_max_abs_error": result.impulse_max_abs_error if math.isfinite(result.impulse_max_abs_error) else None,
             "step_max_abs_error": result.step_max_abs_error if math.isfinite(result.step_max_abs_error) else None,
-            "controller": {"b": list(d.b), "a": list(d.a), "sample_rate_hz": d.sample_rate_hz},
+            "controller": {"b": list(d.b), "a": list(d.a), "sample_rate_hz": d.sample_rate_hz,
+                           "name": d.name, "source": d.source},
             "scope": "Host float32 impulse/step verification only; not hardware qualification.",
         }
         _atomic_text(sidecar, json.dumps(report, ensure_ascii=False, allow_nan=False, indent=2) + "\n")

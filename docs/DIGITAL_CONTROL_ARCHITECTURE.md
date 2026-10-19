@@ -156,3 +156,35 @@ controller structure
 ```
 
 Do not skip from a nominal Bode plot directly to a hardware-release claim.
+
+## LLC live editor and saved-controller ownership
+
+The launcher connection is a **live Control Tools controller** link. Any pending
+edit, calculation error, or switch away from the linked controller designer
+immediately retires that live H(z), its LLC results, candidate sources and export
+authority. The external-mode checkbox stays selected: Run/export remain blocked
+until a new valid source arrives or the user explicitly selects the local
+controller. In-flight results from the previous input revision are discarded.
+
+Exact external b/a and Ts are inseparable. In external mode the LLC period field
+is read-only and shows the actual controller/plant/ADC period, with an external
+lock label. A conflicting programmatic period is rejected, not silently ignored
+or re-discretized. Unchecking external mode restores the previous local period.
+
+Saving an external controller retains a detached snapshot. Reopening labels it
+`Saved independent H(z) snapshot`, preserves exact coefficients and sampling,
+and requires Run before exports. Unrelated live-editor failures or successful
+recalculations cannot replace a selected snapshot. To reconnect deliberately,
+uncheck the snapshot, open Control Tools, and click **重新计算**. The UI status
+and checkbox tooltip describe this path.
+
+The existing v1 control-session envelope accepts optional `external_controller`
+presentation metadata: source label, UTC capture time, exact normalized b/a/Ts
+SHA256, and the local period to restore. The hash is checked against the saved
+controller before changing the current project; it is an identity check, not an
+authenticity or hardware-validity claim. Older sessions remain readable as
+independent snapshots with unknown capture time; when they lack a saved local
+period, the receiver's prior local period is retained. New saves preserve the
+local period through reopen. Analysis text, research exports and verified C99
+headers/sidecars retain the live/snapshot source identity. Existing float32
+PASS/FAIL/NOT_RUN and default compile gates are unchanged.

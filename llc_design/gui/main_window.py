@@ -1579,14 +1579,16 @@ class LLCMainWindow(QMainWindow):
         V9 uses this exact discrete transfer function in the LLC small-signal
         closed-loop analysis.  No PI/PID parameter re-fit is performed.
         """
-        self.external_control_design = digital
-        self.external_control_label = label or getattr(digital, "name", "Control Tools")
-        if hasattr(self, "digital_loop_view"):
-            self.digital_loop_view.set_external_controller(digital, self.external_control_label)
-        self._append_log(
-            f"Control Tools -> LLC small-signal loop: {self.external_control_label}, "
-            f"Fs={digital.sample_rate_hz/1e3:.3f} kHz"
-        )
+        view = self.digital_loop_view
+        # Loading a saved controller deliberately detaches it from the editor.
+        if view.external_controller_check.isChecked() and not view._external_controller_live:
+            return
+        view.set_external_controller(digital, label)
+        self._append_log(f"Control Tools -> LLC small-signal loop: {view._external_controller_label}")
+
+    def invalidate_external_control_design(self, reason: str) -> None:
+        """A pending/failed live source cannot leave its previous H(z) usable."""
+        self.digital_loop_view.invalidate_external_controller(reason)
 
     def _prepare_waveform_request(self, solver: str, options: dict | None):
         # Capture every physical input on the GUI thread, before the worker runs.

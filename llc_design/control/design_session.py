@@ -7,6 +7,7 @@ proof of validity. A caller must replay the input request before enabling Apply.
 from __future__ import annotations
 
 from dataclasses import fields, is_dataclass, replace
+from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 import json
@@ -515,6 +516,38 @@ def response_signature(frequencies_hz, *responses) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
+def controller_fingerprint(controller: DigitalTransferFunction) -> str:
+    """Identity of normalized exact b/a/Ts; not authentication or validity proof."""
+    payload = {"b": controller.numerator.tolist(), "a": controller.denominator.tolist(),
+               "sample_time_s": controller.sample_time_s}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                                     allow_nan=False).encode()).hexdigest()
+
+
+def _validate_external_controller_metadata(metadata, inputs):
+    required = {"mode", "source", "captured_at_utc", "sha256", "local_sample_time_s"}
+    _require(type(metadata) is dict and set(metadata) == required,
+             "invalid external controller metadata")
+    _require(metadata["mode"] == "snapshot", "saved external controller must be a detached snapshot")
+    _require(type(metadata["source"]) is str and 0 < len(metadata["source"]) <= 4096,
+             "invalid external controller source")
+    captured = metadata["captured_at_utc"]
+    if captured is not None:
+        _require(type(captured) is str and len(captured) <= 64, "invalid external controller capture time")
+        try:
+            timestamp = datetime.fromisoformat(captured)
+            _require(timestamp.tzinfo is not None and timestamp.utcoffset() == timezone.utc.utcoffset(timestamp),
+                     "external controller capture time must be UTC")
+        except ValueError as exc:
+            raise SessionFormatError("invalid external controller capture time") from exc
+    period = metadata["local_sample_time_s"]
+    _require(_finite_number(period) and .5e-6 <= period <= .001,
+             "invalid saved internal controller period")
+    external = inputs["digital_loop"].get("controller_transfer_function")
+    _require(external is not None and metadata["sha256"] == controller_fingerprint(external),
+             "saved external controller identity does not match exact b/a/Ts")
+
+
 def make_session(workspace: str, inputs: Any, solution_map: dict | None = None,
                  candidate_evidence: dict | None = None) -> dict:
     document = {
@@ -531,7 +564,7 @@ def validate_session(document: Any) -> dict:
     """Validate a raw envelope without treating historical metadata as evidence."""
     _check_json(document)
     required = {"schema", "schema_version", "model_revision", "workspace", "inputs"}
-    allowed = required | {"toolkit_version", "solution_map", "candidate_evidence"}
+    allowed = required | {"toolkit_version", "solution_map", "candidate_evidence", "external_controller"}
     _require(type(document) is dict and required <= set(document) <= allowed, "invalid session envelope fields")
     _require(document["schema"] == SESSION_SCHEMA, "unsupported session schema")
     _require(type(document["schema_version"]) is int and document["schema_version"] == SESSION_SCHEMA_VERSION,
@@ -548,7 +581,10 @@ def validate_session(document: Any) -> dict:
     inputs = decode_model(document["inputs"])
     if workspace == "llc":
         _llc_request(inputs)
+        if "external_controller" in document:
+            _validate_external_controller_metadata(document["external_controller"], inputs)
     else:
+        _require("external_controller" not in document, "external controller metadata is LLC-only")
         _require(type(inputs) is PFCControlLabConfig, "TTPL session requires PFCControlLabConfig")
     return document
 

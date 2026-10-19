@@ -291,22 +291,25 @@ def _controller_widgets(controller, kind, kp, ti, fc, coefficients):
             _set(widget, getattr(controller, name))
 
 
-def _reflect_llc(loop, inputs):
+def _reflect_llc(loop, inputs, external_metadata=None):
     small, digital = inputs["small_signal"], inputs["digital_loop"]
-    for name, value in {"vbus": small["vbus_v"], "load_percent": small["load_fraction"] * 100,
-                        "sample_us": small["sample_time_s"] * 1e6}.items():
+    for name, value in {"vbus": small["vbus_v"], "load_percent": small["load_fraction"] * 100}.items():
         _set(getattr(loop, name), value)
     controller = digital.get("controller_config")
     external = digital.get("controller_transfer_function")
     if external is not None:
         from power_control_tools.models import DigitalTransferFunction as PublicTransfer
+        metadata = external_metadata or {}
         loop.set_external_controller(PublicTransfer(tuple(external.numerator), tuple(external.denominator),
                                                     1 / external.sample_time_s, external.name),
-                                     digital.get("controller_source", "Restored H(z)"))
+                                     metadata.get("source", digital.get("controller_source", "Restored H(z)")),
+                                     live=False, captured_at_utc=metadata.get("captured_at_utc"),
+                                     local_sample_time_s=metadata.get("local_sample_time_s"),
+                                     sample_time_s=external.sample_time_s)
+        digital["controller_source"] = loop._external_controller_label
     else:
-        _set(loop.external_controller_check, False)
-        loop._external_controller = None
-        loop._external_controller_label = ""
+        loop.clear_external_controller()
+        _set(loop.sample_us, small["sample_time_s"] * 1e6)
         _controller_widgets(controller, loop.controller_kind, loop.kp, loop.ti_ms, loop.pif_fc,
                             {name: getattr(loop, name) for name in ("b0", "b1", "b2", "a1", "a2")})
         _set(loop.out_min, controller.output_min)
@@ -408,14 +411,17 @@ def install_llc_session(host):
         if (state.get("metadata") is not None and _same(inputs["spec"], state["spec"])
                 and "series_resistance_ohm" in options["small_signal"]):
             inputs["small_signal_metadata"] = state["metadata"]
-        return make_session("llc", inputs, capture_map_state(loop.solution_map_view), loop._candidate_evidence())
+        document = make_session("llc", inputs, capture_map_state(loop.solution_map_view), loop._candidate_evidence())
+        if options["loop"].get("controller_transfer_function") is not None:
+            document["external_controller"] = {
+                **loop._external_controller_metadata, "local_sample_time_s": loop._local_sample_us * 1e-6,
+            }
+        return validate_session(document)
 
     def restore(document, prepared):
         validate_session(document)
         inputs = decode_model(document["inputs"])
-        _reflect_llc(loop, inputs)
-        host.external_control_design = None
-        host.external_control_label = ""
+        _reflect_llc(loop, inputs, document.get("external_controller"))
         loop._solution_map_restore_controller(inputs["digital_loop"].get("controller_config"),
                                                inputs["digital_loop"].get("controller_source", "Restored controller"))
         state["frozen_options"] = {"small_signal": inputs["small_signal"], "loop": inputs["digital_loop"]}

@@ -264,6 +264,7 @@ class WorkspaceApplicationController:
             self.control_window.workspace_switch_requested.connect(self._handle_request)
             self.fra_window.workspace_switch_requested.connect(self._handle_request)
             self.dab_window.workspace_switch_requested.connect(self._handle_request)
+            self.control_window.digital_design_invalidated.connect(self.llc_window.invalidate_external_control_design)
             self.control_window.digital_design_updated.connect(self.llc_window.set_external_control_design)
             self.control_window.digital_design_updated.connect(
                 lambda digital, label="": self.llc_window.refresh_closed_loop_controller()

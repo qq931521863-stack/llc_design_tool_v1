@@ -193,6 +193,10 @@ def install_llc_solution_map(host) -> SolutionMapView:
         view.invalidate("LLC inputs changed. Run the maintained loop again before comparing or applying a candidate.",
                         clear_corners=clear_corners)
 
+    # Includes live-source pending/error and same-Fs coefficient replacement,
+    # which need not emit any individual widget signal.
+    loop_view.inputs_changed.connect(invalidate)
+
     original_load_spec = host._load_spec_to_widgets
 
     def load_spec_with_invalidation(self, spec) -> None:
