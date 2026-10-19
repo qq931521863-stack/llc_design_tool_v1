@@ -645,7 +645,7 @@ python -m pip install -e ".[agent]"
 power-design-mcp
 ```
 
-The MCP server uses the official Python SDK v2 and defaults to local stdio. See [Agent / MCP interface](docs/AGENT_MCP.md).
+The MCP server uses the official Python SDK v2 and defaults to local stdio. See [Agent / MCP interface](DC/power_design_codex_mcp.md).
 
 ### Development environment
 
@@ -801,7 +801,7 @@ Start here instead of reading historical version notes:
 - [Engineering validation policy](docs/ENGINEERING_VALIDATION.md)
 - [Project provenance](docs/PROJECT_PROVENANCE.md)
 - [Engineering data policy](docs/ENGINEERING_DATA.md)
-- [Agent / MCP](docs/AGENT_MCP.md)
+- [Agent / MCP](DC/power_design_codex_mcp.md)
 - [Web deployment](docs/WEB_DEPLOYMENT.md)
 - [Release process](docs/RELEASE.md)
 - [Changelog](CHANGELOG.md)
