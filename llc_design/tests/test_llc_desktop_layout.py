@@ -18,29 +18,86 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("width,height", [(1280, 720), (1366, 768), (1440, 900)])
-def test_llc_full_bridge_workflow_fits_real_desktop(tmp_path, width, height):
-    pytest.importorskip("PySide6")
+def _desktop_environment(tmp_path, width, height):
     config = tmp_path / "screen.json"
     config.write_text(json.dumps({"screens": [{"name": f"desktop-{width}x{height}",
         "width": width, "height": height, "logicalDpi": 96, "logicalBaseDpi": 96}],
         "windowFrameMargins": True}), encoding="utf-8")
-    env = dict(os.environ, QT_QPA_PLATFORM=f"offscreen:configfile={config}",
+    # Qt splits platform options on ':' and ';', including Windows drive letters.
+    # Pass only the basename and launch in its directory, even across drives.
+    # Qt 6.11.2: src/gui/kernel/qguiapplication.cpp, init_platform().
+    return dict(os.environ, QT_QPA_PLATFORM=f"offscreen:configfile={config.name}",
         QT_SCALE_FACTOR="1", QT_FONT_DPI="96", MPLBACKEND="Agg", PYTHONPATH=str(ROOT),
         MPLCONFIGDIR=str(tmp_path / "mpl"), XDG_CACHE_HOME=str(tmp_path / "cache"),
-        XDG_CONFIG_HOME=str(tmp_path / "config"))
-    result = subprocess.run([sys.executable, str(Path(__file__).resolve()),
-        str(width), str(height), str(tmp_path)], env=env, cwd=ROOT,
-        capture_output=True, text=True, timeout=240, check=False)
-    assert result.returncode == 0, result.stdout + result.stderr
+        XDG_CONFIG_HOME=str(tmp_path / "config"), QT_FORCE_STDERR_LOGGING="1",
+        PYTHONFAULTHANDLER="1", PYTHONIOENCODING="utf-8")
+
+
+def _process_failure(result):
+    return (f"Desktop subprocess exited {result.returncode} "
+        f"(0x{result.returncode & 0xffffffff:08X})\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+
+
+@pytest.mark.parametrize("width,height", [(1280, 720), (1366, 768), (1440, 900)])
+@pytest.mark.parametrize("directory", ["config with spaces", "config;with separators"])
+def test_offscreen_config_reaches_real_qscreen(tmp_path, width, height, directory):
+    """Exercise Qt's actual option parser, with no toolkit widgets or workers."""
+    pytest.importorskip("PySide6")
+    output = tmp_path / directory
+    if os.name != "nt":
+        # POSIX permits a literal drive-like colon; Windows already has a drive.
+        output /= "C:"
+    output.mkdir(parents=True)
+    env = _desktop_environment(output, width, height)
+    result = subprocess.run([sys.executable, "-u", "-c", """
+import json
+from PySide6.QtWidgets import QApplication
+print("before QApplication", flush=True)
+app = QApplication([])
+screen = app.primaryScreen()
+print(json.dumps({"screen": list(screen.geometry().size().toTuple()),
+    "dpi": screen.logicalDotsPerInch(), "dpr": screen.devicePixelRatio(),
+    "platform": app.platformName()}), flush=True)
+"""], env=env, cwd=output, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=30, check=False)
+    assert result.returncode == 0, _process_failure(result)
+    assert json.loads(result.stdout.splitlines()[-1]) == {
+        "screen": [width, height], "dpi": 96, "dpr": 1, "platform": "offscreen"}
+
+
+@pytest.mark.parametrize("width,height", [(1280, 720), (1366, 768), (1440, 900)])
+def test_llc_full_bridge_workflow_fits_real_desktop(tmp_path, width, height):
+    pytest.importorskip("PySide6")
+    env = _desktop_environment(tmp_path, width, height)
+    result = subprocess.run([sys.executable, "-u", str(Path(__file__).resolve()),
+        str(width), str(height), str(tmp_path)], env=env, cwd=tmp_path,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=240, check=False)
+    assert result.returncode == 0, _process_failure(result)
     assert f'"screen": [{width}, {height}]' in result.stdout
 
 
+def _stage(name, **details):
+    print("[llc-layout] " + json.dumps({"stage": name, **details}),
+        file=sys.stderr, flush=True)
+
+
 def _exercise_desktop(width, height, output):
+    _stage("imports-start", screen=[width, height], cwd=str(Path.cwd()),
+        platform=os.environ.get("QT_QPA_PLATFORM"), python=sys.version)
     from dataclasses import asdict
 
     import numpy as np
-    from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, QRect, Qt
+    from PySide6.QtCore import (
+        QCoreApplication,
+        QEvent,
+        QPoint,
+        QPointF,
+        QRect,
+        Qt,
+        qVersion,
+    )
     from PySide6.QtGui import QWheelEvent
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import (
@@ -51,6 +108,7 @@ def _exercise_desktop(width, height, output):
         QToolButton,
     )
 
+    _stage("qt-imported", qt=qVersion())
     from llc_design.core.spec import LLCDesignSpec, PrimaryTopology
     from llc_design.gui import main_window as module
     from llc_design.gui import theme
@@ -63,15 +121,21 @@ def _exercise_desktop(width, height, output):
     module.check_for_updates = lambda *a, **kw: None
     issues = []
     module.show_operation_issue = lambda *a, **kw: issues.append(str(a[1:]))
+    _stage("qapplication-start")
     app = QApplication.instance() or QApplication([])
+    _stage("qapplication-created")
     theme.apply_app_theme(app)
     apply_language("zh-Hans", app)
     screen = app.primaryScreen()
     assert screen.geometry().size().toTuple() == (width, height)
     assert screen.logicalDotsPerInch() == 96
+    assert screen.devicePixelRatio() == 1
+    _stage("screen-validated", screen=list(screen.geometry().size().toTuple()),
+        dpi=screen.logicalDotsPerInch(), dpr=screen.devicePixelRatio())
     spec = LLCDesignSpec(primary_topology=PrimaryTopology.FULL_BRIDGE,
         ln_ratio=4.5, primary_turns=32, vbus_hold_end_v=320., bus_capacitance_f=.0033)
     window = module.LLCMainWindow(spec)
+    _stage("window-created")
     window.show()
     QTest.qWait(50)
     assert screen.availableGeometry().contains(window.frameGeometry())
@@ -174,6 +238,7 @@ def _exercise_desktop(width, height, output):
         tab(page)
         measurements["pages"].append({"type": type(page).__name__,
             "size": list(page.size().toTuple()), "minimum": list(page.minimumSizeHint().toTuple())})
+    _stage("tabs-verified")
     tab(pages[0])
     visible(window.topology_view)
     assert window.topology_view.viewport().rect().contains(
@@ -215,6 +280,7 @@ def _exercise_desktop(width, height, output):
     last_bottom = view.graphics.mapTo(wave_scroll.viewport(), last_rect.bottomLeft())
     assert 0 <= last_bottom.y() <= wave_scroll.viewport().height() + 1
     shot("waveform-scrolled")
+    _stage("waveform-verified")
 
     # Scroll the genuinely tall digital-control content and operate its existing
     # run/export controls. The Bode canvas retains its readable 430px minimum.
@@ -237,6 +303,7 @@ def _exercise_desktop(width, height, output):
     scroll_end(digital.page_scroll, False)
     visible(digital.research_export.matlab_button)
     visible(digital.research_export.python_button)
+    _stage("digital-control-verified")
 
     # Real bounded nominal TD candidate run, with original ownership/status
     # gates; the table, details and report action stay reachable at laptop size.
@@ -267,6 +334,7 @@ def _exercise_desktop(width, height, output):
     assert candidate.report_button.isEnabled() and candidate.apply_button.isEnabled()
     assert candidate.details.toPlainText()
     result_identity = candidate.result
+    _stage("candidate-verified")
     shot("candidate-results")
     report = output / "candidate.zip"
     QFileDialog.getSaveFileName = staticmethod(lambda *a, **kw: (str(report), "ZIP"))
@@ -278,6 +346,7 @@ def _exercise_desktop(width, height, output):
         sources = provenance["selected_candidate"]["sources"]
         assert any(source["waveform_sha256"] == verified.analysis.nominal.loss_waveform_sha256
                    for source in sources)
+    _stage("report-verified")
 
     # Repeated navigation and scrolling do not reinterpret any electrical data.
     for page in (digital, view, candidate, digital, view, candidate):
@@ -297,6 +366,7 @@ def _exercise_desktop(width, height, output):
     payload = json.loads(project.read_text(encoding="utf-8"))
     assert payload["waveform_session"]["component"] == "q4"
     assert payload["optimization_session"]["candidates"]
+    _stage("project-save-verified")
     measurements.update(waveform_scroll=wave_scroll.verticalScrollBar().maximum(),
         digital_scroll=digital.page_scroll.verticalScrollBar().maximum(),
         candidate_table_height=candidate.table.viewport().height(),
@@ -312,6 +382,7 @@ def _exercise_desktop(width, height, output):
     window.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()
+    _stage("teardown-complete")
 
 
 if __name__ == "__main__":
