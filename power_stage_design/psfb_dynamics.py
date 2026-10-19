@@ -270,11 +270,12 @@ def _fit_state(solution, left, right, scales, *, single_step=True):
         u = (z+1)/2
         values = solution(left+(right-left)*u)[:7].T*scales
         cheb = np.polynomial.chebyshev.chebfit(z, values, degree)
-        coeff = []
+        # Conversion may trim exact high-order zeros independently per state.
+        # Retain the fitted degree so circuit algebra has a rectangular matrix.
+        matrix = np.zeros((7, degree+1))
         for index in range(7):
             polynomial = np.polynomial.Chebyshev(cheb[:, index], domain=[0., 1.]).convert(kind=np.polynomial.Polynomial)
-            coeff.append(polynomial.coef)
-        matrix = np.asarray(coeff)
+            matrix[index, :len(polynomial.coef)] = polynomial.coef
         check = np.polynomial.polynomial.polyval(probes, matrix.T).T
         if np.max(np.abs(check-truth)/scales) < 2e-11:
             return matrix
