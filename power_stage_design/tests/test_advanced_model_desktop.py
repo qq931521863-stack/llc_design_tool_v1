@@ -4,6 +4,7 @@ import json
 import os
 from collections import defaultdict
 from dataclasses import asdict, replace
+from html import unescape
 from pathlib import Path
 
 import numpy as np
@@ -147,7 +148,11 @@ def test_advanced_real_inputs_buttons_schematic_save_report_and_restore(window,a
         assert window.grab().save(str(evidence/f'{topology}-parameters.png'))
         window.tabs.setCurrentIndex(0);app.processEvents()
     window.save_to(path);window.report_to(report)
-    assert identity in report.read_text(encoding='utf-8')
+    text=report.read_text(encoding='utf-8')
+    snapshot=json.loads(unescape(text.split('<h2>可复现数据</h2><pre>',1)[1].split('</pre>',1)[0]))
+    assert snapshot['model_revision']==window.result.model_version
+    assert snapshot['framework_model_revision']==MODEL_VERSION
+    assert identity in text
     assert source==DesignInputs(**json.loads(path.read_text(encoding='utf-8'))['inputs'])
     window.advanced_model.enabled.setChecked(False)
     assert window.result is None and not window.report_action.isEnabled()

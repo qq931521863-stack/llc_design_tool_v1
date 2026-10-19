@@ -373,3 +373,16 @@ source error: FHA substitutions gave 10.9737134195 W primary conduction while th
 printed TD result was 12.1326694538 W. SR/Cr and frequency substitutions likewise
 mixed sources. This is being repaired with same-waveform formula-input summaries;
 a successful PDF file alone is not acceptance of its engineering contents.
+
+### Post-integration report identity correction
+
+The strengthened production packaging gate found that HTML used the global PSD
+framework revision even when the returned PSFB result had its own kernel revision.
+The report now separates `model_revision` (actual result) from
+`framework_model_revision` (project/framework contract), both in visible metadata
+and the reproducible snapshot. Eleven focused identity/temperature tests pass;
+the real advanced GUI and production frozen gates also compare these fields.
+QR ideal-Ron channel/Cnode statistics now carry a per-branch warning that ideal
+charge impulses are excluded, rather than leaving that limitation only in the
+model-wide warning list. A selected-device I²R overlay is explicitly fixed-waveform
+screening and does not imply an electrical rerun after changing the device.

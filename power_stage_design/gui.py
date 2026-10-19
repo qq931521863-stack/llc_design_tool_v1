@@ -380,6 +380,7 @@ class PowerStageMainWindow(QMainWindow):
         self.component_status.setText(assessment["assessment"]+(f" 100°C 导通项 {partial:.5g} W；完整损耗/热/SOA未知。" if partial is not None else ""))
         self.stress_table.setRowCount(2)
         for row,signal,plot,label,color in [(0,wave.current_a,self.current_plot,"电流 / A","#0ea5e9"),(1,wave.voltage_v,self.voltage_plot,"电压 / V","#f59e0b")]:
+            if row==0 and assessment.get("statistics_scope")=="excludes_ideal_turn_on_impulse":label="电流（不含理想脉冲）/ A"
             t,y=signal.sample(count=800,periods=2);plot.plot(t,y,pen=pg.mkPen(color,width=2))
             stats=signal.statistics()
             for col,value in enumerate([label,*[f"{stats[k]:.8g}" for k in ("min","max","mean","rms","peak_to_peak","ac_rms")]]):

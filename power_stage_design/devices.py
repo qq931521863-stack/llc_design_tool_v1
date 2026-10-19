@@ -20,10 +20,15 @@ def assess_component(result, key: str, *, selected_main_device=None, temperature
         evidence.update(assessment="理想高阻电压探针，电流恒为零；不是额外功率器件，不作器件损耗/额定评估。",
             loss_scope="ideal_voltage_probe", thermal_status="NOT_APPLICABLE")
         return evidence
+    impulse_excluded = (key in {"Q1","Cnode"} and result.inputs.qr_options is not None
+        and result.inputs.qr_options.on_resistance_ohm is None)
+    if impulse_excluded:
+        evidence["statistics_scope"]="excludes_ideal_turn_on_impulse"
+        evidence["assessment"]+=" 当前峰值/RMS不含理想开通电荷脉冲，不能作为完整开关电流应力；请输入有限 Ron。"
     if key=="Q1" and selected_main_device is not None:
         device=selected_main_device
         violations=[]
-        if vmax>device.vds_max_v:violations.append("理想电压已超过额定")
+        if vmax>device.vds_max_v:violations.append("模型电压已超过额定")
         if imax>device.id_cont_a:violations.append("峰值电流已超过连续额定，需SOA核对")
         evidence["rating_violations"]=violations
         resistance=device.rds_at(temperature_c)
@@ -32,6 +37,9 @@ def assess_component(result, key: str, *, selected_main_device=None, temperature
             return evidence
         evidence.update(part_number=device.part_number,temperature_c=temperature_c,
             known_conduction_loss_w=stats["current_rms_a"]**2*resistance,
-            assessment="；".join(violations) if violations else "理想应力未超过所录入额定；仍需降额与热/SOA检查。")
-        evidence["loss_scope"]="仅I²R导通项，固定用户温度；驱动条件须核对。开关、死区、磁件和完整热网络未计算。"
+            assessment="；".join(violations) if violations else "模型应力未超过所录入额定；仍需降额与热/SOA检查。")
+        evidence["loss_scope"]="仅I²R导通筛查，固定用户温度与当前波形；更换器件不会重求电路，驱动条件须核对。开关、死区、磁件和完整热网络未计算。"
+        if impulse_excluded:
+            evidence["assessment"]+=" 当前峰值/RMS不含理想开通电荷脉冲；此I²R也不是完整开通损耗。"
+            evidence["loss_scope"]+=" 理想开通电荷脉冲未计入此I²R筛查。"
     return evidence

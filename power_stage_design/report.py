@@ -85,7 +85,7 @@ def write_report(result, path: str | Path, *, loop_result=None, loop_settings=No
             raise ValueError("Corner scan belongs to different controller or device inputs")
     sections = [f'<h1>Power Stage Designer · {escape(result.topology_id)}</h1>',
         '<p>软件稳态模型结果；不表示硬件验证或完整效率预测。</p>',
-        _table({'Design identity': result.design_id, 'Model revision': MODEL_REVISION,
+        _table({'Design identity': result.design_id, 'Result model revision': result.model_version, 'PSD framework revision': MODEL_REVISION,
                 'Toolkit': __version__, 'Generated UTC': datetime.now(timezone.utc).isoformat(),
                 'Mode': result.mode, 'Duty': f'{result.duty:.12g}'}),
         '<h2>设计输入（SI）</h2>', _table(asdict(result.inputs)),
@@ -123,7 +123,7 @@ def write_report(result, path: str | Path, *, loop_result=None, loop_settings=No
                      _table(asdict(corner_sweep.request)),_table(corner_sweep.extrema),
                      '<p>point_id 标识完整工况，包括环路参数；design_id 只标识功率级。同一功率级可对应不同 C2/ESR/DCR 的环路工况。下列逐点记录保留实际 SI 参数，不把环路 C2 合并进理想功率级 C1。</p>',
                      '<pre>'+escape(json.dumps(asdict(corner_sweep),ensure_ascii=False,indent=2,allow_nan=False))+'</pre>']
-    snapshot = {'inputs':asdict(result.inputs),'design_id':result.design_id,'model_revision':MODEL_REVISION,
+    snapshot = {'inputs':asdict(result.inputs),'design_id':result.design_id,'model_revision':result.model_version,'framework_model_revision':MODEL_REVISION,
                 'metrics':result.metrics,'stress':result.stress,'loop_settings':loop_settings,
                 'parameter_suggestion':parameter_suggestion, 'selected_device':selected_device,
                 'junction_temperature_c':junction_temperature_c, 'device_assessment':device_assessment,
