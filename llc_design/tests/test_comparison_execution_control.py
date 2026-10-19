@@ -54,11 +54,11 @@ def test_hb_cancellation_escapes_actual_residual_without_fha_fallback():
     assert calls == 100
 
 
-def test_td_cancellation_escapes_real_rk4_chunk(monkeypatch):
+def test_td_cancellation_escapes_real_integration_rhs(monkeypatch):
     from llc_design.dynamics import switched
 
     control = SolveControl(300)
-    actual = switched._rk4_step
+    actual = switched._rhs
     calls = 0
 
     def observed(*args, **kwargs):
@@ -68,7 +68,7 @@ def test_td_cancellation_escapes_real_rk4_chunk(monkeypatch):
             control.cancel("TD integration probe")
         return actual(*args, **kwargs)
 
-    monkeypatch.setattr(switched, "_rk4_step", observed)
+    monkeypatch.setattr(switched, "_rhs", observed)
     with pytest.raises(SolveCancelled, match="TD integration probe"):
         solve_time_domain(LLCAnalysisRequest(reference_spec(), frequency_hz=100e3),
                           TimeDomainConfig(), checkpoint=control.checkpoint)
@@ -214,13 +214,13 @@ def test_cancel_after_actual_td_integration_starts(window, monkeypatch):
     from llc_design.dynamics import switched
 
     entered = threading.Event()
-    actual = switched._rk4_step
+    actual = switched._rhs
 
     def observed(*args, **kwargs):
         entered.set()
         return actual(*args, **kwargs)
 
-    monkeypatch.setattr(switched, "_rk4_step", observed)
+    monkeypatch.setattr(switched, "_rhs", observed)
     poll = QTimer(window)
     poll.setInterval(5)
 

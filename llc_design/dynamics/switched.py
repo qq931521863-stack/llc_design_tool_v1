@@ -13,6 +13,7 @@ import math
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.integrate import solve_ivp
 from scipy.optimize import root
 
 from .plant import DynamicPhasorModel, DynamicPhasorSteadyState, LLCPlantInputs
@@ -145,47 +146,72 @@ def _rhs(
     )
 
 
-def _rk4_step(
-    model: DynamicPhasorModel,
-    inputs: LLCPlantInputs,
-    phase: float,
-    state: NDArray[np.float64],
-    dt: float,
-    smoothing_current_a: float,
-) -> NDArray[np.float64]:
-    omega = 2.0 * math.pi * inputs.switching_frequency_hz
-    k1 = _rhs(model, inputs, phase, state, smoothing_current_a)
-    k2 = _rhs(
-        model, inputs, phase + omega * dt / 2.0,
-        state + dt * k1 / 2.0, smoothing_current_a)
-    k3 = _rhs(
-        model, inputs, phase + omega * dt / 2.0,
-        state + dt * k2 / 2.0, smoothing_current_a)
-    k4 = _rhs(
-        model, inputs, phase + omega * dt,
-        state + dt * k3, smoothing_current_a)
-    return state + dt * (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0
-
-
 def _advance_one_cycle(
     model: DynamicPhasorModel,
     inputs: LLCPlantInputs,
     state: NDArray[np.float64],
-    dt: float,
-    samples_per_cycle: int,
+    scales: NDArray[np.float64],
+    tolerance: float,
     smoothing_current_a: float,
     checkpoint=None,
-) -> NDArray[np.float64]:
-    phase = 0.0
-    omega = 2.0 * math.pi * inputs.switching_frequency_hz
+    *,
+    samples_per_cycle: int | None = None,
+    magnetizing_extrema: list[float] | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64] | None]:
+    """Integrate one period, stopping exactly at every bridge transition.
+
+    The smoothed rectifier is stiff near Ir == Im: its small-signal time
+    constant can be orders of magnitude shorter than a waveform sample.
+    Explicit fixed-step RK4 can therefore converge to a *discretization*
+    orbit with incorrect extrema, or fail shooting depending on rounding.
+    Radau resolves this transition independently of the output sample grid.
+    Holding the bridge constant within each event interval also avoids taking
+    an RK endpoint from the wrong side of a switch discontinuity.
+    """
+    fs = inputs.switching_frequency_hz
+    dead = min(max(model.p.primary_deadtime_s * fs, 0.0), 0.45)
+    edges = np.unique([0.0, dead / 2.0, 0.5 - dead / 2.0,
+                       0.5 + dead / 2.0, 1.0 - dead / 2.0, 1.0])
+    sample_times = (
+        np.arange(samples_per_cycle, dtype=float) / samples_per_cycle
+        if samples_per_cycle is not None else None
+    )
+    samples = (
+        np.empty((samples_per_cycle, 4), dtype=float)
+        if samples_per_cycle is not None else None
+    )
     result = np.asarray(state, dtype=float).copy()
-    for sample in range(samples_per_cycle):
-        if checkpoint is not None and sample % 32 == 0:
-            checkpoint()
-        result = _rk4_step(
-            model, inputs, phase, result, dt, smoothing_current_a)
-        phase += omega * dt
-    return result
+    # Keep integration error below the independently checked shooting residual.
+    rtol = min(1e-9, tolerance * 0.1)
+    for left, right in zip(edges[:-1], edges[1:]):
+        fixed_phase = math.pi * (left + right)
+
+        def rhs(_time: float, candidate: NDArray[np.float64],
+                phase: float = fixed_phase) -> NDArray[np.float64]:
+            if checkpoint is not None:
+                checkpoint()
+            return _rhs(model, inputs, phase, candidate, smoothing_current_a) / fs
+
+        def magnetizing_slope(time: float, candidate: NDArray[np.float64],
+                              derivative=rhs) -> float:
+            return float(derivative(time, candidate)[2])
+
+        solution = solve_ivp(
+            rhs, (left, right), result, method="Radau", rtol=rtol,
+            atol=scales * rtol * 0.1, max_step=1.0 / 32.0,
+            dense_output=samples is not None,
+            events=magnetizing_slope if magnetizing_extrema is not None else None,
+        )
+        if not solution.success or not np.all(np.isfinite(solution.y[:, -1])):
+            raise RuntimeError("switched cycle integration failed: " + solution.message)
+        if magnetizing_extrema is not None:
+            magnetizing_extrema.extend([float(result[2]), float(solution.y[2, -1])])
+            magnetizing_extrema.extend(event[2] for event in solution.y_events[0])
+        if samples is not None:
+            mask = (sample_times >= left) & (sample_times < right)
+            samples[mask] = solution.sol(sample_times[mask]).T
+        result = solution.y[:, -1]
+    return result, samples
 
 
 def simulate_switched_steady_state(
@@ -204,7 +230,6 @@ def simulate_switched_steady_state(
     fs = inputs.switching_frequency_hz
     period = 1.0 / fs
     dt = period / cfg.samples_per_cycle
-    omega = 2.0 * math.pi * fs
     # Dynamic-phasor states evaluated at theta=0 provide a close initial state.
     state = np.asarray(
         [
@@ -215,7 +240,6 @@ def simulate_switched_steady_state(
         ],
         dtype=float,
     )
-    phase = 0.0
     scales = np.asarray(
         [
             max(steady_state.resonant_current_peak_a, 1.0),
@@ -235,8 +259,8 @@ def simulate_switched_steady_state(
     )
     for cycle in range(precondition_cycles):
         start = state.copy()
-        state = _advance_one_cycle(
-            model, inputs, state, dt, cfg.samples_per_cycle,
+        state, _ = _advance_one_cycle(
+            model, inputs, state, scales, cfg.convergence_tolerance,
             cfg.rectifier_smoothing_current_a, checkpoint=checkpoint)
         convergence = float(np.linalg.norm((state - start) / scales))
         settled_cycles = cycle + 1
@@ -253,33 +277,49 @@ def simulate_switched_steady_state(
         def residual(candidate: NDArray[np.float64]) -> NDArray[np.float64]:
             nonlocal shooting_evaluations
             shooting_evaluations += 1
-            end = _advance_one_cycle(
-                model, inputs, candidate, dt, cfg.samples_per_cycle,
+            initial = candidate * scales
+            end, _ = _advance_one_cycle(
+                model, inputs, initial, scales, cfg.convergence_tolerance,
                 cfg.rectifier_smoothing_current_a, checkpoint=checkpoint)
-            return (end - candidate) / scales
+            return (end - initial) / scales
 
         solution = root(
             residual,
-            state,
+            state / scales,
             method="hybr",
             options={
                 "xtol": cfg.convergence_tolerance,
                 "maxfev": cfg.shooting_max_evaluations,
             },
         )
-        state = np.asarray(solution.x, dtype=float)
-        convergence = float(np.linalg.norm(residual(state)))
+        state = np.asarray(solution.x, dtype=float) * scales
+        convergence = float(np.linalg.norm(residual(solution.x)))
+        # MINPACK's step/progress flag is not a physical convergence test.
+        # Independently reintegrate its returned state and retain the original
+        # residual bound, including when it reports stagnation near a root.
         shooting_success = bool(
-            solution.success and convergence <= max(cfg.convergence_tolerance * 10.0, 1e-9)
+            math.isfinite(convergence)
+            and convergence <= max(cfg.convergence_tolerance * 10.0, 1e-9)
         )
     converged = (
         shooting_success if cfg.use_periodic_shooting
         else convergence <= cfg.convergence_tolerance
     )
-    phase = 0.0
 
     total_samples = cfg.output_cycles * cfg.samples_per_cycle
-    states = np.zeros((total_samples, 4), dtype=float)
+    states = np.empty((total_samples, 4), dtype=float)
+    # Recording uses the same phase origin and event integrator as shooting.
+    # Do not accumulate phase across cycles: a different bridge edge side can
+    # invalidate an otherwise periodic orbit.
+    magnetizing_extrema: list[float] = []
+    for cycle in range(cfg.output_cycles):
+        state, samples = _advance_one_cycle(
+            model, inputs, state, scales, cfg.convergence_tolerance,
+            cfg.rectifier_smoothing_current_a, checkpoint=checkpoint,
+            samples_per_cycle=cfg.samples_per_cycle,
+            magnetizing_extrema=magnetizing_extrema,
+        )
+        states[cycle * cfg.samples_per_cycle:(cycle + 1) * cfg.samples_per_cycle] = samples
     bridge = np.zeros(total_samples, dtype=float)
     vout = np.zeros(total_samples, dtype=float)
     vp = np.zeros(total_samples, dtype=float)
@@ -291,10 +331,10 @@ def simulate_switched_steady_state(
     for index in range(total_samples):
         if checkpoint is not None and index % 32 == 0:
             checkpoint()
-        states[index] = state
+        phase = 2.0 * math.pi * (index % cfg.samples_per_cycle) / cfg.samples_per_cycle
         phase_values[index] = phase
         alg = _instantaneous(
-            model, inputs, phase, state, cfg.rectifier_smoothing_current_a)
+            model, inputs, phase, states[index], cfg.rectifier_smoothing_current_a)
         bridge[index] = alg.bridge_voltage_v
         vout[index] = alg.output_voltage_v
         vp[index] = alg.primary_voltage_v
@@ -302,10 +342,6 @@ def simulate_switched_steady_state(
         isec[index] = alg.secondary_current_a
         irect[index] = alg.rectified_current_a
         ico[index] = alg.output_cap_current_a
-        state = _rk4_step(
-            model, inputs, phase, state, dt,
-            cfg.rectifier_smoothing_current_a)
-        phase += omega * dt
 
     time_s = np.arange(total_samples, dtype=float) * dt
     ir = states[:, 0]
@@ -391,7 +427,7 @@ def simulate_switched_steady_state(
         "v_resonant_inductor": ("谐振电感电压 VLr", "V", vlr, "primary", "Lr 端电压", fs),
         "v_transformer_primary": ("变压器原边电压 Vp", "V", vp, "transformer", "SR 整流钳位原边电压", fs),
         "i_transformer_primary": ("变压器原边电流 Ip", "A", ir, "transformer", "变压器输入端总电流", fs),
-        "i_magnetizing": ("励磁电流 Im", "A", im, "transformer", "励磁电感电流", fs),
+        "i_magnetizing": ("励磁电流 Im", "A", im, "transformer", "励磁电感电流；统计值取均匀采样，连续峰值另见模型指标", fs),
         "i_primary_load": ("原边负载分量 Iload,p", "A", primary_load, "transformer", "Ir-Im", fs),
         "v_transformer_secondary": ("变压器次级电压 Vs", "V", vs, "secondary", "未整流次级电压", fs),
         "i_transformer_secondary": ("变压器次级电流 Is", "A", isec, "secondary", "未整流次级电流", fs),
@@ -478,6 +514,10 @@ def simulate_switched_steady_state(
             "periodic_mismatch": convergence,
             "converged": str(converged),
             "periodic_shooting": str(cfg.use_periodic_shooting),
+            "integration_method": "event_split_radau",
+            "continuous_magnetizing_current_peak_a": float(np.max(np.abs(magnetizing_extrema))),
+            "magnetizing_peak_source": "derivative_zero_events",
+            "waveform_statistics_source": "uniform_output_samples",
             "shooting_evaluations": shooting_evaluations,
             "samples_per_cycle": cfg.samples_per_cycle,
             "output_cycles": cfg.output_cycles,

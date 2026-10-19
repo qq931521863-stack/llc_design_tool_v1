@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 
 from scipy.optimize import minimize_scalar, root_scalar
@@ -314,11 +314,17 @@ def solve_time_domain(
         modeled_series_loss_w=series_loss,
         modeled_rectifier_drop_loss_w=rectifier_drop_loss,
     )
+    # A coarse plot grid can miss the triangular magnetizing-current extremum
+    # and incorrectly pass the FHA/TD validity gate. Keep waveform statistics
+    # sampled, but use the continuous orbit's derivative-zero events here.
+    if "continuous_magnetizing_current_peak_a" in bundle.metadata:
+        metrics = replace(metrics, magnetizing_current_peak_a=float(
+            bundle.metadata["continuous_magnetizing_current_peak_a"]))
     convergence = SolverConvergence(
         converged=converged,
         residual_norm=mismatch,
         iterations=int(bundle.metadata.get("shooting_evaluations", 0)),
-        method="periodic_shooting_rk4",
+        method="periodic_shooting_event_split_radau",
         message=(
             "periodic shooting converged"
             if converged else "periodic shooting returned a usable but non-converged orbit"
@@ -349,6 +355,7 @@ def solve_time_domain(
             "dynamic_phasor_frequency_hz": steady.inputs.switching_frequency_hz,
             "dynamic_phasor_output_voltage_v": steady.output_voltage_v,
             "periodic_mismatch": mismatch,
+            "magnetizing_peak_source": bundle.metadata.get("magnetizing_peak_source", "sampled_waveform"),
             "series_resistance_ohm": parameters.series_resistance_ohm,
             "series_loss_w": series_loss,
             "rectifier_drop_loss_w": rectifier_drop_loss,
