@@ -31,8 +31,157 @@ def test_narrow_dock_and_window_frame_with_larger_font(tmp_path, font_points):
     assert '"disposed": true' in result.stdout
 
 
+def _bounds_in(widget, ancestor):
+    from PySide6.QtCore import QPoint, QRect
+
+    return QRect(widget.mapTo(ancestor, QPoint()), widget.size())
+
+
+def _scroll_whole_control_into_view(scroll, control):
+    # Qt 6.11.2 ensureWidgetVisible() may target ImCursorRectangle, then return
+    # while a spin box's outer border is still clipped. Test reachability of the
+    # whole control via the real scrollbar, not merely its insertion cursor.
+    # https://github.com/qt/qtbase/blob/v6.11.2/src/widgets/widgets/qscrollarea.cpp#L415-L443
+    bounds = _bounds_in(control, scroll.widget())
+    center = bounds.center()
+    # ensureVisible uses a strict > edge comparison; include the final pixel.
+    scroll.ensureVisible(center.x(), center.y(),
+        bounds.width() // 2 + 1, bounds.height() // 2 + 1)
+
+
+def _assert_whole_control_visible(scroll, name, control):
+    assert (control.isVisible() and not control.isHidden()
+        and control.isVisibleTo(scroll.widget())), (name, "hidden control")
+    assert scroll.horizontalScrollBar().maximum() == 0, (name, "horizontal scroll")
+    bounds = _bounds_in(control, scroll.viewport())
+    assert scroll.viewport().rect().contains(bounds), (name, bounds, scroll.viewport().rect())
+    assert control.visibleRegion().contains(control.rect()), (name, "clipped visible region")
+
+
+def _control_snapshot(scroll, name, control):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QWidget
+
+    query = Qt.InputMethodQuery.ImCursorRectangle
+    def bar_state(bar):
+        return {"minimum": bar.minimum(), "maximum": bar.maximum(),
+            "value": bar.value(), "page_step": bar.pageStep()}
+
+    return {"name": name, "type": type(control).__name__,
+        "object_name": control.objectName(), "visible": control.isVisible(),
+        "hidden": control.isHidden(), "visible_to_content": control.isVisibleTo(scroll.widget()),
+        "enabled": control.isEnabled(),
+        "focus": control.hasFocus(), "geometry": list(control.geometry().getRect()),
+        "bounds": list(_bounds_in(control, scroll.viewport()).getRect()),
+        "content_bounds": list(_bounds_in(control, scroll.widget()).getRect()),
+        "cursor_rect": list(control.inputMethodQuery(query).getRect()),
+        "default_cursor_rect": list(QWidget.inputMethodQuery(control, query).getRect()),
+        "whole_region_visible": control.visibleRegion().contains(control.rect()),
+        "viewport": list(scroll.viewport().rect().getRect()),
+        "content": list(scroll.widget().geometry().getRect()),
+        "horizontal": bar_state(scroll.horizontalScrollBar()),
+        "vertical": bar_state(scroll.verticalScrollBar())}
+
+
+def _parameter_controls(window):
+    from PySide6.QtWidgets import QAbstractSpinBox, QComboBox, QLineEdit, QPushButton
+
+    controls = {f"fields.{name}": control for name, control in window.fields.items()}
+    for name in ("magnetics_mode_combo", "parameter_mode_combo", "topology",
+                 "integrated_source_combo", "integrated_core_combo", "integrated_note",
+                 "primary_device_combo", "copy_auto_button", "run_button", "fast_wave_button",
+                 "hb_wave_button", "detail_wave_button", "small_signal_button"):
+        controls[name] = getattr(window, name)
+    content = window.parameter_dock.widget().widget()
+    for text in ("双漏感参考例（非实测）", "可达参考例（非实测）"):
+        matches = [button for button in content.findChildren(QPushButton) if button.text() == text]
+        assert len(matches) == 1, (text, "missing or duplicate reference-example action")
+        controls[text] = matches[0]
+    # A visible-state filter would silently drop hidden regressions. Include all
+    # edits/actions, disabled ones too; only spin boxes' internal edits are owned
+    # subcontrols rather than additional user inputs.
+    actual = {control for cls in (QAbstractSpinBox, QComboBox, QLineEdit, QPushButton)
+        for control in content.findChildren(cls)
+        if not isinstance(control.parentWidget(), QAbstractSpinBox)}
+    assert set(controls.values()) == actual, "Parameter control coverage changed"
+    return controls
+
+
+@pytest.mark.parametrize("focus", [False, True])
+@pytest.mark.parametrize("height", [32, 34, 35])
+def test_whole_control_scroll_and_visibility_gate(monkeypatch, focus, height):
+    pytest.importorskip("PySide6")
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtWidgets import QApplication, QDoubleSpinBox, QScrollArea, QWidget
+    from llc_design.gui.lifetime import dispose_widgets
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    scroll = QScrollArea()
+    content = QWidget()
+    control = QDoubleSpinBox(content)
+    try:
+        scroll.resize(265, 620)
+        content.resize(240, 1800)
+        control.setGeometry(93, 800, 134, height)
+        scroll.setWidget(content)
+        scroll.show()
+        app.processEvents()
+        if focus:
+            control.setFocus()
+        else:
+            control.clearFocus()
+        app.processEvents()
+        assert control.hasFocus() is focus
+        viewport = scroll.viewport()
+        cursor = control.inputMethodQuery(Qt.InputMethodQuery.ImCursorRectangle)
+        # Derive an edge case from actual native cursor metrics. No substituted
+        # size hints or mocked visibility: cursor inside, outer border outside.
+        assert cursor.bottom() < control.height() - 1
+        edge = control.y() + control.height() - viewport.height()
+        scroll.verticalScrollBar().setValue(edge - 1)
+        app.processEvents()
+        assert viewport.rect().contains(QRect(control.mapTo(viewport, cursor.topLeft()), cursor.size()))
+        with pytest.raises(AssertionError):
+            _assert_whole_control_visible(scroll, "probe", control)
+        before = scroll.verticalScrollBar().value()
+        scroll.ensureWidgetVisible(control)
+        app.processEvents()
+        assert scroll.verticalScrollBar().value() == before
+        with pytest.raises(AssertionError):
+            _assert_whole_control_visible(scroll, "probe", control)
+        _scroll_whole_control_into_view(scroll, control)
+        app.processEvents()
+        _assert_whole_control_visible(scroll, "probe", control)
+        scroll.verticalScrollBar().setValue(control.y() + 1)
+        assert _bounds_in(control, viewport).top() == -1
+        with pytest.raises(AssertionError):
+            _assert_whole_control_visible(scroll, "top-clipped probe", control)
+        _scroll_whole_control_into_view(scroll, control)
+        app.processEvents()
+        _assert_whole_control_visible(scroll, "top-clipped probe", control)
+        control.setEnabled(False)
+        _assert_whole_control_visible(scroll, "disabled probe", control)
+        control.hide()
+        assert viewport.rect().contains(_bounds_in(control, viewport))
+        with pytest.raises(AssertionError, match="hidden control"):
+            _assert_whole_control_visible(scroll, "hidden probe", control)
+        control.show()
+        app.processEvents()
+        # A real oversized control remains unreachable; the helper cannot turn
+        # clipping into a pass by moving or resizing the tested widget.
+        control.resize(control.width(), viewport.height() + 1)
+        _scroll_whole_control_into_view(scroll, control)
+        app.processEvents()
+        with pytest.raises(AssertionError):
+            _assert_whole_control_visible(scroll, "oversized probe", control)
+    finally:
+        dispose_widgets([scroll])
+
+
 def _exercise_metrics(font_points):
-    from PySide6.QtCore import QPoint, QRect, Qt
+    from PySide6.QtCore import Qt, qVersion
+    from PySide6.QtGui import QFontInfo, QFontMetrics
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
     from shiboken6 import isValid
@@ -51,7 +200,17 @@ def _exercise_metrics(font_points):
     font = app.font()
     font.setPointSizeF(font_points)
     app.setFont(font)
+    evidence = Path(os.environ.get("LLC_LAYOUT_EVIDENCE_DIR", Path.cwd()))
+    evidence.mkdir(parents=True, exist_ok=True)
+    prefix = f"llc-1280x720-{font_points:g}pt-dock"
+    font_info = QFontInfo(app.font())
+    diagnostics = {"platform": sys.platform, "qt_platform": app.platformName(),
+        "qt_version": qVersion(), "source": str(ROOT), "requested_font_points": font_points,
+        "font": {"requested": app.font().toString(), "resolved_family": font_info.family(),
+            "resolved_point_size": font_info.pointSizeF(), "height": QFontMetrics(app.font()).height()},
+        "controls": [], "completed": False}
     window = module.LLCMainWindow()
+    scroll = window.parameter_dock.widget()
     try:
         screen = window.screen()
         assert screen.availableGeometry().size().toTuple() == (1280, 720)
@@ -98,22 +257,25 @@ def _exercise_metrics(font_points):
         window.resizeDocks([window.parameter_dock], [scroll.minimumWidth()], Qt.Orientation.Horizontal)
         fits()
         assert scroll.width() == scroll.minimumWidth()
-        controls = (*window.fields.values(), window.magnetics_mode_combo,
-            window.parameter_mode_combo, window.integrated_source_combo,
-            window.integrated_core_combo, window.integrated_note,
-            window.run_button, window.fast_wave_button, window.hb_wave_button,
-            window.detail_wave_button, window.small_signal_button)
+        controls = _parameter_controls(window)
         for load_integrated in (False, True):
+            mode = "integrated" if load_integrated else "normal"
             if load_integrated:
                 window._load_reachable_integrated_example()
-            for control in controls:
-                scroll.ensureWidgetVisible(control)
-                QTest.qWait(1)
-                assert scroll.horizontalScrollBar().maximum() == 0
-                bounds = QRect(control.mapTo(scroll.viewport(), QPoint()), control.size())
-                assert scroll.viewport().rect().contains(bounds), (type(control).__name__, bounds)
+            # Apply the mode's pending layout before choosing the scroll target.
+            app.processEvents()
+            for name, control in controls.items():
+                record = {"mode": mode, "name": name,
+                    "before": _control_snapshot(scroll, name, control)}
+                diagnostics["controls"].append(record)
+                _scroll_whole_control_into_view(scroll, control)
+                record["scrolled"] = _control_snapshot(scroll, name, control)
+                app.processEvents()
+                record["settled"] = _control_snapshot(scroll, name, control)
+                _assert_whole_control_visible(scroll, name, control)
             assert scroll.verticalScrollBar().value() > 0
             fits()
+            assert window.grab().save(str(evidence / f"{prefix}-{mode}.png"))
         window.close()
         window.show()
         fits()
@@ -122,8 +284,22 @@ def _exercise_metrics(font_points):
             "minimum": list(window.minimumSizeHint().toTuple()),
             "dock_viewport": list(scroll.viewport().size().toTuple()),
             "horizontal_scroll": scroll.horizontalScrollBar().maximum()}
+        diagnostics["completed"] = True
+    except BaseException as exc:
+        diagnostics["failure"] = {"type": type(exc).__name__, "message": str(exc)}
+        diagnostics["failure_screenshot_saved"] = window.grab().save(str(evidence / f"{prefix}-failure.png"))
+        raise
     finally:
-        dispose_widgets([window])
+        try:
+            diagnostics.update(frame=list(window.frameGeometry().getRect()),
+                minimum=list(window.minimumSizeHint().toTuple()),
+                viewport=list(scroll.viewport().rect().getRect()),
+                controls_at_exit=[_control_snapshot(scroll, name, control)
+                    for name, control in controls.items()] if "controls" in locals() else [])
+            (evidence / f"{prefix}.json").write_text(
+                json.dumps(diagnostics, indent=2, ensure_ascii=False), encoding="utf-8")
+        finally:
+            dispose_widgets([window])
     assert all(not isValid(widget) for widget in
         (window, candidate, candidate.status_scroll, candidate.status))
     print(json.dumps({**measurements, "disposed": True}), flush=True)
