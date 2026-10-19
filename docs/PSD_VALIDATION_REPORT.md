@@ -1,5 +1,31 @@
 # Power Stage Designer validation report
 
+## Native controller-export follow-up (2026-10-19)
+
+Actual native run `39338660357` passes all 100 complete controls at each of
+10 pt, 12 pt and controlled-scrollbar profiles on both Windows and macOS.
+The macOS 12 pt frame now fits 1280×720; its minimum is 1274×669, down from
+1274×736 before the Two-Stage input-layout repair. Both JSON editors remain
+usable with keyboard input and scrolling.
+
+The same run preserves later controller-snapshot preflight failures:
+macOS **512 passed / 1 failed / 2 skipped**, Windows **513 passed / 1 failed /
+1 skipped**. The macOS test captures an immediately invalidated controller
+before its debounced publication. Independent real-GCC experiments identify a
+separate Windows product defect: platform text translation changes hash-bound LF
+header bytes to CRLF, so a numerical PASS becomes a byte-identity FAIL on read.
+The previous CI did not preserve that export sidecar, so its exact original
+Windows failure reason cannot be uniquely recovered. Native full-suite and
+frozen qualification remain open. No numerical tolerance or publication gate
+is relaxed. See [the byte-identity repair and qualification boundary](NATIVE_C99_BYTE_IDENTITY.md).
+
+The fixed candidate passes 67 focused tests; independent checks pass nine real-GCC
+vectors, 18 export safety cases and 18 Qt snapshot/boundary cases. Exact sample
+periods, detached replay, fresh-directory re-export, and fail-closed behavior are
+retained. These local checks do not substitute for new native full/frozen acceptance.
+The integrated final selection passes 60 cases in 96.04 s, with 196 CJK-glyph
+warnings. Repaired files match the independently reviewed candidate exactly.
+
 ## Worker-wait qualification correction (2026-10-19)
 
 The refreshed `74decea` installed-wheel qualification preserves a failed run:

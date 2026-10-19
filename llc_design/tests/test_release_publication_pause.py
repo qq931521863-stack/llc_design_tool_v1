@@ -92,6 +92,7 @@ def test_native_regression_preflight_does_not_replace_complete_test_gate():
     assert "test_independent_validation.py" in block[early:complete]
     assert "test_psfb_dense_polynomials.py" in block[early:complete]
     assert "test_export_checks.py" in block[early:complete]
+    assert "test_verified_c99_delivery.py" in block[early:complete]
     assert "test_large_real_map_and_curves_have_bounded_preview_and_complete_exact_export" in block[early:complete]
     assert "test_saved_session_preserves_utf8_bytes_and_restores" in block[early:complete]
     assert "test_exported_scan_has_exact_csv_bytes_and_consumes_without_blank_rows" in block[early:complete]
