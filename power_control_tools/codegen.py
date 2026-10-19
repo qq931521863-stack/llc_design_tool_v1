@@ -201,13 +201,13 @@ def verify_c99_filter(digital: DigitalTransferFunction, exported: C99Export, *, 
 
 
 def _atomic_text(path: Path, text: str) -> None:
-    """Replace one artifact without exposing a partially written header/report."""
+    """Atomically replace an artifact with exact UTF-8 bytes on every platform."""
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+        with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent,
                                          prefix="." + path.name, delete=False) as stream:
             temporary = Path(stream.name)
-            stream.write(text)
+            stream.write(text.encode("utf-8"))
             stream.flush()
             os.fsync(stream.fileno())
         temporary.replace(path)
@@ -273,7 +273,7 @@ def export_verified_c99_filter(
     record(C99Verification(False, False, float("nan"), float("nan"), message="Verification not run"), pending)
     with tempfile.TemporaryDirectory(prefix=".c99-verification-", dir=path.parent) as directory:
         probe = Path(directory) / path.name
-        probe.write_text(body, encoding="utf-8")
+        probe.write_bytes(body.encode("utf-8"))
         try:
             result = (verify_c99_filter if verifier is None else verifier)(
                 digital, C99Export(probe, exported.sections, name))
@@ -285,7 +285,7 @@ def export_verified_c99_filter(
             artifact = Path(directory) / filename
             if artifact.exists():
                 shutil.copy2(artifact, path.parent / filename)
-        if probe.read_text(encoding="utf-8") != body:
+        if probe.read_bytes() != body.encode("utf-8"):
             result = C99Verification(True, False, float("inf"), float("inf"),
                                      result.compiler, "Header changed during verification")
     final = body if result.available and result.passed else _blocked_header(body, name, result.status)

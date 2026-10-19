@@ -5,6 +5,7 @@ existing float32 host budget fails. The budget is intentionally not relaxed.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -16,37 +17,72 @@ from llc_design.tests.conftest import desktop_qapp  # noqa: F401
 from power_control_tools import codegen
 from power_control_tools.models import DigitalTransferFunction
 
-PASS_CONTROLLER = DigitalTransferFunction((0.0, .26, -.042, .014), (2.0, -.62, .074), 50000.0)
+PASS_CONTROLLER = DigitalTransferFunction((0.0, .26, -.042, .014), (2.0, -.62, .074), 50000.0,
+                                         source="独立快照 μ")
 FAIL_CONTROLLER = DigitalTransferFunction((.001,), (1.0, -1.98, .9801), 50000.0)
+
+
+@pytest.fixture(params=[False, True], ids=["native-io", "windows-text-io"])
+def atomic_text_io(request, monkeypatch, tmp_path):
+    """Exercise Windows' real CRLF translator without changing the compiler."""
+    if request.param:
+        original = codegen.tempfile.NamedTemporaryFile
+
+        def windows_default_newlines(*args, **kwargs):
+            if "b" not in kwargs.get("mode", "w+b") and kwargs.get("newline") is None:
+                kwargs["newline"] = "\r\n"
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(codegen.tempfile, "NamedTemporaryFile", windows_default_newlines)
+        original_open = Path.open
+
+        def windows_path_open(path, mode="r", buffering=-1, encoding=None,
+                              errors=None, newline=None):
+            if (tmp_path in path.parents and "b" not in mode
+                    and any(flag in mode for flag in "wax+") and newline is None):
+                newline = "\r\n"
+            return original_open(path, mode, buffering, encoding, errors, newline)
+
+        monkeypatch.setattr(Path, "open", windows_path_open)
 
 
 def _compile_header(path: Path) -> subprocess.CompletedProcess:
     harness = path.parent / "ordinary_include.c"
-    harness.write_text(f'#include "{path.name}"\nint main(void) {{ return 0; }}\n')
+    harness.write_text(f'#include "{path.name}"\nint main(void) {{ return 0; }}\n', encoding="utf-8")
     return subprocess.run(["gcc", "-std=c99", "-Wall", "-Wextra", "-Werror", str(harness),
                            "-o", str(path.parent / "ordinary_include")], capture_output=True, text=True, check=False)
 
 
 @pytest.mark.parametrize("state", ["PASS", "FAIL", "NOT_RUN"])
-def test_real_compiled_delivery_status_and_default_compile_gate(tmp_path, monkeypatch, state):
+def test_real_compiled_delivery_status_and_default_compile_gate(tmp_path, monkeypatch, state, atomic_text_io):
     controller = FAIL_CONTROLLER if state == "FAIL" else PASS_CONTROLLER
     if state == "NOT_RUN":
         monkeypatch.setattr(codegen.shutil, "which", lambda compiler: None)
-    exported, result = codegen.export_verified_c99_filter(controller, tmp_path / "actual.h", prefix="ASYMMETRIC")
+    probes = []
+
+    def verify_actual_bytes(digital, exported):
+        probes.append(exported.file_path.read_bytes())
+        return codegen.verify_c99_filter(digital, exported)
+
+    exported, result = codegen.export_verified_c99_filter(
+        controller, tmp_path / "actual.h", prefix="ASYMMETRIC", verifier=verify_actual_bytes)
+    assert probes == [codegen.render_c99_single_file(controller, prefix="ASYMMETRIC").encode("utf-8")]
     assert result.status == state
     report = codegen.read_c99_export_verification(exported)
-    assert report["status"] == state and report["passed"] is (state == "PASS")
+    assert report["status"] == state and report["passed"] is (state == "PASS"), report
+    assert report["header_sha256"] == hashlib.sha256(exported.file_path.read_bytes()).hexdigest()
     assert report["controller"]["b"] == list(controller.normalized().b)
     assert report["controller"]["a"] == list(controller.normalized().a)
     assert report["controller"]["sample_rate_hz"] == controller.sample_rate_hz
+    assert report["controller"]["source"] == controller.source
     compilation = _compile_header(exported.file_path)
     assert (compilation.returncode == 0) is (state == "PASS"), compilation.stderr
     assert not list(tmp_path.glob(".c99-verification-*")), "Do not leave an unblocked diagnostic copy"
     if state != "PASS":
         assert "#error" in compilation.stderr
-        assert f"VERIFICATION_STATUS_{state}" in exported.file_path.read_text()
+        assert f"VERIFICATION_STATUS_{state}" in exported.file_path.read_text(encoding="utf-8")
     else:
-        assert exported.file_path.read_text() == codegen.render_c99_single_file(controller, prefix="ASYMMETRIC")
+        assert exported.file_path.read_bytes() == probes[0]
         raw = subprocess.check_output([str(tmp_path / "_verify_filter.exe")], text=True).splitlines()
         actual = np.asarray([float(line.split()[1]) for line in raw if line.startswith("I ")])
         # Independent causal recurrence; do not reuse production SOS/lfilter.
@@ -59,17 +95,22 @@ def test_real_compiled_delivery_status_and_default_compile_gate(tmp_path, monkey
         np.testing.assert_allclose(actual, expected, atol=2e-8, rtol=2e-6)
 
 
-def test_saved_pass_is_invalid_after_actual_header_changes(tmp_path):
+@pytest.mark.parametrize("change", ["content", "line-endings"])
+def test_saved_pass_is_invalid_after_actual_header_changes(tmp_path, change, atomic_text_io):
     exported, result = codegen.export_verified_c99_filter(PASS_CONTROLLER, tmp_path / "bound.h")
     assert result.passed
-    exported.file_path.write_text(exported.file_path.read_text().replace("2.600000000e-01", "9.900000000e-01") + "\n/* edited */\n")
+    original = exported.file_path.read_bytes()
+    changed = (original.replace(b"\n", b"\r\n") if change == "line-endings"
+               else original.replace(b"1.300000000e-01F", b"9.900000000e-01F", 1))
+    assert changed != original
+    exported.file_path.write_bytes(changed)
     report = codegen.read_c99_export_verification(exported)
     assert report["status"] == "FAIL" and not report["passed"]
     assert "changed after verification" in report["message"]
 
 
 @pytest.mark.parametrize("failure", ["report", "header"])
-def test_interrupted_acceptance_never_releases_unverified_header(tmp_path, monkeypatch, failure):
+def test_interrupted_acceptance_never_releases_unverified_header(tmp_path, monkeypatch, failure, atomic_text_io):
     original = codegen._atomic_text
 
     def fail(path, text):
@@ -86,6 +127,26 @@ def test_interrupted_acceptance_never_releases_unverified_header(tmp_path, monke
     assert _compile_header(path).returncode != 0
     exported = codegen.C99Export(path, 1)
     assert codegen.read_c99_export_verification(exported)["status"] != "PASS"
+
+
+@pytest.mark.parametrize("change", ["content", "line-endings"])
+def test_changed_compiler_probe_never_releases_verified_header(tmp_path, change, atomic_text_io):
+    def change_then_compile(controller, exported):
+        original = exported.file_path.read_bytes()
+        changed = (original.replace(b"\n", b"\r\n") if change == "line-endings"
+                   else original + b"\n/* edited during verification */\n")
+        exported.file_path.write_bytes(changed)
+        result = codegen.verify_c99_filter(controller, exported)
+        assert result.status == "PASS", result
+        return result
+
+    exported, result = codegen.export_verified_c99_filter(
+        PASS_CONTROLLER, tmp_path / "changed-probe.h", verifier=change_then_compile)
+    assert result.status == "FAIL"
+    assert result.message == "Header changed during verification"
+    report = codegen.read_c99_export_verification(exported)
+    assert report["status"] == "FAIL" and not report["passed"], report
+    assert _compile_header(exported.file_path).returncode != 0
 
 
 @pytest.fixture
@@ -160,7 +221,7 @@ def _actual_view(kind, fail, windows):
 
 @pytest.mark.parametrize("kind", ["llc", "fra", "control"])
 @pytest.mark.parametrize("state", ["PASS", "FAIL", "NOT_RUN"])
-def test_real_desktop_export_uses_same_verified_delivery(tmp_path, monkeypatch, desktop, kind, state):
+def test_real_desktop_export_uses_same_verified_delivery(tmp_path, monkeypatch, desktop, kind, state, atomic_text_io):
     from PySide6.QtWidgets import QFileDialog
     windows, messages = desktop
     _window, export = _actual_view(kind, state == "FAIL", windows)
@@ -172,7 +233,7 @@ def test_real_desktop_export_uses_same_verified_delivery(tmp_path, monkeypatch, 
     export()
     path = tmp_path / ("llc_vloop.h" if kind == "llc" else "actual.h")
     report = codegen.read_c99_export_verification(codegen.C99Export(path, 1))
-    assert report["status"] == state
+    assert report["status"] == state, report
     assert len(messages) == 1, messages
     assert messages[0][0] == ("information" if state == "PASS" else "warning"), messages
     if state != "PASS":

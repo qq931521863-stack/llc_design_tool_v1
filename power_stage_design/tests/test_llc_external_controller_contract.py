@@ -80,14 +80,12 @@ def _action(window, text):
 
 
 def _valid_source(host):
-    from PySide6.QtTest import QTest
-
     from power_control_tools.models import ControllerKind
     host.show_workspace("control")
     editor = host.control_window
     editor.ctrl.setCurrentIndex(editor.ctrl.findData(ControllerKind.TWO_P_TWO_Z))
-    _enter(editor.gain, .002)
-    QTest.qWait(80)
+    _enter(editor.gain, .002, wait=False)
+    _wait_for_controller(host)
     assert editor.current_digital is not None
     return editor.current_digital
 
@@ -237,7 +235,9 @@ def test_live_pending_error_retires_result_and_late_worker_without_local_fallbac
 
 
 @pytest.mark.parametrize("legacy", [False, True])
-def test_saved_exact_snapshot_detaches_from_live_editor_and_exports(host, monkeypatch, tmp_path, legacy):
+@pytest.mark.parametrize("snapshot_backlog", [False, True], ids=["idle", "queued-edit"])
+def test_saved_exact_snapshot_detaches_from_live_editor_and_exports(host, monkeypatch, tmp_path, legacy, snapshot_backlog):
+    from PySide6.QtCore import QElapsedTimer, QTimer
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QFileDialog
 
@@ -246,8 +246,25 @@ def test_saved_exact_snapshot_detaches_from_live_editor_and_exports(host, monkey
     from power_control_tools.models import DiscretizationMethod
     host.llc_window.digital_loop_view.sample_us.setValue(31.125)
     _valid_source(host)
-    _enter(host.control_window.fs, 61543.21)
-    exact = host.control_window.current_digital
+    editor = host.control_window
+    _enter(editor.fs, 61000 if snapshot_backlog else 61543.21, wait=False)
+    redraws = []
+    if snapshot_backlog:
+        def redraw_then_edit():
+            # A later real edit after queued rendering must finish its own
+            # debounce; the previous 80 ms capture can still see None here.
+            elapsed = QElapsedTimer()
+            elapsed.start()
+            while elapsed.elapsed() < 120:
+                editor.bode_canvas.draw()
+                redraws.append(True)
+            _enter(editor.fs, 61543.21, wait=False)
+        QTimer.singleShot(0, redraw_then_edit)
+    _wait_for_controller(host)
+    assert bool(redraws) == snapshot_backlog
+    exact = editor.current_digital
+    # The editor accepts one decimal place; preserve its actual displayed rate.
+    assert exact.sample_rate_hz == editor.fs.value() == 61543.2
     window, view = _show_loop(host)
     original = _run(window, view)
     path = tmp_path / "external.json"
@@ -276,7 +293,8 @@ def test_saved_exact_snapshot_detaches_from_live_editor_and_exports(host, monkey
     editor = host.control_window
     host.show_workspace("control")
     editor.method.setCurrentIndex(editor.method.findData(DiscretizationMethod.PREWARP_TUSTIN))
-    _enter(editor.prewarp, 40000)
+    _enter(editor.prewarp, 40000, wait=False)
+    _wait_for_controller(host, error=True)
     assert editor.current_digital is None
     window, view = _show_loop(host)
     rebuilt = _run(window, view)
@@ -286,7 +304,8 @@ def test_saved_exact_snapshot_detaches_from_live_editor_and_exports(host, monkey
     assert "snapshot" in rebuilt.controller_source and "Control Tools live:" not in rebuilt.controller_source
     assert "SHA256=" in rebuilt.controller_source
     # Unrelated successful live publication must not replace a selected saved snapshot.
-    _enter(editor.prewarp, 1000)
+    _enter(editor.prewarp, 1000, wait=False)
+    _wait_for_controller(host)
     assert view.result is rebuilt and view._external_controller.b == exact.b
     out = tmp_path / "export"
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a: str(out))
@@ -295,7 +314,7 @@ def test_saved_exact_snapshot_detaches_from_live_editor_and_exports(host, monkey
     _click(view.codegen_button)
     header = out / "llc_vloop.h"
     report = read_c99_export_verification(C99Export(header, 1))
-    assert report["status"] == "PASS"
+    assert report["status"] == "PASS", report
     assert report["controller"]["b"] == list(exact.b)
     assert report["controller"]["sample_rate_hz"] == pytest.approx(exact.sample_rate_hz)
     assert report["controller"]["source"] == rebuilt.controller_source
@@ -306,6 +325,27 @@ def test_saved_exact_snapshot_detaches_from_live_editor_and_exports(host, monkey
     assert resaved["external_controller"]["sha256"] == metadata["sha256"]
     if not legacy:
         assert resaved["external_controller"]["captured_at_utc"] == metadata["captured_at_utc"]
+    _action(window, "加载 JSON")
+    _workers(window)
+    assert view.result is None and not view.codegen_button.isEnabled()
+    assert not view._external_controller_live
+    reloaded = _run(window, view)
+    np.testing.assert_array_equal(reloaded.controller.numerator, exact.b)
+    np.testing.assert_array_equal(reloaded.controller.denominator, exact.a)
+    assert reloaded.controller.sample_time_s == rebuilt.controller.sample_time_s
+    reloaded_out = tmp_path / "export-reloaded"
+    assert not reloaded_out.exists()
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a: str(reloaded_out))
+    view.page_scroll.ensureWidgetVisible(view.codegen_button)
+    QTest.qWait(30)
+    _click(view.codegen_button)
+    header = reloaded_out / "llc_vloop.h"
+    report = read_c99_export_verification(C99Export(header, 1))
+    assert report["status"] == "PASS", report
+    assert report["controller"]["b"] == list(exact.b)
+    assert report["controller"]["a"] == list(exact.a)
+    assert report["controller"]["sample_rate_hz"] == exact.sample_rate_hz
+    assert report["controller"]["source"] == reloaded.controller_source
     view.page_scroll.ensureWidgetVisible(view.external_controller_check)
     _click(view.external_controller_check)
     assert view.sample_us.value() == 31.125
