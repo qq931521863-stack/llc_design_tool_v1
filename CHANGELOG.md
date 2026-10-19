@@ -2,7 +2,7 @@
 
 This file keeps the **maintained product history**. Detailed debugging notes, one-off migration instructions, CI result snapshots and binary release artifacts are intentionally kept out of the source documentation tree; Git history, Pull Requests, Actions and Releases provide that archive.
 
-## 9.9.0 — 2026-10-19
+## 9.9.0 — Unreleased
 
 ### Added — Power Stage Designer workspace
 
@@ -15,6 +15,18 @@ This file keeps the **maintained product history**. Detailed debugging notes, on
   corners with complete point identity and per-metric worst cases;
 - saves validated input/model/controller/device snapshots and recomputes on load;
   exports current HTML reports and waveform CSV with stale-result protection.
+
+### Added — Source-backed and integrated magnetics
+
+- imports four source catalogs with explicit part/geometry/formula provenance,
+  missing-data and conflict gates; connects powder-core selection, source-specific
+  PFC calculation, saved inputs and reports, plus the LLC reference catalog;
+- adds integrated LLC transformer-leakage resonance beside the separate-Lr default:
+  coherent Lp/Ls/M-to-APR conversion, physical core flux, winding-field feasibility,
+  shared magnetic loss/thermal accounting, actual desktop/save/report consumers;
+- keeps characterized core and turns locked during optimization; preserves user
+  capacitor values and distinguishes FHA/EDF display projections from accepted
+  time-domain flux/loss data. Synthetic examples do not certify physical hardware.
 
 ### Improved — Shared LLC, PFC and digital evidence
 
@@ -29,8 +41,9 @@ This file keeps the **maintained product history**. Detailed debugging notes, on
 
 ### Release and engineering boundary
 
-- qualifies six-workspace frozen bundles, including actual PSD calculation,
-  loop/session/report paths and packaged resources, before publication;
+- requires six-workspace frozen-bundle qualification, including actual PSD,
+  magnetic catalog and integrated-LLC calculation/save/report consumers, before
+  publication. New-source aggregate and native-platform gates remain pending;
 - T05/T11/T18 exact TI executable policies remain PARTIAL; each other topology
   retains its explicit ideal/small-ripple/domain limits. No complete TI parity,
   vendor-model accuracy, real measurement or hardware safety acceptance is claimed;

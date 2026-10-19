@@ -2,11 +2,16 @@
 
 ## Latest acceptance additions and corrections (2026-10-19)
 
-- New user requirement: integrated LLC transformer-leakage resonance alongside
-  the existing separate inductor. This is a pending end-to-end item, separate
-  from the original 50 IDs. Physical turns ratio, effective APR ratio, open/short
-  inductances, secondary leakage and physical core flux must remain distinct.
-  Shared magnetic loss/BOM/thermal accounting must not add a nonexistent Lr part.
+- New user requirement: integrated LLC transformer-leakage resonance is implemented
+  alongside the separate-Lr default (`c06f1d5`), separate from the original 50 IDs.
+  Two-winding matrix/open-short inputs transform Lr, APR Lm and effective ratio
+  together; actual turns, physical flux, P/2-S-P/2 winding feasibility and one-body
+  loss/thermal accounting remain explicit. Actual desktop, locked-magnetics
+  optimization, saved identity and report consumers have focused independent
+  acceptance. Fresh merged-source aggregate/artifact acceptance remains pending.
+  FHA/EDF Vμ is explicitly a display projection; accepted TD uses mapped physical
+  flux. CT/star and nonzero magnetizing-series-R paths are rejected, not approximated
+  as this model. See [workflow and limits](magnetics/integrated_llc_workflow.md).
 
 - T18 parameter suggestions: the optional Lm target must be off by default and
   must not silently carry between topologies or new projects. A real aggregate

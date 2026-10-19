@@ -269,6 +269,21 @@ The catalog also opens measured sinusoidal core-loss CSV comparison and an
 optional bounded 3C90 waveform predictor. It never substitutes that predictor
 for PC40/PC44 or another material. See [magnetic validation (Chinese)](docs/engineering-expansion.md#数据库与磁计算基准).
 
+### Integrated LLC resonant magnetics
+
+The LLC global input panel offers **磁件结构 / 集成谐振漏感** alongside the
+separate-Lr default. Supply a declared two-winding inductance matrix or consistent
+open/short measurements to derive Lr, APR Lm and the effective electrical ratio
+together. Physical core flux, winding geometry and loss use the actual turns ratio;
+the shared transformer has no duplicate external-inductor loss or thermal node.
+
+The winding screen includes insulation spacing, required build and unreachable
+leakage targets. Its labeled reference examples are software models, not tested
+hardware. Saved inputs, calculation books and formula PDFs retain source identity,
+the physical/APR distinction and geometry limits. See the [integrated LLC workflow](docs/magnetics/integrated_llc_workflow.md)
+for input definitions and the two-winding/full-bridge-secondary scope. Final
+integrated-source GUI and artifact qualification is still in progress.
+
 ### Source-backed powder-core selection
 
 The added CSC reference catalog preserves **630 printed part numbers**, **318

@@ -5,9 +5,14 @@
 The latest user addition is integrated LLC resonant magnetics: preserve the
 separate-Lr default and add transformer-leakage resonance with actual electrical,
 physical winding/flux, loss, thermal, selection, persistence and report consumers.
-This is in isolated implementation and independent physical review. A renamed
-Lr field or an unmatched short-circuit inductance is not acceptance. Final-source
-qualification must include this new scope.
+This is implemented and locally integrated as `c06f1d5`, including coherent APR
+mapping, physical flux, explicit winding feasibility, actual GUI/save/report and
+locked-magnetics optimization. Focused independent physical/TD and 34-step desktop
+acceptance pass; the final merged-source replay, aggregate and artifact gates are
+next. Default seven-harmonic HB completion/cancellation remains under observation.
+FHA/EDF projection limits and unsupported multiwinding/series-R domains are explicit.
+See the [integrated workflow](magnetics/integrated_llc_workflow.md) and two synthetic
+[software examples](../examples/integrated_llc/).
 
 The user additionally requested completion of the magnetic-core selection database
 from four supplied CSC documents. This is a new acceptance item alongside the
@@ -20,7 +25,8 @@ The `3f09c4b` mandatory packaging gate also passes 76 affected contract cases an
 a real-source helper replay. Actual new-source wheel/frozen qualification remains
 pending; these are not artifact results. Missing conventions and parameters remain
 explicit; legacy default bias/loss/material values must not fill new records.
-No final source freeze or publication is authorized while this work is unfinished.
+The local source will be frozen for qualification after integration; publication
+remains paused. No earlier source result is promoted to acceptance of this source.
 
 The `0dfd790` aggregate was deliberately interrupted after a concrete native menu
 retention counterexample. Full-log reconciliation found **965 passed, 1 failed**
@@ -188,7 +194,9 @@ remain in the source tree.
 
 ## Strengthened artifact gate
 
-Production `packaging/launcher.py --self-test` now uses proof schema 3. It retains
+The historical production `packaging/launcher.py --self-test` used proof schema 3.
+Current schema 4 additionally requires source-backed magnetic and integrated-LLC
+actual-consumer proofs; final installed/frozen execution is pending. It retains
 all original Buck/Boost/Flyback, independent Buck VMC and six-workspace gates, then
 runs the optional T05/QR/T18 desktop solvers, all 47 branches, exact plotted arrays,
 save/recompute/report identities and the real nominal TwoStage candidate/Apply/

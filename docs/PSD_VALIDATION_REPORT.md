@@ -2,12 +2,32 @@
 
 ## Latest completion qualification correction (2026-10-19)
 
-New integrated-LLC leakage-resonance acceptance is pending. Independent model
-review found that the existing ampere-turn-balanced leakage-energy estimate is
-not generally the APR short-circuit Lr, and APR magnetizing flux is not generally
-the physical-core flux when secondary leakage is nonzero. The new implementation
-must validate the two-port transformation and physical loss consumers rather
-than reuse either quantity without conversion.
+Integrated-LLC leakage resonance is locally implemented in `c06f1d5`. Independent
+review corrected two unsafe substitutions: balanced-MMF leakage energy is not
+APR Lshort, and APR magnetizing flux is not generally physical-core flux. The
+implemented matrix/APR conversion, physical current mapping, insulation-region
+field integral and single-transformer accounting are exercised by actual consumers.
+Independent two-port checks cover 900 complex-load/frequency cases (maximum
+relative error 6.83e-13). Actual regulated TD converged with residual 1.9241e-10;
+physical Bpk 0.0967437178 T and total loss 75.4389136 W independently reconcile
+with port currents and the component ledger. These are model/software tests,
+not measured hardware qualification. Final merged-source replay is still pending.
+
+Author groups of 142, 29, 7 and 55 focused cases passed; these overlap and must
+not be summed. Independent real Qt flow covers 34 checks including exact input
+roundtrip, invalid-import atomicity, late-result rejection, mode changes, EDF
+waveform/export and formula PDF. A final EDF check reconciles all 2048 exported
+Vμ samples and preserves source metadata/warnings. Actual 720p/768p controls and
+stale-transformer-status counterexamples were repaired. The default seven-harmonic
+HB comparison exceeded a 120 s independent observation window; its full completion,
+UI/cancellation and cleanup are still being checked, not replaced by low-order PASS.
+
+FHA/fast EDF display voltages are hybrid fundamental/square-clamp projections:
+one independent example has a 46.47% RMS difference from Lμ*dIμ/dt. Labels,
+warnings and metadata disclose this. FHA magnetic loss uses a distinct triangular
+reconstruction; accepted TD uses actual physical samples. Actual TD labels retain
+the physical induced-voltage meaning. Matrix/core identity, geometry reachability,
+full operating envelope and hardware qualification are separate decisions.
 
 The immutable `0dfd790569b8f28935020bc1f3d3f78a5f57e7f0` run collected 3763
 cases. It was operator-interrupted (tool session exit 130) after a reproducible
@@ -50,10 +70,11 @@ runs persist each complete failure traceback as soon as pytest reports it, and
 surface a live failure count; an intentional synthetic failure verified this
 monitoring path. No tail-only "no failures" claim substitutes for complete logs.
 
-Four newly supplied magnetic-core PDFs add a separate pending source-data and
-actual-consumer acceptance item. Formula identity, units, coverage, missing flux
-conventions and user-declared assumptions must be distinguished before accepting
-new PFC calculation/report outputs. No data qualification is claimed yet.
+Four newly supplied magnetic-core PDFs add a separate source-data and actual-
+consumer acceptance item. Their implemented, independently checked declared scope
+is described in the source magnetic catalog section below. Actual new-source
+aggregate and installed/frozen qualification remain pending; missing model
+conventions and conflicts are never filled from legacy defaults.
 
 ## Current re-audit and terminated aggregate run (2026-10-19)
 
