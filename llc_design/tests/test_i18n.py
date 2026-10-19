@@ -219,6 +219,45 @@ def test_switching_language_retranslates_and_restores(workspace_controller):
         set_language("zh-Hans", notify=False)
 
 
+def test_new_feature_buttons_retranslate_and_restore(workspace_controller):
+    from PySide6.QtWidgets import QPushButton
+
+    from llc_design.gui.i18n_ui import apply_language
+    from llc_design.i18n import catalogue
+
+    app, controller = workspace_controller
+    sources = (
+        "FHA 波形", "HB 波形", "TD 波形", "复制 Auto → User", "取消计算",
+        "双漏感参考例（非实测）", "可达参考例（非实测）",
+        "主目录材料 / 原式 / 冲突…", "其他 PDF 资料 / 案例…",
+        "用户模型声明…", "计算零偏磁 / 公式参考值",
+        "保存磁件工程", "打开磁件工程", "磁件报告",
+    )
+    buttons = {source: [] for source in sources}
+    for window in (controller.llc_window, controller.pfc_window):
+        for button in window.findChildren(QPushButton):
+            source = button.property("i18nSourceText")
+            if source in buttons:
+                buttons[source].append(button)
+    assert all(buttons.values()), [source for source, found in buttons.items() if not found]
+    assert all(button.text() == source for source, found in buttons.items() for button in found)
+
+    try:
+        # Exercise real Qt bindings, restoration and a repeated switch cycle.
+        for code in ("en", "ja", "ko", "zh-Hans", "en", "zh-Hans"):
+            apply_language(code, app)
+            app.processEvents()
+            for source, found in buttons.items():
+                expected = source if code == "zh-Hans" else catalogue(code)[source]
+                if code != "zh-Hans":
+                    assert expected != source
+                for button in found:
+                    assert button.text() == expected, (code, source)
+                    assert button.property("i18nSourceText") == source
+    finally:
+        apply_language("zh-Hans", app)
+
+
 def test_language_choice_is_persisted():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     qt_widgets = pytest.importorskip("PySide6.QtWidgets")

@@ -501,3 +501,21 @@ CATALOGUE.update({
     '开始系统建模': 'Start System Modeling',
     '工作区选择与使用说明': 'Workspace selection and help',
 })
+
+# Integrated-magnetics examples, source-catalogue actions and waveform controls.
+CATALOGUE.update({
+    'FHA 波形': 'FHA waveforms',
+    'HB 波形': 'HB waveforms',
+    'TD 波形': 'TD waveforms',
+    '主目录材料 / 原式 / 冲突…': 'Main catalogue materials / original formulas / conflicts…',
+    '保存磁件工程': 'Save magnetic-component project',
+    '其他 PDF 资料 / 案例…': 'Other PDF references / examples…',
+    '双漏感参考例（非实测）': 'Dual-leakage reference example (not measured)',
+    '取消计算': 'Cancel computation',
+    '可达参考例（非实测）': 'Reachable reference example (not measured)',
+    '复制 Auto → User': 'Copy Auto → User',
+    '打开磁件工程': 'Open magnetic-component project',
+    '用户模型声明…': 'User model declaration…',
+    '磁件报告': 'Magnetic-component report',
+    '计算零偏磁 / 公式参考值': 'Calculate zero-bias / formula reference values',
+})
