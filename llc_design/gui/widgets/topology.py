@@ -72,6 +72,9 @@ class _Component(QGraphicsRectItem):
         if self.vertical:
             painter.drawText(32, -5, self.label)
             painter.drawText(32, 14, self.current)
+            if self.kind in {"capacitor", "resistor"}:
+                painter.drawText(-27, -24, "+")
+                painter.drawText(-27, 30, "−")
         else:
             painter.drawText(-15, -24, self.label)
             painter.drawText(-15, 30, self.current)
@@ -102,17 +105,18 @@ class TopologyView(QGraphicsView):
     def _dot(self, x, y):
         self.scene().addEllipse(x-3, y-3, 6, 6, QPen(Qt.PenStyle.NoPen), QColor("#35516b"))
 
-    def _part(self, key, label, kind, a, b, nodes, current=""):
+    def _part(self, key, label, kind, a, b, nodes, current="", scale=1.0):
         vertical = a[0] == b[0]
         x, y = (a[0]+b[0])/2, (a[1]+b[1])/2
         item = _Component(key, label, kind, x, y, vertical, current)
+        item.setScale(scale)
         self.scene().addItem(item)
         self.blocks[key] = item
         self.connections[key] = nodes
         if vertical:
-            self._wire(a, (x, y-38)); self._wire((x, y+38), b)
+            self._wire(a, (x, y-38*scale)); self._wire((x, y+38*scale), b)
         else:
-            self._wire(a, (x-38, y)); self._wire((x+38, y), b)
+            self._wire(a, (x-38*scale, y)); self._wire((x+38*scale, y), b)
         return item
 
     def _crossing(self, x, y):
@@ -138,7 +142,10 @@ class TopologyView(QGraphicsView):
         self.setSceneRect(0, 0, 1380, 570)
         self._label("LLC 半桥" if half else "LLC 全桥", 20, 10)
         self._label("点击每个器件查看 V / I；+ / − 为电压参考，箭头为电流参考", 230, 10)
-        self._part("bus", "Vbus", "source", (60, 60), (60, 360), ("BUS+", "PGND"))
+        self._part("bus", "Vbus", "source", (60, 60), (60, 360), ("BUS+", "PGND"),
+                   "I ↑" if not half else "I 未定")
+        if half:
+            self.blocks["bus"].setToolTip("点击查看直流母线电压；理想中点源的电流分配未建模，母线源电流未提供")
         self._wire((60, 60), (300, 60)); self._wire((60, 360), (300, 360))
         self._part("q1", "Q1", "switch", (180, 60), (180, 210), ("BUS+", "A"), "I ↓")
         self._part("q2", "Q2", "switch", (180, 210), (180, 360), ("A", "PGND"), "I ↑")
@@ -158,10 +165,8 @@ class TopologyView(QGraphicsView):
         self._label("A", 184, 184); self._label("+  Vab  −", 365, 172)
         self._part("lr", "Lr", "coil", (410, 210), (490, 210), ("A", "XR"), "Ir →")
         # Effective primary series damping is included by all waveform solvers.
-        self.connections["rseries"] = ("XR", "X")
-        self._wire((490, 210), (507, 210)); self._wire((533, 210), (550, 210))
-        self.scene().addRect(507, 203, 26, 14, QPen(QColor("#35516b"), 1.6))
-        self._label("RΣ", 509, 180)
+        self._part("rseries", "RΣ", "resistor", (490, 210), (550, 210),
+                   ("XR", "X"), "Ir →", scale=0.75)
         self._part("cr", "Cr", "capacitor", (550, 210), (630, 210), ("X", "P+"), "Ir →")
         self._wire((630, 210), (740, 210))
         self._wire((300, 250), (380, 250), (380, 400), (740, 400))
@@ -184,7 +189,7 @@ class TopologyView(QGraphicsView):
         self._part("sr3", "SR3", "switch", (1050, 130), (1050, 315), ("OUT+", "S−"), "I ↑")
         self._part("sr4", "SR4", "switch", (1050, 315), (1050, 440), ("S−", "SGND"), "I ↑")
         self._wire((930, 130), (1240, 130)); self._wire((930, 440), (1240, 440))
-        self._part("coesr", "ESR", "resistor", (1150, 130), (1150, 230), ("OUT+", "CO+"))
+        self._part("coesr", "ESR", "resistor", (1150, 130), (1150, 230), ("OUT+", "CO+"), "ICo ↓")
         self._part("co", "Co", "capacitor", (1150, 230), (1150, 440), ("CO+", "SGND"), "ICo ↓")
         self._part("load", "Rload", "resistor", (1240, 130), (1240, 440), ("OUT+", "SGND"), "Io ↓")
         self._label("+ Vo", 1170, 100); self._label("−", 1205, 445)

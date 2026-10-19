@@ -24,6 +24,7 @@ from .waveforms import (
     _gate_waveforms,
     _integrate_periodic_zero_mean,
     signal_statistics,
+    with_component_terminal_signals,
 )
 
 
@@ -446,7 +447,7 @@ def simulate_switched_steady_state(
             f"Periodic settling did not meet tolerance after {settled_cycles} cycles; "
             f"normalized mismatch={convergence:.3e}."
         )
-    return WaveformBundle(
+    return with_component_terminal_signals(WaveformBundle(
         time_s=time_s,
         switching_frequency_hz=fs,
         model_name="piecewise_switched_level2",
@@ -461,4 +462,6 @@ def simulate_switched_steady_state(
             "samples_per_cycle": cfg.samples_per_cycle,
             "output_cycles": cfg.output_cycles,
         },
-    )
+    ), bus_voltage_v=inputs.bus_voltage_v, primary_topology=model.p.primary_topology,
+        series_resistance_ohm=model.p.series_resistance_ohm,
+        output_cap_esr_ohm=model.p.output_cap_esr_ohm)

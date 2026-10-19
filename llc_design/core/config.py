@@ -206,7 +206,7 @@ WAVEFORM_SOLVERS = {'fast': {'cycles': 2, 'samples_per_cycle': 1024},
               'shooting_max_evaluations': 80}}
 WAVEFORM_COMPONENTS = frozenset({
     "", "bus", "bridge", "transformer", "sr", "output", "lr", "cr", "lm",
-    "primary", "secondary", "co", "load", "q1", "q2", "q3", "q4",
+    "primary", "secondary", "co", "coesr", "rseries", "load", "q1", "q2", "q3", "q4",
     "sr1", "sr2", "sr3", "sr4",
 })
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Mapping
 
@@ -166,6 +166,56 @@ def signal_statistics(
         thd_percent=thd,
         frequency_hz=dominant_frequency,
     )
+
+
+def with_component_terminal_signals(
+    bundle: WaveformBundle, *, bus_voltage_v: float, primary_topology: str,
+    series_resistance_ohm: float, output_cap_esr_ohm: float,
+) -> WaveformBundle:
+    """Expose modeled terminal quantities without changing any solver states.
+
+    The full bridge is an ideal lossless switching two-port: its signed DC
+    source current is Vab/Vbus * Ir, including the solver's zero-voltage dead
+    interval. The half bridge's parallel ideal midpoint sources do not specify
+    how their currents share with Vbus; a particular source current cannot be
+    recovered from the tank states and is deliberately absent.
+    """
+    signals = dict(bundle.signals)
+    fs = bundle.switching_frequency_hz
+    samples_per_cycle = max(1, round(1 / (fs * float(np.mean(np.diff(bundle.time_s))))))
+    ir = signals["i_resonant"].values
+    raw = {
+        "v_bus": ("直流母线电压 Vbus", "V", np.full_like(ir, bus_voltage_v),
+                  "primary", "BUS+ 相对 PGND；理想恒压源，不含母线电容纹波", fs),
+        "v_series_resistance": ("等效串联阻尼电压 VRΣ", "V", series_resistance_ohm * ir,
+                  "primary", "XR 到 X；使用本求解器实际 RΣ，已包含的等效阻尼不得再次计入总损耗", fs),
+        "v_output_cap_esr": ("输出电容 ESR 电压", "V",
+                  signals["v_output"].values - signals["v_output_cap_internal"].values,
+                  "output", "OUT+ 到 CO+；同源输出端电压减去理想电容电压", 2 * fs),
+    }
+    half = str(primary_topology).upper().endswith("HALF_BRIDGE")
+    bus_status = ("UNAVAILABLE: ideal split midpoint sources leave the individual DC source current undetermined"
+                  if half else "AVAILABLE: ideal lossless full-bridge input current; excludes Coss and gate-drive current")
+    if half:
+        signals.pop("i_bus", None)
+    else:
+        raw["i_bus"] = ("直流母线供给电流 Ibus", "A",
+                        signals["v_bridge"].values * ir / bus_voltage_v, "primary",
+                        "由 BUS+ 流入全桥为正；Vab/Vbus × Ir，负值为回馈；不含 Coss/驱动电流", 2 * fs)
+    for key, (label, unit, values, group, description, fundamental) in raw.items():
+        statistics = signal_statistics(values, samples_per_period=samples_per_cycle,
+                                       switching_frequency_hz=fs, fundamental_frequency_hz=fundamental)
+        if np.ptp(values) == 0:
+            statistics = replace(statistics, frequency_hz=0.0)
+        signals[key] = WaveformSignal(key, label, unit, values, statistics, group, description)
+    residual = (signals["i_rectified"].values - signals["i_output_cap"].values
+                - signals["i_load_output"].values)
+    return replace(bundle, signals=signals, metadata={
+        **bundle.metadata, "vbus_v": bus_voltage_v, "primary_topology": primary_topology,
+        "series_resistance_ohm": series_resistance_ohm,
+        "output_cap_esr_ohm": output_cap_esr_ohm, "bus_current_status": bus_status,
+        "output_node_kcl_residual_peak_a": float(np.max(np.abs(residual))),
+    })
 
 
 def _deadtime_bridge_square(
@@ -425,7 +475,7 @@ def reconstruct_dynamic_phasor_waveforms(
             description=description,
         )
 
-    return WaveformBundle(
+    return with_component_terminal_signals(WaveformBundle(
         time_s=time_s,
         switching_frequency_hz=fs,
         model_name="dynamic_phasor_edf_fast",
@@ -433,6 +483,7 @@ def reconstruct_dynamic_phasor_waveforms(
         warnings=(
             "Fast waveform mode retains only fundamental resonant-state components.",
             "Primary VDS traces are ideal switch states; nonlinear Coss commutation is not included.",
+            "EDF output-capacitor current uses constant mean load current; plotted Vo/R has a ripple/R KCL residual. Use HB or detailed mode for instantaneous output-network balance.",
         ),
         metadata={
             "output_voltage_v": steady_state.output_voltage_v,
@@ -440,4 +491,5 @@ def reconstruct_dynamic_phasor_waveforms(
             "cycles": cycles,
             "samples_per_cycle": samples_per_cycle,
         },
-    )
+    ), bus_voltage_v=inputs.bus_voltage_v, primary_topology=p.primary_topology,
+        series_resistance_ohm=p.series_resistance_ohm, output_cap_esr_ohm=p.output_cap_esr_ohm)

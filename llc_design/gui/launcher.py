@@ -11,17 +11,19 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QToolBar,
     QVBoxLayout,
 )
 
+from dab_design.gui.main_window import DABMainWindow
 from llc_design import __version__
 from llc_design.core.spec import LLCDesignSpec
 from llc_design.gui import theme
-from llc_design.gui.help import show_help
-from llc_design.i18n import t
-from llc_design.gui.main_window import LLCMainWindow
 from llc_design.gui.closed_loop_install import install_closed_loop_verification
+from llc_design.gui.contact import add_toolbar_contacts
 from llc_design.gui.device_library_install import install_device_library
+from llc_design.gui.help import show_help
+from llc_design.gui.main_window import LLCMainWindow
 from llc_design.gui.solution_map_install import install_llc_solution_map
 from llc_design.gui.system_modeling import (
     SystemModelingDesignDialog,
@@ -29,8 +31,8 @@ from llc_design.gui.system_modeling import (
     apply_definition_to_ttpl_window,
     install_guided_context_actions,
 )
+from llc_design.i18n import t
 from pfc_design.gui.main_window import PFCMainWindow
-from dab_design.gui.main_window import DABMainWindow
 from pfc_design.gui.solution_map_install import install_ttpl_solution_map
 from power_control_tools.gui.fra_advanced import install_advanced_fra_actions
 from power_control_tools.gui.fra_loop_designer import FRALoopDesignerWindow
@@ -48,7 +50,7 @@ class _LauncherCard(QFrame):
         description: str,
         *,
         primary: bool = False,
-        badge: str = "",
+        horizontal: bool = False,
         cta: str = "",
         object_name: str = "",
         parent=None,
@@ -67,49 +69,48 @@ class _LauncherCard(QFrame):
             f"QFrame#{object_name or 'launcher_card'}:hover {{"
             f"border-color:{palette.accent}; background:{palette.hover};}}"
         )
-        root = QVBoxLayout(self)
-        root.setContentsMargins(16, 14, 16, 14)
-        root.setSpacing(8)
-        if badge:
-            chip = QLabel(badge)
-            chip.setStyleSheet(
-                f"color:{palette.accent}; font-size:11px; font-weight:700;"
-                f"letter-spacing:0.4px; border:none; background:transparent;"
-            )
-            root.addWidget(chip)
+        root = QHBoxLayout(self) if horizontal else QVBoxLayout(self)
+        root.setContentsMargins(16, 12, 16, 12)
+        root.setSpacing(6)
+        text_layout = QVBoxLayout() if horizontal else root
+        if horizontal:
+            text_layout.setSpacing(6)
+            root.addLayout(text_layout, 1)
         title_label = QLabel(title)
         title_label.setWordWrap(True)
         title_label.setStyleSheet(
-            f"font-size:{18 if primary else 16}px; font-weight:700;"
+            f"font-size:{22 if primary else 16}px; font-weight:700;"
             f"color:{palette.text_strong}; border:none; background:transparent;"
         )
-        root.addWidget(title_label)
+        text_layout.addWidget(title_label)
         desc = QLabel(description)
         desc.setWordWrap(True)
         desc.setStyleSheet(
             f"font-size:13px; color:{palette.text_muted}; border:none; background:transparent;"
         )
-        root.addWidget(desc)
-        root.addStretch(1)
+        text_layout.addWidget(desc)
+        if not horizontal:
+            root.addStretch(1)
         self.button = QPushButton(cta or ("Start" if primary else t("进入")))
         self.button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.button.setMinimumHeight(36 if primary else 32)
         self.button.setStyleSheet(
             "QPushButton {"
-            f"font-size:14px; font-weight:650; border-radius:8px; padding:8px 18px;"
+            f"font-size:14px; font-weight:650; border-radius:8px; padding:6px 14px;"
             f"background:{palette.accent if primary else palette.surface_alt};"
             f"color:{'#ffffff' if primary else palette.text_strong};"
             f"border:1px solid {palette.accent if primary else palette.border_input};"
             "}"
             f"QPushButton:hover {{background:{palette.pressed if primary else palette.hover};}}"
         )
-        row = QHBoxLayout()
-        row.addStretch(1)
-        row.addWidget(self.button)
-        root.addLayout(row)
-        if primary:
-            self.setMinimumHeight(168)
+        if horizontal:
+            root.addWidget(self.button)
+            self.setMinimumHeight(116)
         else:
+            row = QHBoxLayout()
+            row.addStretch(1)
+            row.addWidget(self.button)
+            root.addLayout(row)
             self.setMinimumHeight(148)
 
 
@@ -120,7 +121,7 @@ class WorkspaceSelectionDialog(QDialog):
         super().__init__(parent)
         self.selected_workspace: str | None = None
         self.setWindowTitle(t("电源设计工具箱 — 选择设计功能"))
-        self.setMinimumSize(1024, 680)
+        self.setMinimumSize(1024, 620)
         self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
         self.setStyleSheet(theme.launcher_stylesheet(theme.active_theme()))
@@ -129,68 +130,74 @@ class WorkspaceSelectionDialog(QDialog):
         root.setContentsMargins(20, 16, 20, 16)
         root.setSpacing(10)
 
-        title = QLabel(t("请选择进入的设计工作区"))
+        title = QLabel(t("电源设计工具箱") + f" · V{__version__}")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 25px; font-weight: 650; padding: 4px;")
         root.addWidget(title)
 
         subtitle = QLabel(
-            t("V9.3 新增“系统建模与设计”：先逐步定义功率级、采样、ADC/PWM 与数字时序，再进入现有强分析引擎；")
-            + t("Expert 用户仍可直接进入 LLC、DAB、PFC、Control Tools 或 FRA 工作区。")
+            t("选择功率级、专用拓扑或控制分析工作区；切换工作区时保留当前设计。")
         )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("font-size: 13px; padding: 0 40px 8px 40px;")
+        subtitle.setStyleSheet("font-size: 13px;")
         root.addWidget(subtitle)
+
+        psd = _LauncherCard(
+            t("功率级设计 / Power Stage Designer"),
+            t("Buck 降压 · Boost 升压 · Buck-Boost 升降压 · 全桥 / 移相全桥 · 更多拓扑\n"
+              "功率级参数、原理图与电压电流波形、器件应力、模拟环路及工程工具箱"),
+            primary=True,
+            horizontal=True,
+            cta=t("进入功率级设计"),
+            object_name="power_stage_designer_card",
+        )
+        psd.button.setObjectName("power_stage_designer_button")
+        psd.button.setDefault(True)
+        psd.button.clicked.connect(lambda: self._select("power_stage"))
+        root.addWidget(psd)
 
         guided = _LauncherCard(
             t("系统建模与设计 / Guided System Design"),
             t("从功率级、采样、ADC、PWM 到完整闭环的逐步建模"),
-            primary=True,
-            badge=f"V{__version__} PRIMARY ENTRY",
-            cta="Start",
-            object_name="guided_system_design_button",
+            cta=t("开始系统建模"),
+            object_name="guided_system_design_card",
         )
         # Keep findChild(QPushButton, ...) working for existing smoke tests.
         guided.button.setObjectName("guided_system_design_button")
-        guided.setObjectName("guided_system_design_card")
         guided.button.clicked.connect(lambda: self._select("system_modeling"))
         grid = QGridLayout()
         grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(14)
+        grid.setVerticalSpacing(10)
 
         llc = _LauncherCard(
             t("进入 LLC 设计（Expert）"),
             t("谐振腔、磁性器件、损耗、开关波形、小信号与数字电压环"),
-            badge="EXPERT",
             cta=t("进入 LLC"),
             object_name="llc_expert_card",
         )
         pfc = _LauncherCard(
             t("进入 PFC 设计（Expert）"),
             t("单相 TTPL + 三相 Vienna：硬件设计、控制、采样链、Bode、AC/开关波形与 PF/THD"),
-            badge="EXPERT",
             cta=t("进入 PFC"),
             object_name="pfc_expert_card",
         )
         control = _LauncherCard(
             t("进入 Control Tools"),
             t("S2Z、数字滤波器、Bode、Step/Impulse、P/Z、SOS 与 C99 float32_t 导出"),
-            badge="EXPERT",
             cta=t("进入 Control Tools"),
             object_name="control_tools_card",
         )
         fra = _LauncherCard(
             t("进入 FRA Loop Designer"),
             t("Bode100 / SIMPLIS / Generic：Equivalent Plant、Auto Design、Model ID、稳定性与 C99"),
-            badge="EXPERT",
             cta=t("进入 FRA Loop Designer"),
             object_name="fra_designer_card",
         )
         dab = _LauncherCard(
             "DAB TPS 设计",
             "三移相控制、负载扫描、L/Cp 波形、电流与电容应力、换流电流及 PWM 计数",
-            badge="EXPERT", cta="进入 DAB TPS", object_name="dab_expert_card",
+            cta="进入 DAB TPS", object_name="dab_expert_card",
         )
         dab.button.clicked.connect(lambda: self._select("dab"))
         llc.button.clicked.connect(lambda: self._select("llc"))
@@ -203,25 +210,27 @@ class WorkspaceSelectionDialog(QDialog):
         grid.addWidget(control, 1, 0)
         grid.addWidget(fra, 1, 1)
         grid.addWidget(dab, 1, 2)
-        psd = QPushButton("Power Stage Designer · 通用功率级与工具箱")
-        psd.setObjectName("power_stage_designer_button")
-        psd.setMinimumHeight(42)
-        psd.clicked.connect(lambda: self._select("power_stage"))
-        grid.addWidget(psd, 2, 0, 1, 3)
         for column in range(3):
             grid.setColumnStretch(column, 1)
         root.addLayout(grid, 1)
 
         cancel = QPushButton(t("退出"))
+        cancel.setObjectName("launcher_exit_button")
         cancel.clicked.connect(self.reject)
         help_button = QPushButton(t("使用说明 / 帮助 (F1)"))
-        help_button.setToolTip(t("系统建模向导与五个 Expert 工作区分别做什么、如何选择"))
+        help_button.setToolTip(t("工作区选择与使用说明"))
         help_button.clicked.connect(lambda: show_help(self, "selector"))
         footer = QHBoxLayout()
-        footer.addStretch(1)
+        contacts = QToolBar(self)
+        contacts.setObjectName("launcher_contact_toolbar")
+        contacts.setStyleSheet("QToolBar { border: 0; background: transparent; }")
+        contacts.setMovable(False)
+        add_toolbar_contacts(contacts)
+        footer.addWidget(contacts, 1)
+        for button in (help_button, cancel):
+            button.setStyleSheet("font-size:13px; padding:6px 14px; border-radius:6px;")
         footer.addWidget(help_button)
         footer.addWidget(cancel)
-        footer.addStretch(1)
         root.addLayout(footer)
         shortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.HelpContents), self)
         shortcut.activated.connect(lambda: show_help(self, "selector"))

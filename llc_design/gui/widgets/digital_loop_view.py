@@ -87,9 +87,18 @@ class DigitalLoopView(QWidget):
         self._bode_cursor: BodeCursor | None = None
         self._cursor_frequency_hz: float | None = None
 
-        root = QVBoxLayout(self)
+        # Keep the original page and its controls as the tab identity. The
+        # diagram + readable Bode canvas are taller than a laptop viewport;
+        # scrolling this page must not enlarge every other LLC tab/window.
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        content = QWidget()
+        root = QVBoxLayout(content)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(7)
+        self.page_scroll = self._scroll_page(content)
+        self.page_scroll.setObjectName("llc_digital_loop_scroll")
+        page_layout.addWidget(self.page_scroll)
 
         diagram_header = QHBoxLayout()
         title = QLabel("LLC 数字控制信号链")
@@ -196,6 +205,13 @@ class DigitalLoopView(QWidget):
                 widget.textChanged.connect(self.invalidate_analysis)
         self.external_controller_check.toggled.connect(self.invalidate_analysis)
         self.codegen_button.setEnabled(False)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # A scrolled page can retain the Figure's preferred 700px height. Keep
+        # the whole Bode canvas reachable in one viewport, while preserving its
+        # readable floor and allowing the surrounding controls to scroll.
+        self.canvas.setMaximumHeight(max(self.canvas.minimumHeight(), self.height() - 16))
 
     def invalidate_analysis(self, *_args) -> None:
         """Retire all consumers immediately, including queued worker results."""

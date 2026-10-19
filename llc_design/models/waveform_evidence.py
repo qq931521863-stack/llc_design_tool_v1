@@ -5,6 +5,8 @@ survival.  Never attach nominal FHA/TD losses to a different waveform source.
 """
 from __future__ import annotations
 
+import numpy as np
+
 from ..core.spec import LLCDesignSpec, PrimaryTopology
 from ..dynamics.waveforms import WaveformBundle
 from .devices import DeviceDatabase
@@ -94,6 +96,35 @@ def component_waveform_evidence(bundle: WaveformBundle, spec: LLCDesignSpec) -> 
         "unknown_limits": "capacitor-specific rated voltage/current and thermal limits not provided",
         "summary": (f"同源恒定 ESR 损耗={co_loss:.6g} W | 输出端纹波={ripple:.6g} Vpp / "
                     f"限值 {spec.output_ripple_limit_vpp:g} Vpp；电容单体额定/温升约束未提供。"),
+    }
+    result["coesr"] = {
+        **result["co"], "voltage_signal": "v_output_cap_esr",
+        "plotted_voltage_signal": "v_output_cap_esr",
+        "loss_accounting": "Same output-capacitor ESR loss as co; do not add twice",
+        "summary": (f"同源 ESR 两端 V/I；恒定 ESR 损耗={co_loss:.6g} W，"
+                    "与 Co 显示的是同一损耗，不能重复相加；ESR 频温特性/温升未建模。"),
+    }
+    series_v = bundle.signals.get("v_series_resistance")
+    result["rseries"] = {
+        "source_identity": identity, "voltage_signal": "v_series_resistance",
+        "current_signal": "i_resonant",
+        "equivalent_resistance_ohm": bundle.metadata.get("series_resistance_ohm"),
+        "average_terminal_power_w": (None if series_v is None else
+            float(np.mean(series_v.values * bundle.signals["i_resonant"].values))),
+        "loss_accounting": "Equivalent damping already consumed by this solver; not an additional loss budget item",
+        "summary": ("同源 RΣ 等效阻尼 V/I；采用本次求解的电阻，已表示的损耗不能再次加入总损耗。"
+                    "不代表某一实体电阻，未提供单体额定/热约束。"),
+    }
+    bus_i = bundle.signals.get("i_bus")
+    result["bus"] = {
+        "source_identity": identity, "voltage_signal": "v_bus", "current_signal": "i_bus",
+        "current_available": bus_i is not None,
+        "current_status": bundle.metadata.get("bus_current_status", "UNKNOWN: source current unavailable"),
+        "average_terminal_power_w": (None if bus_i is None else
+            float(np.mean(bundle.signals["v_bus"].values * bus_i.values))),
+        "summary": ("同源理想直流母线 V/I；正电流由 BUS+ 供给全桥，负值为回馈；不含母线纹波、Coss/驱动电流。"
+                    if bus_i is not None else
+                    "同源理想直流母线电压；电流未提供：半桥理想中点源之间的电流分配未建模，不能由谐振电流唯一恢复。"),
     }
     for component in ('lr', 'lm', 'primary', 'secondary', 'transformer'):
         key = 'b_resonant_inductor' if component == 'lr' else 'b_transformer'

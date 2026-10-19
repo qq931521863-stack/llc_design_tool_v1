@@ -1,7 +1,7 @@
 """Message-catalogue and language-switching regression tests.
 
 The strongest test here is `test_every_bound_shell_string_is_translated`: it
-builds all four workspaces, harvests every string the UI actually binds for
+builds the five translated workspaces, harvests every string the UI binds for
 translation, and requires a translation for each one.  Adding a new toolbar or
 tab to any workspace therefore fails this test until the catalogues are updated.
 """
@@ -9,24 +9,96 @@ from __future__ import annotations
 
 import os
 import re
+from contextlib import contextmanager
 
 import pytest
 
 _CJK = re.compile(r"[\u4e00-\u9fff]")
+_WORKSPACE_WINDOWS = (
+    "llc_window", "pfc_window", "control_window", "fra_window", "dab_window",
+    "power_stage_window",
+)
 
 
 def _qapp(qt_widgets):
     return qt_widgets.QApplication.instance() or qt_widgets.QApplication([])
 
 
+def _destroy_owned_windows(app, windows):
+    """Release only these owners, including after a translation assertion fails.
+
+    close() alone intentionally preserves workspaces for reopening. Tests must
+    also drain their workers and deferred native deletion, without deleting
+    unrelated windows or detaching PlotWidget objects from Qt's owner tree.
+    """
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+    from pyqtgraph import GraphicsLayoutWidget
+    from PySide6.QtCore import QCoreApplication, QEvent, QThreadPool, QTimer
+    from shiboken6 import isValid
+
+    for window in windows:
+        if isValid(window):
+            window.close()
+            for timer in window.findChildren(QTimer):
+                timer.stop()
+    pools = [QThreadPool.globalInstance()]
+    for window in windows:
+        if isValid(window):
+            pools.extend(window.findChildren(QThreadPool))
+    for pool in pools:
+        assert pool.waitForDone(15000), "Owned workspace worker did not finish"
+    app.processEvents()
+    for window in windows:
+        if isValid(window):
+            # A busy workspace can decline the first close until its queued
+            # worker completion has run. Keep its normal closeEvent semantics.
+            assert window.close(), "Owned workspace still refuses to close"
+            for canvas in window.findChildren(FigureCanvasQTAgg):
+                canvas.figure.clear()
+            for graphics in window.findChildren(GraphicsLayoutWidget):
+                if isValid(graphics) and not graphics.closed:
+                    graphics.close()
+            window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    assert all(not isValid(window) for window in windows)
+
+
+@contextmanager
 def _controller(qt_widgets):
     from llc_design.core.spec import LLCDesignSpec
     from llc_design.gui.launcher import WorkspaceApplicationController
+    from llc_design.i18n import set_language
 
     app = _qapp(qt_widgets)
-    controller = WorkspaceApplicationController(LLCDesignSpec())
-    app.processEvents()
-    return app, controller
+    previous = set_language("zh-Hans", notify=False)
+    windows = ()
+    try:
+        controller = WorkspaceApplicationController(LLCDesignSpec())
+        windows = tuple(getattr(controller, name) for name in _WORKSPACE_WINDOWS)
+        app.processEvents()
+        yield app, controller
+    finally:
+        try:
+            _destroy_owned_windows(app, windows)
+        finally:
+            set_language(previous, notify=False)
+
+
+@pytest.fixture
+def workspace_controller(desktop_qapp):
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
+    with _controller(qt_widgets) as owned:
+        yield owned
+
+
+@pytest.fixture
+def owned_widgets(desktop_qapp):
+    windows = []
+    try:
+        yield windows
+    finally:
+        _destroy_owned_windows(desktop_qapp, windows)
 
 
 def test_language_registry_and_lookup():
@@ -73,16 +145,15 @@ def test_no_identity_entries_for_existing_english():
                 assert value != key, f"{code}: {key!r} maps to itself"
 
 
-def test_every_bound_shell_string_is_translated():
+def test_every_bound_shell_string_is_translated(workspace_controller):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
     from PySide6.QtGui import QAction
     from PySide6.QtWidgets import QTabWidget, QWidget
 
     from llc_design.gui.i18n_ui import bind_window
     from llc_design.i18n import catalogue
 
-    app, controller = _controller(qt_widgets)
+    _, controller = workspace_controller
     sources: set[str] = set()
     for window in (controller.llc_window, controller.pfc_window, controller.control_window, controller.fra_window, controller.dab_window):
         bind_window(window)
@@ -101,20 +172,49 @@ def test_every_bound_shell_string_is_translated():
         missing = [source for source in chinese if source not in entries]
         assert not missing, f"{code} is missing {len(missing)} shell strings: {missing[:8]}"
 
-    for window in (controller.llc_window, controller.pfc_window, controller.control_window, controller.fra_window, controller.dab_window):
-        window.close()
-    app.processEvents()
+
+@pytest.mark.parametrize("code", ["zh-Hans", "en", "ja", "ko"])
+def test_launcher_entry_text_is_translated(code, owned_widgets):
+    from PySide6.QtWidgets import QLabel, QPushButton
+
+    from llc_design.gui.launcher import WorkspaceSelectionDialog
+    from llc_design.i18n import catalogue, set_language, t
+
+    sources = (
+        "电源设计工具箱",
+        "选择功率级、专用拓扑或控制分析工作区；切换工作区时保留当前设计。",
+        "功率级设计 / Power Stage Designer",
+        ("Buck 降压 · Boost 升压 · Buck-Boost 升降压 · 全桥 / 移相全桥 · 更多拓扑\n"
+         "功率级参数、原理图与电压电流波形、器件应力、模拟环路及工程工具箱"),
+        "进入功率级设计",
+        "开始系统建模",
+        "工作区选择与使用说明",
+    )
+    previous = set_language(code, notify=False)
+    try:
+        dialog = WorkspaceSelectionDialog()
+        owned_widgets.append(dialog)
+        widgets = dialog.findChildren(QLabel) + dialog.findChildren(QPushButton)
+        visible_text = [value for widget in widgets
+                        for value in (widget.text(), widget.toolTip())]
+        for source in sources:
+            if code != "zh-Hans":
+                assert source in catalogue(code)
+                assert t(source) != source
+            assert any(t(source) in value for value in visible_text), (code, source)
+        assert dialog.findChild(QPushButton, "power_stage_designer_button").text() == t("进入功率级设计")
+    finally:
+        set_language(previous, notify=False)
 
 
-def test_switching_language_retranslates_and_restores():
+def test_switching_language_retranslates_and_restores(workspace_controller):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
     from PySide6.QtWidgets import QToolBar, QToolButton
 
     from llc_design.gui.i18n_ui import apply_language
     from llc_design.i18n import set_language
 
-    app, controller = _controller(qt_widgets)
+    app, controller = workspace_controller
     window = controller.llc_window
     zh_title = window.windowTitle()
 
@@ -145,8 +245,6 @@ def test_switching_language_retranslates_and_restores():
         assert tabs.tabText(0) == "设计总览"
     finally:
         set_language("zh-Hans", notify=False)
-        window.close()
-        app.processEvents()
 
 
 def test_language_choice_is_persisted():
@@ -164,13 +262,13 @@ def test_language_choice_is_persisted():
         set_language("zh-Hans", notify=False)
 
 
-def test_language_menu_offers_all_four_and_marks_the_active_one():
+def test_language_menu_offers_all_four_and_marks_the_active_one(workspace_controller):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     qt_widgets = pytest.importorskip("PySide6.QtWidgets")
     from llc_design.gui.i18n_ui import apply_language
     from llc_design.i18n import LANGUAGES, current_language, set_language
 
-    app, controller = _controller(qt_widgets)
+    app, controller = workspace_controller
     window = controller.pfc_window
     button = next(b for b in window.findChildren(qt_widgets.QToolButton)
                   if b.objectName() == "languageSelector")
@@ -185,8 +283,6 @@ def test_language_menu_offers_all_four_and_marks_the_active_one():
     finally:
         apply_language("zh-Hans", app)
         set_language("zh-Hans", notify=False)
-        window.close()
-        app.processEvents()
 
 
 def test_font_stacks_cover_all_languages_and_are_applied():
@@ -203,20 +299,21 @@ def test_font_stacks_cover_all_languages_and_are_applied():
     # Japanese and Korean must not lead with a Simplified-Chinese family.
     assert qt_font_stack("ja")[0] in {"Meiryo", "Yu Gothic UI", "Yu Gothic"}
     assert qt_font_stack("ko")[0] == "Malgun Gothic"
-    assert apply_matplotlib_fonts("ja")
-    from matplotlib import rcParams
+    try:
+        assert apply_matplotlib_fonts("ja")
+        from matplotlib import rcParams
 
-    assert rcParams["font.sans-serif"][0] == "Meiryo"
-    apply_matplotlib_fonts("zh-Hans")
+        assert rcParams["font.sans-serif"][0] == "Meiryo"
+    finally:
+        apply_matplotlib_fonts("zh-Hans")
 
 
-def test_help_bodies_fall_back_with_a_visible_notice(monkeypatch):
+def test_help_bodies_fall_back_with_a_visible_notice(monkeypatch, owned_widgets):
     """All bodies are translated today, so the fallback path is exercised by
     removing one entry rather than by relying on an unfinished translation."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     qt_widgets = pytest.importorskip("PySide6.QtWidgets")
     import llc_design.gui.help as help_module
-
     from llc_design.gui.help import HelpDialog, HelpSection, help_topic, section_body
     from llc_design.i18n import catalogue, set_language
 
@@ -238,6 +335,7 @@ def test_help_bodies_fall_back_with_a_visible_notice(monkeypatch):
                                if k != "helpbody.fra.ts_semantics"},
         )
         dialog = HelpDialog(None, "fra", "测量语义：TS 类型不能猜")
+        owned_widgets.append(dialog)
         rendered = dialog.browser.toPlainText()
         assert catalogue("en")["此章节暂无当前语言的正文译文，以下显示原文。"] in rendered
         assert "Plant TS" in rendered
@@ -245,29 +343,24 @@ def test_help_bodies_fall_back_with_a_visible_notice(monkeypatch):
 
         set_language("zh-Hans", notify=False)
         zh = HelpDialog(None, "fra", "测量语义：TS 类型不能猜")
+        owned_widgets.append(zh)
         assert "此章节暂无当前语言的正文译文，以下显示原文。" not in zh.browser.toPlainText()
         zh.close()
     finally:
         set_language("zh-Hans", notify=False)
         app.processEvents()
 
-def test_starting_in_a_translated_language_still_allows_switching_back():
+def test_starting_in_a_translated_language_still_allows_switching_back(workspace_controller):
     """Regression: the binding records the text it sees, so the windows must be
     built while the source language is active, not after the stored language has
     already been applied."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
     from PySide6.QtWidgets import QToolBar
 
-    from llc_design.core.spec import LLCDesignSpec
     from llc_design.gui.i18n_ui import apply_language
-    from llc_design.gui.launcher import WorkspaceApplicationController
     from llc_design.i18n import set_language
 
-    app = _qapp(qt_widgets)
-    set_language("zh-Hans", notify=False)
-    controller = WorkspaceApplicationController(LLCDesignSpec())
-    app.processEvents()
+    app, controller = workspace_controller
     window = controller.llc_window
     try:
         # Simulate a start-up with a persisted non-source language.
@@ -284,5 +377,3 @@ def test_starting_in_a_translated_language_still_allows_switching_back():
     finally:
         apply_language("zh-Hans", app)
         set_language("zh-Hans", notify=False)
-        window.close()
-        app.processEvents()

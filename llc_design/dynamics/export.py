@@ -88,6 +88,9 @@ def write_waveform_markdown(bundle: WaveformBundle, path: str | Path, *, context
                       "![LLC electrical schematic](llc_schematic.png)", ""])
         for key, value in context.items():
             lines.append(f"- {key}: {json.dumps(value, ensure_ascii=False, sort_keys=True)}")
+        if context.get("selected_signals"):
+            lines.extend(["", "## 当前选中器件波形", "",
+                          "![Selected component](selected_component.png)", ""])
     lines.extend(["", "## 模型警告", ""])
     lines.extend(f"- {warning}" for warning in bundle.warnings)
     lines.extend(["", "## 图表", ""])
@@ -127,6 +130,10 @@ def export_waveform_bundle(bundle: WaveformBundle, directory: str | Path, *,
     paths["metadata"].write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     paths["report"] = write_waveform_markdown(bundle, output / "LLC_waveforms.md", context=context)
+    if context is not None and context.get("selected_signals"):
+        paths["plot_selected_component"] = _plot_group(
+            bundle, tuple(context["selected_signals"]), output / "selected_component.png",
+            f"LLC {context.get('selected_component') or 'selected signals'} ({bundle.model_name})")
     for group, keys in DEFAULT_GROUPS:
         paths[f"plot_{group}"] = _plot_group(
             bundle, keys, output / f"{group}.png",

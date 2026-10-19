@@ -107,9 +107,10 @@ class WaveformView(QWidget):
     )
 
     COMPONENT_SIGNALS: ClassVar[dict[str, tuple[str, ...]]] = {
-        "bus": ("v_leg_a", "v_leg_b", "v_bridge"),
+        "bus": ("v_bus", "i_bus"),
         "bridge": ("v_bridge", "i_resonant"),
         "lr": ("v_resonant_inductor", "i_resonant"),
+        "rseries": ("v_series_resistance", "i_resonant"),
         "cr": ("v_resonant_cap", "i_resonant"),
         "lm": ("v_transformer_primary", "i_magnetizing"),
         "primary": ("v_transformer_primary", "i_primary_load"),
@@ -117,6 +118,7 @@ class WaveformView(QWidget):
         "transformer": ("v_transformer_primary", "i_transformer_primary",
                         "v_transformer_secondary", "i_transformer_secondary"),
         "co": ("v_output_cap_internal", "i_output_cap"),
+        "coesr": ("v_output_cap_esr", "i_output_cap"),
         "load": ("v_output", "i_load_output"),
         "output": ("v_output", "i_output_cap", "i_load_output"),
         "sr": ("v_rectified", "i_rectified"),
@@ -366,6 +368,12 @@ class WaveformView(QWidget):
         self.component_label.setText(
             f"器件：{self.selected_component or self.group_combo.currentText()} | "
             + evidence.get("summary", "损耗/约束：无同源计算，不能引用其他工况。"))
+        if self.bundle is not None and self.selected_component:
+            missing = [key for key in self.COMPONENT_SIGNALS.get(self.selected_component, ())
+                       if key not in self.bundle.signals]
+            if missing:
+                self.component_label.setText(self.component_label.text()
+                                             + " | 本来源未提供：" + ", ".join(missing))
         self.statistics.setRowCount(0)
         self._plots.clear()
         self._cursor_a_lines.clear()
@@ -439,5 +447,18 @@ class WaveformView(QWidget):
                 item = QTableWidgetItem(value)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.statistics.setItem(table_row, column, item)
+        # A two-signal component needs only two statistics rows. Reserving the
+        # full group-table height unnecessarily pushes its current trace below
+        # the viewport on laptop screens; larger groups keep table scrolling.
+        table_height = (self.statistics.horizontalHeader().height()
+                        + sum(self.statistics.rowHeight(row) for row in range(len(keys)))
+                        + self.statistics.horizontalScrollBar().sizeHint().height()
+                        + 2 * self.statistics.frameWidth())
+        self.statistics.setMaximumHeight(min(190, table_height))
+        # Hidden-tab selection does not trigger QScrollArea's resize pass. Its
+        # previous multi-trace canvas otherwise survives as a large size hint.
+        # Shrink to the viewport while retaining the explicit per-trace floor.
+        viewport = self.graphics.parentWidget()
+        self.graphics.resize(viewport.size().expandedTo(self.graphics.minimumSize()))
         self.graphics.ci.setGeometry(self.graphics.range)
         self._update_cursor_measurement()

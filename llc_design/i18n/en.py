@@ -485,3 +485,19 @@ CATALOGUE['系数文件已写入，但验证未通过；请勿用于控制硬件
 
 # Current-source LLC component waveform exports.
 CATALOGUE.update({'导出当前波形与报告': 'Export current waveforms and report', '总 RMS': 'Total RMS'})
+
+# LLC candidate optimization and the workspace launcher.
+CATALOGUE.update({
+    'Apply 所选候选': 'Apply selected candidate',
+    'LLC Two-Stage 优化': 'LLC Two-Stage Optimization',
+    '取消 / 丢弃': 'Cancel / Discard',
+    '导出所选候选报告': 'Export selected candidate report',
+    '运行 Stage A → B': 'Run Stage A → B',
+    '电源设计工具箱': 'Power Design Toolkit',
+    '选择功率级、专用拓扑或控制分析工作区；切换工作区时保留当前设计。': 'Choose a power-stage, specialized-topology or control-analysis workspace. Switching preserves the current design.',
+    '功率级设计 / Power Stage Designer': 'Power Stage Designer',
+    'Buck 降压 · Boost 升压 · Buck-Boost 升降压 · 全桥 / 移相全桥 · 更多拓扑\n功率级参数、原理图与电压电流波形、器件应力、模拟环路及工程工具箱': 'Buck · Boost · Buck-Boost · Full Bridge / Phase-Shifted Full Bridge · More topologies\nPower-stage parameters, schematics and voltage/current waveforms, device stress, analog loops and engineering calculators',
+    '进入功率级设计': 'Open Power Stage Designer',
+    '开始系统建模': 'Start System Modeling',
+    '工作区选择与使用说明': 'Workspace selection and help',
+})

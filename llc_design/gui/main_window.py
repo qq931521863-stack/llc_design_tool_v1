@@ -104,7 +104,9 @@ class LLCMainWindow(QMainWindow):
     def __init__(self, initial_spec: LLCDesignSpec | None = None):
         super().__init__()
         self.setWindowTitle("电源设计工具箱 — LLC Design / Waveform / Control")
-        self.resize(1920, 1080)
+        available = self.screen().availableGeometry()
+        self.resize(min(1920, available.width() - 32),
+                    min(1080, available.height() - 64))
         self.spec = initial_spec or LLCDesignSpec()
         self.system_analysis: SystemAnalysis | None = None
         self.small_signal_analysis: SmallSignalAnalysis | None = None

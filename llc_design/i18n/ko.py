@@ -396,3 +396,19 @@ CATALOGUE['系数文件已写入，但验证未通过；请勿用于控制硬件
 
 # Current-source LLC component waveform exports.
 CATALOGUE.update({'导出当前波形与报告': '현재 파형과 보고서 내보내기', '总 RMS': '전체 RMS'})
+
+# LLC candidate optimization and the workspace launcher.
+CATALOGUE.update({
+    'Apply 所选候选': '선택한 후보 적용',
+    'LLC Two-Stage 优化': 'LLC 2단계 최적화',
+    '取消 / 丢弃': '취소 / 폐기',
+    '导出所选候选报告': '선택한 후보 보고서 내보내기',
+    '运行 Stage A → B': 'Stage A → B 실행',
+    '电源设计工具箱': '전원 설계 도구 모음',
+    '选择功率级、专用拓扑或控制分析工作区；切换工作区时保留当前设计。': '전력단, 전용 토폴로지 또는 제어 분석 작업 공간을 선택하세요. 작업 공간을 전환해도 현재 설계는 유지됩니다.',
+    '功率级设计 / Power Stage Designer': '전력단 설계 / Power Stage Designer',
+    'Buck 降压 · Boost 升压 · Buck-Boost 升降压 · 全桥 / 移相全桥 · 更多拓扑\n功率级参数、原理图与电压电流波形、器件应力、模拟环路及工程工具箱': 'Buck 강압 · Boost 승압 · Buck-Boost 승강압 · 풀브리지 / 위상천이 풀브리지 · 기타 토폴로지\n전력단 파라미터, 회로도와 전압·전류 파형, 소자 스트레스, 아날로그 제어 루프 및 설계 계산 도구',
+    '进入功率级设计': '전력단 설계 열기',
+    '开始系统建模': '시스템 모델링 시작',
+    '工作区选择与使用说明': '작업 공간 선택 및 사용 안내',
+})

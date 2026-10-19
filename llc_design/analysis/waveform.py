@@ -14,6 +14,7 @@ from ..dynamics.waveforms import (
     bridge_leg_waveforms,
     gate_waveforms,
     signal_statistics,
+    with_component_terminal_signals,
 )
 
 
@@ -224,11 +225,12 @@ def build_standard_waveform_bundle(
             description=description,
         )
 
-    return WaveformBundle(
+    return with_component_terminal_signals(WaveformBundle(
         time_s=time,
         switching_frequency_hz=switching_frequency_hz,
         model_name=model_name,
         signals=signals,
         warnings=warnings,
         metadata=dict(metadata or {}),
-    )
+    ), bus_voltage_v=bus_voltage_v, primary_topology=primary_topology,
+        series_resistance_ohm=series_resistance_ohm, output_cap_esr_ohm=output_cap_esr_ohm)
