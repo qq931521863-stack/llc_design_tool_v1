@@ -191,7 +191,9 @@ jobs:
             llc_design/tests/test_schematic_rendering.py \
             power_stage_design/tests/test_schematic_references.py \
             llc_design/tests/test_control_diagram_routes.py \
-            power_control_tools/tests/test_type_compensator_schematic.py
+            power_control_tools/tests/test_type_compensator_schematic.py \
+            power_stage_design/tests/test_pending_input_actions.py \
+            power_stage_design/tests/test_llc_external_controller_contract.py
       - name: Run tests
         run: python -m pytest
       - name: Build with PyInstaller

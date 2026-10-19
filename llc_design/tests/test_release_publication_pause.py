@@ -82,4 +82,6 @@ def test_native_regression_preflight_does_not_replace_complete_test_gate():
     assert "test_schematic_references.py" in block[early:complete]
     assert "test_control_diagram_routes.py" in block[early:complete]
     assert "test_type_compensator_schematic.py" in block[early:complete]
+    assert "test_pending_input_actions.py" in block[early:complete]
+    assert "test_llc_external_controller_contract.py" in block[early:complete]
     assert "continue-on-error" not in block
