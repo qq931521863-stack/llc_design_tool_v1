@@ -178,6 +178,12 @@ jobs:
         shell: bash
         run: |
           python -m pytest -x \
+            power_stage_design/tests/test_psfb_dense_polynomials.py \
+            power_stage_design/tests/test_export_checks.py \
+            power_stage_design/tests/test_toolbox_presentation.py::test_all_real_tools_show_chinese_results_exact_exports_and_invalidation \
+            power_stage_design/tests/test_toolbox_presentation.py::test_large_real_map_and_curves_have_bounded_preview_and_complete_exact_export \
+            power_control_tools/tests/test_fra_tuning_map_gui.py::test_saved_session_preserves_utf8_bytes_and_restores \
+            power_control_tools/tests/test_fra_tuning_map_gui.py::test_exported_scan_has_exact_csv_bytes_and_consumes_without_blank_rows \
             power_stage_design/tests/test_independent_validation.py \
             power_stage_design/tests/test_psfb_magnetizing_sizing.py \
             power_stage_design/tests/test_packaging_contract.py \
