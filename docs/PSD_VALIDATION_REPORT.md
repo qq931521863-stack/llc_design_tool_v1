@@ -1,5 +1,53 @@
 # Power Stage Designer validation report
 
+## Native Windows follow-up and source boundary (2026-10-19)
+
+The combined Linux source `078907e` (identical tree to main `4e15d503`)
+completed **4401 passed, 2 opt-in skipped, 2 historical xfails**, zero failures
+or errors, in 4022.59 s. All 777 tracked-file hashes stayed unchanged. Session-final
+top-level/auxiliary widgets, native roots and all native plot-owner counts were
+zero; aggregate RSS peaked at 1,925,988 KiB. Its separate real PFC long test
+passes (one test, 859.065 s, unchanged source); PSFB long/artifact stages remain
+separately accounted for. These results do not qualify later application changes.
+
+The original Windows run at `c19e208` later exposed remaining portability defects.
+It was canceled after **46 failed, 1637 passed, 1 skipped and 7 fixture errors**,
+not a completed whole-suite pass. Thirty-two failures concern exact export bytes,
+four downstream failures and seven fixture errors share the PSFB coefficient
+matrix defect, and nine drawing failures plus one LLC width failure are on the
+older rendering/layout implementation. The interrupted large-map test was inside
+pytest/difflib rendering a multi-megabyte byte mismatch; this is not evidence of a
+physical-solver deadlock. PyInstaller/frozen verification was skipped.
+
+Two minimal production corrections address the newly visible defects:
+- PSFB polynomial conversion can independently trim high-order zeros in each of
+  seven states. The reconstruction now zero-pads to the fitted degree before
+  building the matrix. The original 2e-11 withheld-sample check, root filters,
+  solver-boundary validation and physical tolerances are unchanged.
+- FRA session/CSV and toolbox JSON/TXT/CSV writers preserve the serialized UTF-8
+  bytes, avoiding platform newline translation and doubled CR in CSV. Modal
+  ownership/current-source guards remain intact. Large-file tests still compare
+  every byte; only failure diagnostics are bounded, with corruption counterexamples.
+
+The polynomial repair has 13 red-to-green regressions, 38 existing dynamic checks,
+actual T18 GUI/save/report/reopen acceptance, and 19 checks with the original
+Windows NumPy/SciPy versions on Linux. The export repair has 631 nonduplicated
+related checks. Independent export acceptance covers 30 actual GUI scenarios,
+376 assertions and seven corruption classes on a real 5.1 MB map; an independent
+real-text-I/O model reproduces all 44 old-writer newline distortions. Independent
+PSFB acceptance adds 5,170 assertions, all 26 real T18 branch selections, project
+and HTML identity, and independent whole-period energy/current integration. During
+the real consumer, 2,652 accepted old/new coefficient arrays are unchanged and
+2,124 candidates remain rejected by both versions. Seven deterministic real-function
+cases reproduce the former ragged shape; this Linux T18 fixture itself does not
+reproduce that Windows-specific numerical path. A separate 242-assertion check
+uses the original Windows NumPy/SciPy versions on Linux. The integrated
+new native-preflight selection passes 64 tests. These are focused Linux/IO-model
+results, not corrected native Windows/macOS qualification. Refreshed complete
+source qualification and actual native freezes remain required. Publication stays
+paused, and no native gate has been removed.
+
+
 ## Current aggregate rerun boundary (2026-10-19)
 
 The first combined-source run at `2738299` stopped with **376 passed and one

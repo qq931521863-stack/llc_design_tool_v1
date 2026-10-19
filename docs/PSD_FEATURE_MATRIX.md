@@ -1,5 +1,12 @@
 # Power Stage Designer feature matrix
 
+The combined Linux baseline `078907e` / remote `4e15d503` passes **4401 tests,
+with 2 opt-in skips and 2 historical xfails**, and clean final GUI ownership.
+Later native Windows evidence requires the current PSFB zero-padding and exact
+UTF-8 export fixes. Their focused numerical/GUI/IO-model acceptance is separate
+from refreshed aggregate and native-package qualification, which remains pending.
+No implementation row below implies hardware or fully qualified native binaries.
+
 The current aggregate run is **not yet passed**: `2738299` stopped at 376 passes
 and one outdated immediate-export assertion. Independent actual HTML/loop replay
 verified current input and invalid-input protection; the test-only correction has
