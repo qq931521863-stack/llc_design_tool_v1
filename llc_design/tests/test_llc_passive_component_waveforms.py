@@ -189,12 +189,40 @@ def test_terminal_projection_preserves_source_arrays_and_known_zero_resistances(
     assert projected.metadata['output_cap_esr_ohm'] == 0
 
 
-def test_underresolved_half_bridge_detailed_solution_is_rejected():
+def test_half_bridge_detailed_solution_checks_continuous_orbit_and_strict_residual(monkeypatch):
+    from types import SimpleNamespace
+
     from llc_design.analysis import LLCAnalysisRequest
     from llc_design.analysis.time_domain import TimeDomainConfig, solve_time_domain
+    from llc_design.dynamics import switched
+    from llc_design.tests.test_switched_integration_accuracy import _independent_cycle
 
     spec = LLCDesignSpec(primary_topology=PrimaryTopology.HALF_BRIDGE, secondary_turns=8)
+    request = LLCAnalysisRequest(spec, frequency_hz=100000, samples_per_cycle=256)
+    config = TimeDomainConfig(samples_per_cycle=256, output_cycles=2, minimum_settling_cycles=5,
+        series_resistance_ohm=.123, trim_frequency_to_output=False, strict_convergence=True)
+    # The old explicit RK grid failed here. Output density must no longer force
+    # a physical failure: independently integrate the same unchanged circuit.
+    result = solve_time_domain(request, config)
+    assert result.convergence.converged
+    keys = ('i_resonant', 'v_resonant_cap', 'i_magnetizing', 'v_output_cap_internal')
+    states = np.stack([result.waveform.signal(key).values for key in keys], axis=-1)
+    scales = np.maximum(np.max(np.abs(states), axis=0), 1.)
+    end, independent, peak = _independent_cycle(result.native_result.parameters,
+        result.waveform.switching_frequency_hz, states[0], 256)
+    np.testing.assert_allclose(states[:256] / scales, independent / scales, atol=2e-8, rtol=0)
+    np.testing.assert_allclose(end[:4] / scales, states[0] / scales, atol=2e-8, rtol=0)
+    np.testing.assert_allclose(states[:256] / scales, states[256:] / scales, atol=2e-8, rtol=0)
+    assert result.metrics.magnetizing_current_peak_a == pytest.approx(peak, abs=2e-7)
+    _terminal_invariants(result.waveform, PrimaryTopology.HALF_BRIDGE)
+
+    def false_success(_residual, initial, **_kwargs):
+        bad = initial.copy()
+        bad[2] += .2
+        return SimpleNamespace(x=bad, success=True)
+
+    monkeypatch.setattr(switched, 'root', false_success)
+    # Preserve strict rejection for actual nonperiodicity, even if a numerical
+    # optimizer incorrectly claims success; the residual gate is unchanged.
     with pytest.raises(RuntimeError, match='periodic solution did not converge'):
-        solve_time_domain(LLCAnalysisRequest(spec, frequency_hz=100000, samples_per_cycle=256),
-            TimeDomainConfig(samples_per_cycle=256, output_cycles=2, minimum_settling_cycles=5,
-                series_resistance_ohm=.123, trim_frequency_to_output=False, strict_convergence=True))
+        solve_time_domain(request, config)
