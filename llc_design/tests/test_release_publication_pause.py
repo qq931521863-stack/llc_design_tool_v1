@@ -56,7 +56,6 @@ def test_pause_keeps_test_build_and_frozen_verification_mandatory():
         assert "contents: write" not in block and "actions: write" not in block
         assert "gh release" not in block and "git push" not in block
         assert "      - name: Run tests\n        run: python -m pytest\n" in block
-    assert "    needs: test\n" in JOBS["build"]
     assert 'PSD_RUN_PFC_SWITCHED_GUI: "1"' in JOBS["test"]
     assert "fail-fast: false" in JOBS["build"]
     assert "os: macos-latest" in JOBS["build"]
@@ -64,6 +63,23 @@ def test_pause_keeps_test_build_and_frozen_verification_mandatory():
     assert ('      - name: Verify frozen application and fresh evidence\n'
             '        shell: bash\n        run: |\n'
             '          python packaging/verify_bundle.py "${{ matrix.executable }}"') in JOBS["build"]
+
+
+def test_parallel_qualification_preserves_all_final_dependencies():
+    # Platform-specific failures should be discovered without waiting for the
+    # full Linux suite. Neither platform gate is optional or allowed to fail.
+    for name in ("test", "build"):
+        header = JOBS[name].split("    steps:\n", 1)[0]
+        assert not re.search(r"(?m)^    needs:", header)
+        assert not re.search(r"(?m)^    if:", header)
+    for name in ("tag-release", "publish"):
+        header = JOBS[name].split("    steps:\n", 1)[0]
+        assert "    needs: [test, build]\n" in header
+        assert "${{ false && " in header
+    assert re.findall(r"(?m)^          - os: (.+)$", JOBS["build"]) == [
+        "macos-latest", "windows-latest",
+    ]
+    assert "continue-on-error" not in WORKFLOW
 
 
 def test_native_regression_preflight_does_not_replace_complete_test_gate():

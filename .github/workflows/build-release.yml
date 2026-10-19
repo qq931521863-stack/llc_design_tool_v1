@@ -104,8 +104,7 @@ jobs:
         run: gh workflow run build-release.yml --ref "${{ steps.release.outputs.tag }}"
 
   build:
-    # Qualify both native platforms before main can create a release tag.
-    needs: test
+    # Run native qualification alongside Linux; publication still needs both jobs.
     permissions:
       contents: read
     strategy:
