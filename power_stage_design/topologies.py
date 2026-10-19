@@ -227,8 +227,11 @@ def _single_inductor(inputs: DesignInputs, topology_id: str) -> StageResult:
         "Cout": DeviceWaveforms("Output capacitor", capacitor, capacitor_voltage(capacitor, inputs.capacitance_f, vo)),
     }
     if topology_id in ("T09", "T10"):
-        devices["primary"] = DeviceWaveforms("Actual primary winding", switch, inductor_voltage)
-        devices["secondary"] = DeviceWaveforms("Actual secondary winding", diode, inductor_voltage.affine(scale=-1/n, reference="rectifier anode to secondary return"))
+        primary_top = "P" if topology_id == "T10" else "VIN"
+        devices["primary"] = DeviceWaveforms("Actual primary winding", replace(switch, reference=f"{primary_top} to N (into primary dot)"),
+                                             replace(inductor_voltage, reference=f"{primary_top} minus N"))
+        devices["secondary"] = DeviceWaveforms("Actual secondary winding", replace(diode, reference="ISO to SEC (return to rectifier terminal)"),
+                                               inductor_voltage.affine(scale=-1/n, reference="SEC minus ISO"))
     if topology_id == "T10":
         if n * (vo + vf) >= vin:
             raise ModelDomainError("Two-switch flyback requires n*(Vout+Vf) < Vin to avoid primary clamp conduction")
@@ -304,7 +307,7 @@ def _two_switch_buck_boost(inputs: DesignInputs) -> StageResult:
     q = _wave(inputs, durations, ((low, high), (0, 0), (0, 0)), "A", "drain to source")
     diode = _wave(inputs, durations, ((0, 0), (high, low), (0, 0)), "A", "anode to cathode")
     vl = _voltage(inputs, durations, (vin, -vo-2*vf, 0), "left minus right")
-    cap = diode.affine(offset=-inputs.iout_a)
+    cap = diode.affine(offset=-inputs.iout_a, reference="OUT to GND (into Cout positive plate)")
     devices = {
         "L1": DeviceWaveforms("Energy-transfer inductor", current, vl),
         "Q1": DeviceWaveforms("Input high-side switch", q, _voltage(inputs, durations, (0, vin+vf, 0), "drain to source")),
@@ -445,13 +448,15 @@ def _forward(inputs: DesignInputs, topology_id: str) -> StageResult:
     switch_voltage = wave(lambda t,s: 0 if s < duty else (vin+reset_v if active or topology_id == "T13" else vin+vf) if s < duty+reset_time else vin if topology_id == "T13" else vin/2,"V","drain to source")
     rectifier = wave(lambda t,s: il(t,s) if s < duty else 0,"A","anode to cathode")
     freewheel = wave(lambda t,s: il(t,s) if duty < s < duty+discharge else 0,"A","anode to cathode")
-    capacitor = inductor.affine(offset=-inputs.iout_a)
+    capacitor = inductor.affine(offset=-inputs.iout_a, reference="OUT to ISO (into Cout positive plate)")
     vl = wave(lambda t,s: vs-vo-vf if s < duty else -vo-vf if s < duty+discharge else 0,"V","passive inductor sign")
     devices = {
         "L1": DeviceWaveforms("Output inductor", inductor, vl),
         "Lm": DeviceWaveforms("Primary-referred magnetizing state", magnetizing, primary_voltage),
-        "primary": DeviceWaveforms("Actual primary winding", primary_current, primary_voltage),
-        "secondary": DeviceWaveforms("Actual secondary winding", rectifier, primary_voltage.affine(scale=1/n)),
+        "primary": DeviceWaveforms("Actual primary winding", replace(primary_current, reference=("P" if topology_id == "T14" else "VIN")+" to N (into primary dot)"),
+                                   replace(primary_voltage, reference=("P" if topology_id == "T14" else "VIN")+" minus N")),
+        "secondary": DeviceWaveforms("Actual secondary winding", replace(rectifier, reference="ISO to SEC (return to rectifier terminal)"),
+                                     primary_voltage.affine(scale=1/n, reference="SEC minus ISO")),
         "Q1": DeviceWaveforms("Main switch", switch, switch_voltage),
         "D1": DeviceWaveforms("Forward rectifier", rectifier, wave(lambda t,s: node(t,s)-vp(t,s)/n,"V","cathode to anode")),
         "D2": DeviceWaveforms("Output freewheel diode", freewheel, wave(node,"V","cathode to anode")),
@@ -475,7 +480,8 @@ def _forward(inputs: DesignInputs, topology_id: str) -> StageResult:
             devices["Q2"] = DeviceWaveforms("Second primary switch", switch, switch_voltage)
             devices["Dreset2"] = DeviceWaveforms("Second reset clamp diode", reset_current, reset_diode_v)
         else:
-            devices["reset_winding"] = DeviceWaveforms("Reset winding", reset_current, primary_voltage.affine(scale=-1/reset_ratio, reference="return terminal positive"))
+            devices["reset_winding"] = DeviceWaveforms("Reset winding", replace(reset_current, reference="GND to RESET (into reset winding dot)"),
+                                                       primary_voltage.affine(scale=-1/reset_ratio, reference="RESET minus GND"))
         devices["Dreset1"] = DeviceWaveforms("Transformer reset diode", reset_current, reset_diode_v)
         diode_loss += vf*reset_current.statistics()["mean"]*(2 if topology_id == "T14" else 1)
         assumptions += ("Magnetic reset interval is solved separately from the output-inductor freewheel interval, including reset diode drops.",
@@ -551,15 +557,16 @@ def _bridge(inputs: DesignInputs, topology_id: str) -> StageResult:
     q_mid = vin if topology_id == "T16" else vin/2
     q1v = _voltage(inputs,durations,(0,q_mid,q_block,q_mid),"drain to source")
     q2v = _voltage(inputs,durations,(q_block,q_mid,0,q_mid),"drain to source")
-    capacitor = il.affine(offset=-inputs.iout_a)
+    capacitor = il.affine(offset=-inputs.iout_a, reference="OUT to ISO (into Cout positive plate)")
     vl = _voltage(inputs,durations,(vs-vo-vf,-vo-vf,vs-vo-vf,-vo-vf),"passive inductor sign")
     supply = _wave(inputs,durations,((ip_low,ip_high),(0,0),(ip_low,ip_high),(0,0)),"A","equivalent DC source current").affine(scale=0.5 if half else 1)
     devices = {
         "L1": DeviceWaveforms("Output inductor",il,vl),
         "Lm": DeviceWaveforms("Primary-referred magnetizing state",im,vp),
-        "primary": DeviceWaveforms("Primary winding",ip,vp),
-        "secondary1": DeviceWaveforms("Positive secondary half",d1,vp.affine(scale=1/n)),
-        "secondary2": DeviceWaveforms("Negative secondary half",d2,vp.affine(scale=-1/n)),
+        "primary": DeviceWaveforms("Primary winding",replace(ip,reference="A to MID" if half else "A to B"),
+                                   replace(vp,reference="A minus MID" if half else "A minus B")),
+        "secondary1": DeviceWaveforms("Positive secondary half",replace(d1,reference="ISO to S1 (center tap to upper outer terminal)"),vp.affine(scale=1/n,reference="S1 minus ISO")),
+        "secondary2": DeviceWaveforms("Negative secondary half",replace(d2,reference="ISO to S2 (center tap to lower outer terminal)"),vp.affine(scale=-1/n,reference="S2 minus ISO")),
         "Q1": DeviceWaveforms("First primary switch",q1,q1v),
         "Q2": DeviceWaveforms("Second primary switch",q2,q2v),
         "D1": DeviceWaveforms("First secondary rectifier",d1,_voltage(inputs,durations,(-vf,-vf,2*vs-vf,-vf),"cathode to anode")),
@@ -570,8 +577,8 @@ def _bridge(inputs: DesignInputs, topology_id: str) -> StageResult:
         devices["Q3"] = DeviceWaveforms("First diagonal paired switch",q1,q1v)
         devices["Q4"] = DeviceWaveforms("Second diagonal paired switch",q2,q2v)
     if topology_id == "T16":
-        devices["primary1"] = DeviceWaveforms("First center-tapped primary half",q1,vp)
-        devices["primary2"] = DeviceWaveforms("Second center-tapped primary half",q2,vp.affine(scale=-1))
+        devices["primary1"] = DeviceWaveforms("First center-tapped primary half",replace(q1,reference="VIN to P1 (center tap to upper outer terminal)"),replace(vp,reference="VIN minus P1 (dotted center tap minus upper outer terminal)"))
+        devices["primary2"] = DeviceWaveforms("Second center-tapped primary half",replace(q2,reference="VIN to P2 (center tap to lower outer terminal)"),vp.affine(scale=-1,reference="VIN minus P2 (center tap minus dotted lower outer terminal)"))
         del devices["primary"]
     if half:
         devices.update(_bridge_split_capacitors(inputs, ip))
@@ -728,15 +735,15 @@ def _phase_shifted_bridge(inputs: DesignInputs, cancelled=None) -> StageResult:
     q2=_wave(inputs,durations,zeros+ip_pairs,"A","drain to source, signed reverse-channel conduction")
     q3=_wave(inputs,durations,((0,0),(0,0),(-ip_pairs[2][0],-ip_pairs[2][1]))+ip_pairs[:2]+((0,0),),"A","drain to source, signed reverse-channel conduction")
     q4=_wave(inputs,durations,ip_pairs[:2]+((0,0),(0,0),(0,0),(-ip_pairs[2][0],-ip_pairs[2][1])),"A","drain to source, signed reverse-channel conduction")
-    cap=il.affine(offset=-inputs.iout_a)
+    cap=il.affine(offset=-inputs.iout_a,reference="OUT to ISO (into Cout positive plate)")
     vl=_voltage(inputs,durations,(-load_voltage,vp_on/n-load_voltage,vp_zero/n-load_voltage)*2,"passive output-inductor voltage")
     devices={
         "L1":DeviceWaveforms("Output inductor",il,vl),
         "Lleak":DeviceWaveforms("Primary series/leakage inductance",ip,_voltage(inputs,durations,(vin,vin-vp_on,-vp_zero,-vin,-vin+vp_on,vp_zero),"bridge minus transformer voltage")),
         "Lm":DeviceWaveforms("Magnetizing state",im,vp),
-        "primary":DeviceWaveforms("Transformer primary",ip,vp),
-        "secondary1":DeviceWaveforms("Positive secondary half",d1,vp.affine(scale=1/n)),
-        "secondary2":DeviceWaveforms("Negative secondary half",d2,vp.affine(scale=-1/n)),
+        "primary":DeviceWaveforms("Transformer primary",replace(ip,reference="P to B (into primary dot)"),replace(vp,reference="P minus B")),
+        "secondary1":DeviceWaveforms("Positive secondary half",replace(d1,reference="ISO to S1 (center tap to upper outer terminal)"),vp.affine(scale=1/n,reference="S1 minus ISO")),
+        "secondary2":DeviceWaveforms("Negative secondary half",replace(d2,reference="ISO to S2 (center tap to lower outer terminal)"),vp.affine(scale=-1/n,reference="S2 minus ISO")),
         "Q1":DeviceWaveforms("Leg A high-side FET",q1,_voltage(inputs,durations,(0,0,0,vin,vin,vin),"drain to source")),
         "Q2":DeviceWaveforms("Leg A low-side FET",q2,_voltage(inputs,durations,(vin,vin,vin,0,0,0),"drain to source")),
         "Q3":DeviceWaveforms("Leg B high-side FET",q3,_voltage(inputs,durations,(vin,vin,0,0,0,vin),"drain to source")),
@@ -803,14 +810,14 @@ def _phase_shifted_bridge_discontinuous(inputs: DesignInputs, vp_on: float,
     q4 = wave((ip_half[0],(0,0),(0,0),(0,0))+negate(ip_half[1:]),"drain to source, signed reverse-channel conduction")
     d1 = wave(il_half+zeros,"anode to cathode")
     d2 = wave(zeros+il_half,"anode to cathode")
-    cap = il.affine(offset=-inputs.iout_a)
+    cap = il.affine(offset=-inputs.iout_a,reference="OUT to ISO (into Cout positive plate)")
     devices = {
         "L1":DeviceWaveforms("Output inductor",il,vl),
         "Lleak":DeviceWaveforms("Primary series/leakage inductance",ip,voltage((vin-vp_on,-vp_freewheel,0,-vin+vp_on,vp_freewheel,0),"bridge minus transformer voltage")),
         "Lm":DeviceWaveforms("Magnetizing state",im,vp),
-        "primary":DeviceWaveforms("Transformer primary",ip,vp),
-        "secondary1":DeviceWaveforms("Positive secondary half",d1,vp.affine(scale=1/n)),
-        "secondary2":DeviceWaveforms("Negative secondary half",d2,vp.affine(scale=-1/n)),
+        "primary":DeviceWaveforms("Transformer primary",replace(ip,reference="P to B (into primary dot)"),replace(vp,reference="P minus B")),
+        "secondary1":DeviceWaveforms("Positive secondary half",replace(d1,reference="ISO to S1 (center tap to upper outer terminal)"),vp.affine(scale=1/n,reference="S1 minus ISO")),
+        "secondary2":DeviceWaveforms("Negative secondary half",replace(d2,reference="ISO to S2 (center tap to lower outer terminal)"),vp.affine(scale=-1/n,reference="S2 minus ISO")),
         "Q1":DeviceWaveforms("Leg A high-side FET",q1,voltage((0,0,0,vin,vin,vin),"drain to source")),
         "Q2":DeviceWaveforms("Leg A low-side FET",q2,voltage((vin,vin,vin,0,0,0),"drain to source")),
         "Q3":DeviceWaveforms("Leg B high-side FET",q3,voltage((vin,0,0,0,vin,vin),"drain to source")),
@@ -938,8 +945,8 @@ def _quasi_resonant_flyback(inputs: DesignInputs, cancelled=None) -> StageResult
         "Q1":DeviceWaveforms("QR main switch",switch,vq),
         "D1":DeviceWaveforms("Secondary rectifier",diode,vd),
         "Lm":DeviceWaveforms("Primary-referred magnetizing state",im,vp),
-        "primary":DeviceWaveforms("Actual primary winding",primary,vp),
-        "secondary":DeviceWaveforms("Actual secondary winding",diode,vp.affine(scale=-1/n)),
+        "primary":DeviceWaveforms("Actual primary winding",replace(primary,reference="VIN to N (into primary dot; signed)"),replace(vp,reference="VIN minus N")),
+        "secondary":DeviceWaveforms("Actual secondary winding",replace(diode,reference="ISO to SEC (return to rectifier terminal)"),vp.affine(scale=-1/n,reference="SEC minus ISO")),
         "Cout":DeviceWaveforms("Output capacitor",cap,capacitor_voltage(cap,inputs.capacitance_f,vo)),
     }
     if clamped:
@@ -1122,8 +1129,8 @@ def _fly_buck(inputs: DesignInputs, cancelled=None) -> StageResult:
     vlm=wave("vlm","V","switch node minus primary rail")
     devices={
         "Lm":DeviceWaveforms("Primary-referred magnetizing state",im,vlm),
-        "primary":DeviceWaveforms("Actual coupled primary winding",primary,vlm),
-        "secondary":DeviceWaveforms("Actual coupled secondary winding",secondary,wave("vs","V","secondary rectifier source to return")),
+        "primary":DeviceWaveforms("Actual coupled primary winding",replace(primary,reference="SW to PRIMARY_OUT (into primary dot; signed)"),replace(vlm,reference="SW minus PRIMARY_OUT")),
+        "secondary":DeviceWaveforms("Actual coupled secondary winding",replace(secondary,reference="ISO to SEC (return to rectifier terminal)"),wave("vs","V","SEC minus ISO")),
         "Lleak":DeviceWaveforms("Secondary-referred leakage inductance",secondary,wave("vlk","V","passive leakage-inductor sign")),
         "Q1":DeviceWaveforms("Synchronous buck high-side switch",wave("iq1","A","drain to source; signed"),wave("vq1","V","drain to source")),
         "Q2":DeviceWaveforms("Synchronous buck low-side switch",wave("iq2","A","drain to source; signed"),wave("vq2","V","drain to source")),
@@ -1245,14 +1252,14 @@ def _bridge_demagnetizing(inputs: DesignInputs, topology_id: str) -> StageResult
     q1v=vp.affine(scale=-q_scale,offset=q_bias,reference="drain to source")
     q2v=vp.affine(scale=q_scale,offset=q_bias,reference="drain to source")
     source=_wave(inputs,durations,positive_primary+positive_primary,"A","equivalent DC source current").affine(scale=.5 if half else 1)
-    capacitor=il.affine(offset=-inputs.iout_a)
+    capacitor=il.affine(offset=-inputs.iout_a,reference="OUT to ISO (into Cout positive plate)")
     vl=_voltage(inputs,durations,(va/n-vo-vf,-vo-vf,vm/n-vo-vf,0)*2,"passive output-inductor voltage")
     devices={
         "L1":DeviceWaveforms("Output inductor",il,vl),
         "Lm":DeviceWaveforms("Primary-referred magnetizing state",im,vp),
-        "primary":DeviceWaveforms("Actual primary winding",ip,vp),
-        "secondary1":DeviceWaveforms("Positive secondary half",d1,vp.affine(scale=1/n)),
-        "secondary2":DeviceWaveforms("Negative secondary half",d2,vp.affine(scale=-1/n)),
+        "primary":DeviceWaveforms("Actual primary winding",replace(ip,reference="A to MID" if half else "A to B"),replace(vp,reference="A minus MID" if half else "A minus B")),
+        "secondary1":DeviceWaveforms("Positive secondary half",replace(d1,reference="ISO to S1 (center tap to upper outer terminal)"),vp.affine(scale=1/n,reference="S1 minus ISO")),
+        "secondary2":DeviceWaveforms("Negative secondary half",replace(d2,reference="ISO to S2 (center tap to lower outer terminal)"),vp.affine(scale=-1/n,reference="S2 minus ISO")),
         "Q1":DeviceWaveforms("First primary switch",q1,q1v),
         "Q2":DeviceWaveforms("Second primary switch",q2,q2v),
         "D1":DeviceWaveforms("First secondary rectifier",d1,_voltage(inputs,durations,v1,"cathode to anode")),
@@ -1263,8 +1270,8 @@ def _bridge_demagnetizing(inputs: DesignInputs, topology_id: str) -> StageResult
         devices["Q3"]=DeviceWaveforms("First diagonal paired switch",q1,q1v)
         devices["Q4"]=DeviceWaveforms("Second diagonal paired switch",q2,q2v)
     if topology_id=="T16":
-        devices["primary1"]=DeviceWaveforms("First primary half",q1,vp)
-        devices["primary2"]=DeviceWaveforms("Second primary half",q2,vp.affine(scale=-1))
+        devices["primary1"]=DeviceWaveforms("First primary half",replace(q1,reference="VIN to P1 (center tap to upper outer terminal)"),replace(vp,reference="VIN minus P1 (dotted center tap minus upper outer terminal)"))
+        devices["primary2"]=DeviceWaveforms("Second primary half",replace(q2,reference="VIN to P2 (center tap to lower outer terminal)"),vp.affine(scale=-1,reference="VIN minus P2 (center tap minus dotted lower outer terminal)"))
         del devices["primary"]
     if half:
         devices.update(_bridge_split_capacitors(inputs, ip))

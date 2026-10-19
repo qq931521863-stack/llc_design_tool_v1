@@ -8,19 +8,28 @@ from __future__ import annotations
 from itertools import pairwise
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsScene, QGraphicsView
+from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPainterPath, QPen
+from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsView
 
 
 class _Component(QGraphicsRectItem):
     def __init__(self, key, label, kind, x, y, vertical=True, current=""):
-        super().__init__(-30, -38, 60, 76)
+        # The painter rotates horizontal components, so their real terminal
+        # span is x=±38. A vertical-only box loses visible lead hit targets.
+        bounds = (-30, -38, 60, 76) if vertical else (-38, -30, 76, 60)
+        super().__init__(*bounds)
         self.key, self.label, self.kind = key, label, kind
         self.vertical, self.current = vertical, current
         self.setPos(x, y)
         self.setAcceptHoverEvents(True)
         self.setToolTip(f"{label}：点击查看同一工况的电压、电流与统计")
         self.setPen(QPen(Qt.PenStyle.NoPen))
+        # Text has its own exact bounds; a giant parent hit rectangle would
+        # steal clicks from neighbouring windings and series components.
+        for text, x, baseline in ((label,32,-5),(current,32,14)) if vertical else ((label,-15,-24),(current,-15,30)):
+            item = QGraphicsSimpleTextItem(text, self)
+            item.setBrush(QColor("#153754"))
+            item.setPos(x, baseline-QFontMetricsF(item.font()).ascent())
 
     def paint(self, painter, option, widget=None):
         painter.setPen(QPen(QColor("#153754"), 2))
@@ -38,7 +47,8 @@ class _Component(QGraphicsRectItem):
             painter.drawLine(-27, 0, -17, 0)
             # Intrinsic diode, anode below/cathode above (source -> drain).
             painter.drawLine(0, -20, 17, -20)
-            painter.drawLine(17, -20, 17, 20)
+            painter.drawLine(17, -20, 17, -7)
+            painter.drawLine(17, 7, 17, 20)
             painter.drawLine(17, 20, 0, 20)
             painter.drawLine(10, -7, 24, -7)
             painter.drawLine(10, 7, 24, 7)
@@ -70,14 +80,10 @@ class _Component(QGraphicsRectItem):
             painter.drawLine(0, 24, 0, 38)
         painter.restore()
         if self.vertical:
-            painter.drawText(32, -5, self.label)
-            painter.drawText(32, 14, self.current)
             if self.kind in {"capacitor", "resistor"}:
                 painter.drawText(-27, -24, "+")
                 painter.drawText(-27, 30, "−")
         else:
-            painter.drawText(-15, -24, self.label)
-            painter.drawText(-15, 30, self.current)
             painter.drawText(-35, -7, "+")
             painter.drawText(29, -7, "−")
 
@@ -226,7 +232,14 @@ class TopologyView(QGraphicsView):
         self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def mousePressEvent(self, event):
-        item = self.itemAt(event.position().toPoint())
-        if isinstance(item, _Component) and not item.key.startswith("midpoint_"):
-            self.component_selected.emit(item.key)
+        # A wire endpoint or junction dot can be above the component in the
+        # scene stack. Ignore those decorations rather than losing the click.
+        for item in self.items(event.position().toPoint()):
+            while item is not None and not isinstance(item, _Component):
+                item = item.parentItem()
+            if isinstance(item, _Component):
+                if not item.key.startswith("midpoint_"):
+                    self.component_selected.emit(item.key)
+                event.accept()
+                return
         super().mousePressEvent(event)

@@ -273,8 +273,9 @@ def _exercise_desktop(width, height):
                         np.testing.assert_array_equal(actual, values)
                 element = next(item for item in layout(topology)[0] if item.key == "Q1")
                 schematic_width, schematic_height = schematic_size(topology)
-                point = QPoint(round(element.x * window.schematic.width() / schematic_width),
-                               round(element.y * window.schematic.height() / schematic_height))
+                bounds = window.schematic.schematic_rect()
+                point = QPoint(round(bounds.x() + element.x * bounds.width() / schematic_width),
+                               round(bounds.y() + element.y * bounds.height() / schematic_height))
                 QTest.mouseClick(window.schematic, Qt.MouseButton.LeftButton, pos=point)
                 QTest.qWait(50)
                 assert window.component_combo.currentData() == "Q1"

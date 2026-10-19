@@ -160,11 +160,14 @@ def _two_switch_dynamic():
     c.wire("LX",(362,55),(383,55));c.wire("B",(427,55),(528,55))
     c.part("D2",550,55,"diode",("B","OUT"));c.wire("OUT",(572,55),(635,55))
     for key,x,kind,reverse in (("Q2",445,"switch",False),("Coss2",505,"capacitor",False),("Dbody2",565,"diode",True)):
-        c.part(key,x,155,kind,("B","GND"),vertical=True,reverse=reverse,label_dx=0,label_dy=52)
+        c.part(key,x,155,kind,("B","GND"),vertical=True,reverse=reverse,label_dx=0,label_dy=107)
         c.wire("B",(x,85),(x,133));c.wire("GND",(x,177),(x,235))
     c.wire("B",(445,55),(445,85),(565,85))
     c.wire("GND",(158,235),(635,235))
-    c.elements=[replace(e,label_dx=0,label_dy=52) if e.key=="Cout" else e for e in c.elements]
+    # Branch names must not be painted on their return conductors. Keep the
+    # output/load names distinct, and Cin clear of the Q1 parallel-branch bus.
+    c.elements=[replace(e,label_dx=0,label_dy=107) if e.key in ("Cout","load") else
+                replace(e,label_dx=-24,label_dy=55) if e.key=="Cin" else e for e in c.elements]
     c.note="Explicit constant Coss, finite channel/diode resistance and winding resistance; both gates switch together."
     return c
 
@@ -320,7 +323,7 @@ def _psfb_dynamic():
         for offset,kind,prefix,reverse in ((0,"switch","Q",False),(65,"capacitor","Coss",False),(130,"diode","Dbody",True)):
             x=base+offset
             for k,y,nets in ((first,120,("VIN",node)),(first+1,285,(node,"GND"))):
-                c.part(f"{prefix}{k}",x,y,kind,nets,vertical=True,reverse=reverse,label_dx=0,label_dy=-36 if y==120 else 49)
+                c.part(f"{prefix}{k}",x,y,kind,nets,vertical=True,reverse=reverse,label_dx=0,label_dy=-85 if y==120 else 90)
             c.wire("VIN",(x,55),(x,98));c.wire(node,(x,142),(x,205),(x,263));c.wire("GND",(x,307),(x,355))
         c.wire(node,(base,205),(base+155,205))
         probe_x=base+177
@@ -341,7 +344,7 @@ def _psfb_dynamic():
     c.part("L1",1145,180,"inductor",("RECT","OUT"))
     c.wire("OUT",(1167,180),(1340,180),(1340,243))
     for key,x,kind,net,selectable in (("Crectifier",1090,"capacitor","RECT",True),("Cout",1230,"capacitor","OUT",True),("load",1340,"current_source","OUT",False)):
-        c.part(key,x,265,kind,(net,"ISO"),vertical=True,label="Io" if key=="load" else key,label_dx=0,label_dy=49,selectable=selectable)
+        c.part(key,x,265,kind,(net,"ISO"),vertical=True,label="Io" if key=="load" else key,label_dx=0,label_dy=110,selectable=selectable)
         c.wire(net,(x,180),(x,243));c.wire("ISO",(x,287),(x,355))
     c.wire("ISO",(905,230),(945,230),(945,355),(1340,355));c.ground("ISO",945,355)
     c.note="Explicit finite-Coss/Ron circuit; channel, body diode and capacitor currents are separate. VA/VB are zero-current voltage probes."
@@ -492,6 +495,13 @@ def svg_schematic(topology_id: str, *, selected: str | None = None, width: int =
     if not c.elements:
         message="Open the existing LLC workspace for its model-linked resonant circuit." if topology_id.upper() in ("T20","T21") else "Unknown topology; no circuit has been substituted."
         return ''.join(out)+f'<text x="25" y="80" font-family="sans-serif" font-size="16">{escape(message)}</text></svg>'
+    # Selection is a background, never an insulating patch over copper.
+    # In particular, transformer terminals may enter a halo from the side.
+    for e in c.elements:
+        if e.key==selected:
+            w,h=(34,2*e.half_length+8) if e.vertical else (2*e.half_length+8,34)
+            if e.kind=="core":w,h=(2*e.half_length+8,24) if e.vertical else (24,2*e.half_length+8)
+            out += [f'<rect x="{e.x-w/2}" y="{e.y-h/2}" width="{w}" height="{h}" rx="5" fill="#e0f2fe" stroke="none"/>']
     out+=['<g stroke="#334155" stroke-width="1.8" fill="none">']
     out += [f'<line x1="{a}" y1="{b}" x2="{d}" y2="{e}" data-net="{escape(net)}"/>' for net,(a,b,d,e) in c.routes]
     # Distinct nets that cross get an explicit bridge, never a junction dot.
@@ -522,10 +532,6 @@ def svg_schematic(topology_id: str, *, selected: str | None = None, width: int =
         if e.selectable:attrs+=f' data-device="{escape(e.key)}"'
         out += [f'<g{attrs} color="{color}" stroke="{color}" stroke-width="1.8" fill="#ffffff">',
                 f'<title>{escape(e.key)}: {escape(" / ".join(e.nets) if e.nets else "primary-referred magnetizing state")}</title>']
-        if e.key==selected:
-            w,h=(34,2*e.half_length+8) if e.vertical else (2*e.half_length+8,34)
-            if e.kind=="core":w,h=(2*e.half_length+8,24) if e.vertical else (24,2*e.half_length+8)
-            out += [f'<rect x="{e.x-w/2}" y="{e.y-h/2}" width="{w}" height="{h}" rx="5" fill="#e0f2fe" stroke="none"/>']
         out += [f'<g transform="{transform}">',_symbol(e),'</g></g>']
         anchor="end" if e.label_dx<0 else "start" if e.label_dx>0 else "middle"
         out += [f'<text x="{e.x+e.label_dx}" y="{e.y+e.label_dy}" text-anchor="{anchor}" fill="{color}" font-size="12" font-family="sans-serif">{escape(e.label)}</text>']

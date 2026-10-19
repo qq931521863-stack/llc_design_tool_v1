@@ -65,8 +65,9 @@ PSFB = DesignInputs("T18", 400., 48., .1, 100e3, 100e-6, capacitance_f=1e-3,
 
 def _pick_and_check(app, view, key):
     element = next(e for e in layout(view.result.topology_id, device_keys=view.result.waveforms)[0] if e.key == key)
-    point = QPoint(round(element.x * view.schematic.width() / 740),
-                   round(element.y * view.schematic.height() / 285))
+    bounds = view.schematic.schematic_rect()
+    point = QPoint(round(bounds.x() + element.x * bounds.width() / 740),
+                   round(bounds.y() + element.y * bounds.height() / 285))
     QTest.mouseClick(view.schematic, Qt.MouseButton.LeftButton, pos=point)
     app.processEvents()
     assert view.schematic.selected == key

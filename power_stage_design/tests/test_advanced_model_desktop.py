@@ -124,14 +124,16 @@ def test_advanced_real_inputs_buttons_schematic_save_report_and_restore(window,a
     key={'T05':'Coss1','T11':'Dbody','T18':'node_A'}[topology]
     element=next(e for e in layout(topology,device_keys=window.result.waveforms)[0] if e.key==key)
     sw,sh=schematic_size(topology,device_keys=window.result.waveforms)
+    scale=min(window.schematic.width()/sw,window.schematic.height()/sh)
+    left=(window.schematic.width()-scale*sw)/2;top=(window.schematic.height()-scale*sh)/2
     for branch in layout(topology,device_keys=window.result.waveforms)[0]:
         if not branch.selectable:continue
-        QTest.mouseClick(window.schematic,Qt.MouseButton.LeftButton,pos=QPoint(round(branch.x*window.schematic.width()/sw),round(branch.y*window.schematic.height()/sh)))
+        QTest.mouseClick(window.schematic,Qt.MouseButton.LeftButton,pos=QPoint(round(left+branch.x*scale),round(top+branch.y*scale)))
         assert window.component_combo.currentData()==branch.key
         for plot,signal in ((window.current_plot,window.result.waveforms[branch.key].current_a),(window.voltage_plot,window.result.waveforms[branch.key].voltage_v)):
             _,actual=plot.listDataItems()[0].getData()
             np.testing.assert_array_equal(actual,signal.sample(count=800,periods=2)[1])
-    QTest.mouseClick(window.schematic,Qt.MouseButton.LeftButton,pos=QPoint(round(element.x*window.schematic.width()/sw),round(element.y*window.schematic.height()/sh)))
+    QTest.mouseClick(window.schematic,Qt.MouseButton.LeftButton,pos=QPoint(round(left+element.x*scale),round(top+element.y*scale)))
     assert window.component_combo.currentData()==key
     _t,y=window.current_plot.listDataItems()[0].getData()
     np.testing.assert_array_equal(y,window.result.waveforms[key].current_a.sample(count=800,periods=2)[1])

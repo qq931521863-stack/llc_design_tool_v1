@@ -66,8 +66,9 @@ def test_real_schematic_click_selects_matching_waveform_and_stress(app, window, 
     assert window.result.topology_id == topology
     assert window.report_action.isEnabled()
     element = next(element for element in layout(topology)[0] if element.key == "D1")
-    point = QPoint(round(element.x * window.schematic.width() / 740),
-                   round(element.y * window.schematic.height() / 285))
+    bounds = window.schematic.schematic_rect()
+    point = QPoint(round(bounds.x() + element.x * bounds.width() / 740),
+                   round(bounds.y() + element.y * bounds.height() / 285))
     QTest.mouseClick(window.schematic, Qt.MouseButton.LeftButton, pos=point)
     app.processEvents()
     assert window.component_combo.currentData() == "D1"
@@ -569,8 +570,9 @@ def test_all_nineteen_presets_recompute_restore_and_export_real_desktop(app, win
         if not element.selectable:
             continue
         assert element.key in window.result.waveforms, f"No waveform mapping for {topology}/{element.key}"
-        point = QPoint(round(element.x*window.schematic.width()/740),
-                       round(element.y*window.schematic.height()/285))
+        bounds = window.schematic.schematic_rect()
+        point = QPoint(round(bounds.x()+element.x*bounds.width()/740),
+                       round(bounds.y()+element.y*bounds.height()/285))
         QTest.mouseClick(window.schematic, Qt.MouseButton.LeftButton, pos=point)
         app.processEvents()
         assert window.component_combo.currentData() == element.key, f"Click hit wrong component in {topology}/{element.key}"

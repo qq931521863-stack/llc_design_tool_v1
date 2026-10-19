@@ -195,8 +195,8 @@ def _exercise_advanced_power_stage(stage, directory, app, priority_proof):
             if not branch.selectable:
                 continue
             QTest.mouseClick(stage.schematic, Qt.MouseButton.LeftButton,
-                pos=QPoint(round(branch.x * stage.schematic.width() / width),
-                           round(branch.y * stage.schematic.height() / height)))
+                pos=QPoint(round(stage.schematic.schematic_rect().x() + branch.x * stage.schematic.schematic_rect().width() / width),
+                           round(stage.schematic.schematic_rect().y() + branch.y * stage.schematic.schematic_rect().height() / height)))
             _require(stage.component_combo.currentData() == branch.key, "advanced branch hit test failed")
             for plot, signal in ((stage.current_plot, result.waveforms[branch.key].current_a),
                                  (stage.voltage_plot, result.waveforms[branch.key].voltage_v)):

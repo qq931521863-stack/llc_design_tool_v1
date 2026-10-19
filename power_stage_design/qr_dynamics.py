@@ -603,8 +603,8 @@ def calculate_qr_dynamic(inputs: DesignInputs, options: QROptions, cancelled=Non
         "Dbody": DeviceWaveforms("Ideal zero-drop primary body diode", wave("body", "A", "body diode source to drain"), vq),
         "D1": DeviceWaveforms("Secondary rectifier", diode, vp.affine(scale=1/n, offset=vo, reference="cathode to anode")),
         "Lm": DeviceWaveforms("Primary-referred magnetizing state", im, vp),
-        "primary": DeviceWaveforms("Actual primary winding", ip, vp),
-        "secondary": DeviceWaveforms("Actual secondary winding", diode, vp.affine(scale=-1/n)),
+        "primary": DeviceWaveforms("Actual primary winding", replace(ip, reference="VIN to N (into primary dot; signed)"), replace(vp, reference="VIN minus N")),
+        "secondary": DeviceWaveforms("Actual secondary winding", replace(diode, reference="ISO to SEC (return to rectifier terminal)"), vp.affine(scale=-1/n, reference="SEC minus ISO")),
         "Cnode": DeviceWaveforms("Charge-based drain-node capacitance", wave("displacement", "A", "into drain-node positive plate; ideal reset impulse excluded" if resistance is None else "into drain-node positive plate"), vq),
         "Cout": DeviceWaveforms("Output capacitor", cout, capacitor_voltage(cout, inputs.capacitance_f, vo)),
     }

@@ -317,6 +317,48 @@ def test_real_qt_svg_renders_each_device_and_selection_without_changing_circuit(
     app.processEvents()
 
 
+@pytest.mark.parametrize("topology,keys", [("T01", None), ("T18", {"Coss1"})])
+@pytest.mark.parametrize("size", [(1280, 235), (1560, 400), (520, 500)])
+def test_widget_fits_without_stretching_and_clicks_only_in_circuit(topology, keys, size):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt = pytest.importorskip("PySide6.QtWidgets")
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    from power_stage_design.gui import SchematicView
+    app = qt.QApplication.instance() or qt.QApplication([])
+    view = SchematicView()
+    view.topology_id = topology
+    view.device_keys = keys
+    view.selected = None
+    view.refresh()
+    view.resize(*size)
+    view.show()
+    app.processEvents()
+    circuit = _circuit(topology, device_keys=keys)
+    scale = min(view.width()/circuit.width, view.height()/circuit.height)
+    left = (view.width()-scale*circuit.width)/2
+    top = (view.height()-scale*circuit.height)/2
+    # Independently measure the rendered input-source circle: its four axes
+    # have the same radius, even when the widget has a very different ratio.
+    image = view.grab().toImage()
+    for x, y in ((13, 145), (57, 145), (35, 123), (35, 167)):
+        px, py = round(left+x*scale), round(top+y*scale)
+        assert min(image.pixelColor(px+dx, py+dy).lightness()
+                   for dx in (-1, 0, 1) for dy in (-1, 0, 1)) < 220
+    selected = []
+    view.component_selected.connect(selected.append)
+    for part in circuit.elements:
+        before = len(selected)
+        QTest.mouseClick(view, Qt.MouseButton.LeftButton,
+                        pos=QPoint(round(left+scale*part.x), round(top+scale*part.y)))
+        assert selected[before:] == ([part.key] if part.selectable else [])
+    before = len(selected)
+    for point in (QPoint(1, 1), QPoint(view.width()-2, view.height()-2)):
+        QTest.mouseClick(view, Qt.MouseButton.LeftButton, pos=point)
+    assert len(selected) == before
+    view.close()
+
+
 @pytest.mark.parametrize("topology",TOPOLOGIES)
 def test_real_widget_mouse_events_select_the_drawn_device_at_scaled_size(topology):
     os.environ.setdefault("QT_QPA_PLATFORM","offscreen")
@@ -341,3 +383,46 @@ def test_real_widget_mouse_events_select_the_drawn_device_at_scaled_size(topolog
     finally:
         view.close();view.deleteLater()
         QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete);app.processEvents()
+
+
+@pytest.mark.parametrize("topology,keys", [(t, None) for t in TOPOLOGIES] + [
+    ("T05", {"Coss1"}), ("T11", {"Cnode", "Dbody"}), ("T18", {"Coss1"}),
+])
+def test_selection_does_not_erase_actual_copper_at_component_ports(topology, keys):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    qt = pytest.importorskip("PySide6.QtWidgets")
+    from PySide6.QtCore import QByteArray, QRectF
+    from PySide6.QtGui import QImage, QPainter
+    from PySide6.QtSvg import QSvgRenderer
+    app = qt.QApplication.instance() or qt.QApplication([])
+    circuit = _circuit(topology, device_keys=keys)
+
+    def render(selected=None):
+        image = QImage(2*circuit.width, 2*circuit.height, QImage.Format.Format_ARGB32)
+        image.fill(0xffffffff)
+        painter = QPainter(image)
+        QSvgRenderer(QByteArray(svg_schematic(topology, selected=selected, device_keys=keys).encode())).render(
+            painter, QRectF(0, 0, image.width(), image.height()))
+        painter.end()
+        return image
+
+    plain = render()
+    for part in circuit.elements:
+        if not part.selectable:
+            continue
+        selected = render(part.key)
+        for terminal in part.terminals:
+            for _, route in circuit.routes:
+                if not _lies(terminal, route):
+                    continue
+                # The last 1–3 drawing units of external copper used to be
+                # covered by the selection fill, visually disconnecting parts.
+                x, y = terminal
+                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    for distance in (1, 2, 3):
+                        point = (x+dx*distance, y+dy*distance)
+                        if _lies(point, route):
+                            px, py = (round(2*v) for v in point)
+                            if plain.pixelColor(px, py).lightness() < 150:
+                                assert selected.pixelColor(px, py).lightness() < 150, (topology, part.key, point)
+    app.processEvents()

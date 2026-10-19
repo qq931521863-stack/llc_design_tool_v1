@@ -435,11 +435,12 @@ def _make_result(circuit, initial, terminal, duty, mean, parts, shooting_error):
         append("L1", "Output inductor", io, vr-const(p.vout_v), left, right)
         append("Lleak", "Primary leakage/series inductance", ip, va-vb-vp, left, right)
         append("Lm", "Primary magnetizing inductance", im, vp, left, right)
-        append("primary", "Transformer winding (excludes shunt capacitance)", winding, vp, left, right)
+        append("primary", "Transformer winding (excludes shunt capacitance)", winding, vp, left, right,
+               "P to B (into primary dot; excludes shunt capacitance)", "P minus B")
         append("secondary1", "Positive secondary half", sec[0], vp/p.turns_ratio_np_ns, left, right,
-               "current delivered from winding dot")
+               "ISO to S1 (center tap to upper outer terminal)", "S1 minus ISO")
         append("secondary2", "Negative secondary half", sec[1], -vp/p.turns_ratio_np_ns, left, right,
-               "current delivered from winding dot")
+               "ISO to S2 (center tap to lower outer terminal)", "S2 minus ISO")
         for k in range(4):
             append(f"Q{k+1}", f"Q{k+1} bidirectional channel", channel[k], vds[k], left, right,
                    "drain to source; channel only, excludes Coss/body diode", "drain to source")

@@ -109,13 +109,21 @@ class SchematicView(QWidget):
         self.renderer.load(QByteArray(svg_schematic(self.topology_id, selected=self.selected, device_keys=self.device_keys).encode()))
         self.update()
 
+    def schematic_rect(self):
+        width,height=schematic_size(self.topology_id,device_keys=self.device_keys)
+        scale=min(self.width()/width,self.height()/height)
+        return QRectF((self.width()-width*scale)/2,(self.height()-height*scale)/2,width*scale,height*scale)
+
     def paintEvent(self, event):
         painter = QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.renderer.render(painter, QRectF(0, 0, self.width(), self.height()))
+        self.renderer.render(painter, self.schematic_rect())
 
     def mousePressEvent(self, event):
         width,height=schematic_size(self.topology_id,device_keys=self.device_keys)
-        x, y = event.position().x()*width/self.width(), event.position().y()*height/self.height()
+        bounds=self.schematic_rect()
+        if not bounds.contains(event.position()):
+            super().mousePressEvent(event);return
+        x, y = (event.position().x()-bounds.x())*width/bounds.width(), (event.position().y()-bounds.y())*height/bounds.height()
         for element in layout(self.topology_id, device_keys=self.device_keys)[0]:
             if element.contains(x,y):
                 self.component_selected.emit(element.key); return
