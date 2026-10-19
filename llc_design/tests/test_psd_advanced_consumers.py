@@ -145,7 +145,11 @@ def test_gui_opt_in_applies_same_result_and_rejects_stale_delivery(example, monk
     analyzer, base, td = example
     window = module.LLCMainWindow(base.spec.clone())
     result = MultiFidelityAnalysis(td.request, {td.fidelity: td}, td.fidelity, ())
-    def solve(request):
+    checkpoints=[]
+    def solve(request, *, checkpoint=None):
+        assert callable(checkpoint)  # Desktop consumer must retain cancellation.
+        checkpoint()
+        checkpoints.append(checkpoint)
         selected = replace(td, request=request)
         return MultiFidelityAnalysis(request, {selected.fidelity: selected}, selected.fidelity, ())
     monkeypatch.setattr(module, "LLCGoldenSolver", lambda config: SimpleNamespace(solve=solve))
@@ -154,6 +158,7 @@ def test_gui_opt_in_applies_same_result_and_rejects_stale_delivery(example, monk
     monkeypatch.setattr(window, "_run_worker", lambda label, calculate, callback: callback(calculate()))
     window.model_comparison_view.apply_td_losses.setChecked(True)
     window.run_model_comparison(window.model_comparison_view.options())
+    assert len(checkpoints)==1
     assert window.system_analysis.nominal.semiconductor_source == "TIME_DOMAIN_WAVEFORM"
     assert window.system_analysis.nominal.total_loss_w > base.nominal.total_loss_w
     assert "TIME_DOMAIN_WAVEFORM" in window.loss_summary_view.text.toPlainText()
