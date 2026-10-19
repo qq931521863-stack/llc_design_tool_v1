@@ -1,5 +1,18 @@
 # Power Stage Designer feature matrix
 
+## Runtime identity and qualification update (2026-10-19)
+
+The preserved LLC/MCP workflow exposed a full-suite ordering defect: a generated
+Matplotlib font cache invalidated every new design snapshot. Production source
+and maintained data are now separated from generated outputs; real input/dependency
+drift and snapshot tampering remain rejection conditions. The identical actual
+launcher/MCP/API test order is red-to-green, with 120 focused owner checks passing.
+Independent acceptance passes the real red-to-green order, 76 MCP tests and
+635 checks each for source and repaired wheel. A missing built-in LLC baseline
+resource was also restored to the actual wheel; both public validation APIs now
+work and preserve hardware UNKNOWN. Final complete-source/native acceptance
+remains separate; this does not upgrade any physical-model domain below.
+
 The combined Linux baseline `078907e` / remote `4e15d503` passes **4401 tests,
 with 2 opt-in skips and 2 historical xfails**, and clean final GUI ownership.
 Later native Windows evidence requires the current PSFB zero-padding and exact
@@ -7,11 +20,12 @@ UTF-8 export fixes. Their focused numerical/GUI/IO-model acceptance is separate
 from refreshed aggregate and native-package qualification, which remains pending.
 No implementation row below implies hardware or fully qualified native binaries.
 
-The current aggregate run is **not yet passed**: `2738299` stopped at 376 passes
+The historical first drawing/input aggregate did **not pass**: `2738299` stopped at 376 passes
 and one outdated immediate-export assertion. Independent actual HTML/loop replay
 verified current input and invalid-input protection; the test-only correction has
-39 focused passes. Complete regression is being repeated, with application bytes
-unchanged. See the validation report for exact red/green scope.
+39 focused passes. That test-only correction led to the completed `078907e` result above; later
+application changes require their own qualification. See the validation report
+for exact red/green scope.
 
 ## Actual drawing consumer audit (2026-10-19)
 

@@ -1,5 +1,42 @@
 # Power Stage Designer validation report
 
+## Preserved MCP workflow: runtime-cache identity repair (2026-10-19)
+
+The concurrent `54486b6` LLC/MCP workflow was preserved, including its two README
+links and all implementation files. Its isolated 35-test suite passed, but the
+complete GitHub Linux run failed **10 MCP tests / 4423 passed**. A real three-test
+order reproduced the failure in 12.53 s: the launcher subprocess creates
+`webapp/.mplcache/fontlist-v3.11.0.json` after the MCP startup fingerprint is frozen;
+the old recursive JSON scan mistakes this generated font cache for engineering data.
+
+The repair fingerprints production Python modules and maintained catalogs/data
+(including the LLC validation baseline), excluding test trees, hidden caches and
+regenerable outputs. It re-enumerates inputs so real module/catalog additions,
+changes and deletions still invalidate snapshots, as do dependency-version changes.
+The startup fingerprint is not reset to hide drift. The identical real test order
+now passes all three cases while still creating the font cache. The focused owner
+selection has **120 passed**, including 41 new regressions. Independent acceptance
+passes 76 MCP tests plus 635 source and 635 repaired-wheel boundary checks, actual
+restart provenance, and real installed stdio design/child-job/JSON+HTML exports.
+These overlapping selections are not summed into a full-suite total.
+
+This check also found a real pre-existing wheel omission: both public built-in LLC
+validation APIs raised FileNotFoundError because the baseline JSON was not packaged.
+The package-data fix includes that committed resource. Both APIs now pass all six
+software baseline checks while external-simulation and hardware status remain
+UNKNOWN. The installed wheel matches all 357 production Python files and 17 input
+JSONs; complete runtime identities and a source-created snapshot match across the
+source/wheel boundary. A persistent actual-build/install/public-API regression
+passes. Complete final-source regression and native freezing are still pending.
+
+The previous `078907e` baseline also finished its real PSFB long test: **one passed
+in 548.692 s**, with all 777 source hashes unchanged. Its wheel/frozen stage was
+held before building. The later GitHub `4e15d503` Linux run failed five tests and
+seven fixtures at the old PSFB ragged coefficient matrix, confirming that the
+already repaired portability defect was not limited to Windows. No failed or
+interrupted run is counted as a complete pass. Formal release remains paused;
+current Windows/macOS frozen artifacts are still unqualified.
+
 ## Native Windows follow-up and source boundary (2026-10-19)
 
 The combined Linux source `078907e` (identical tree to main `4e15d503`)
@@ -40,7 +77,7 @@ and HTML identity, and independent whole-period energy/current integration. Duri
 the real consumer, 2,652 accepted old/new coefficient arrays are unchanged and
 2,124 candidates remain rejected by both versions. Seven deterministic real-function
 cases reproduce the former ragged shape; this Linux T18 fixture itself does not
-reproduce that Windows-specific numerical path. A separate 242-assertion check
+reproduce that particular numerical path. A separate 242-assertion check
 uses the original Windows NumPy/SciPy versions on Linux. The integrated
 new native-preflight selection passes 64 tests. These are focused Linux/IO-model
 results, not corrected native Windows/macOS qualification. Refreshed complete
@@ -48,7 +85,7 @@ source qualification and actual native freezes remain required. Publication stay
 paused, and no native gate has been removed.
 
 
-## Current aggregate rerun boundary (2026-10-19)
+## Historical immediate-export aggregate rerun (2026-10-19)
 
 The first combined-source run at `2738299` stopped with **376 passed and one
 failed test**; the remaining 4028 collected tests were not executed. The retained
