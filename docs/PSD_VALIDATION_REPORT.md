@@ -1,5 +1,57 @@
 # Power Stage Designer validation report
 
+## Refreshed artifacts and next native failures (2026-10-19)
+
+Clean `155ae2be3e9db960b719aad95e5dd39d80d53704` (same 793-file tree as remote
+`3f2d1a48e879f0aa04f9859004722fefd96890a2`) completed refreshed installed-wheel and
+actual production Linux frozen qualification. Both schema-4 proofs cover all six
+workspaces; actual magnetic Apply is 209.480 µH and 48.817 mΩ with the expected
+Information/body telemetry. The wheel passes **278 focused tests and 76 MCP tests**,
+zero failures/errors/skips. Both public validation APIs pass six software checks;
+hardware remains false/UNKNOWN. All 626 wheel files match their source archive,
+62 import origins are in the installation, 378 frozen module origins match that
+wheel and 17 resources pass collection checks. All 793 source hashes stayed fixed.
+
+- Wheel SHA-256: `1f0eca878a77be6176fdb70eb8970887ff94b91ccb853ea69c0597d162629162`
+- Linux executable SHA-256: `a20dc055a00c79a3eed31ddc076960619e82abf035cc3f23d7e7cc6c1f590210`
+- Linux runtime proof SHA-256: `5e32706a8fc85acfa16455afeed28ea3a68e81b925d3a5cb1ddf6c81ce8649bf`
+
+The artifact run takes 1152.922 s; final repair/source provenance passes separately.
+Observed available memory never fell below 4,856,464 KiB; this is not a measurement
+of process peak RSS. The complete application/long-test results below retain their
+`6138f0f` attribution. These artifact results do not qualify later font changes.
+
+[Run 39326573293](https://github.com/yangshuai2022-star/power-design-toolkit/actions/runs/39326573293)
+then exposed two further native preflight failures. Windows completed **210 passed,
+1 failed and 1 skipped** in 664.82 s: the QPA now creates the correct 1280×720,
+96 DPI, DPR 1 screen, but the normal-window frame containment assertion fails.
+Its missing offscreen font-directory warning is retained. Controlled Qt 6.11.2
+empty-font experiments independently reproduce a 1307 px minimum/1311 px frame;
+registering real installed TTF/TTC fonts restores normal dimensions and readable
+Chinese/Latin glyphs without changing point size or widget constraints. See the
+[detailed font repair and upstream sources](WINDOWS_OFFSCREEN_FONTS.md). The
+original Windows log lacks frame/font operands, so actual corrected Windows CI
+remains decisive rather than inferred from that controlled reproduction.
+
+macOS completed **491 passed, 1 failed and 1 skipped** in 923.72 s, crossing the
+previous magnetic Apply gate. The live-controller ERROR-to-valid test still saw
+`current_digital=None` after an 80 ms wait. Independent actual-GUI reproduction
+queues 120 ms of real canvas drawing: 1000 Hz is correctly committed, the 45 ms
+debounce is overdue/active, but recalculation has not yet been dispatched. Continuing
+the event loop publishes the correct fresh controller. The minimal test-only fix
+observes real bounded completion, preserving input/pending/error/late-worker guards
+and adding exact b/a/Ts/SHA and object-identity checks. The exact candidate passes
+**13 independent cases in 82.18 s**, including four Nyquist/boundary/late-result
+checks against an independent SciPy coefficient oracle. The owner separately
+passes nine module and 33 adjacent cases; overlapping counts are not summed.
+
+Both native full suites and frozen packages remained unrun after those preflight
+failures. No failed run is relabeled passed. The repaired font bootstrap affects
+only Windows/offscreen startup; numerical algorithms and production controller
+logic are unchanged, but its new source/artifact qualification is separate.
+Linux and native jobs remain parallel, with complete tests, frozen verification
+and both literal-false publication gates retained.
+
 ## Native preflight portability repairs (2026-10-19)
 
 [CI run 39306491194](https://github.com/yangshuai2022-star/power-design-toolkit/actions/runs/39306491194)

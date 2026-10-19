@@ -1,5 +1,39 @@
 # Power Stage Designer development status
 
+## Latest native-gate follow-up (2026-10-19)
+
+The refreshed `155ae2b` installed wheel and actual Linux frozen executable both
+pass schema-4 production self-tests with all six workspaces. The installed wheel
+passes 278 focused checks and all 76 MCP tests; both public validation APIs retain
+six passing software checks and hardware UNKNOWN. All 793 tracked source hashes
+stayed unchanged. This artifact result is separate from the full/long application
+qualification on `6138f0f` described below.
+
+The next native run, `39326573293` on `3f2d1a4`, still failed its preflights:
+Windows 210 passed / 1 failed / 1 skipped; macOS 491 passed / 1 failed / 1 skipped.
+The previous startup and magnetic-title failures were crossed. The newly exposed
+Windows failure is real 720p frame containment with a missing offscreen font
+inventory; controlled empty-font experiments reproduce the same oversized minimum.
+A Windows/offscreen-only bootstrap now registers installed system TTF/TTC/OTF
+fonts once, preserving existing language selection, point size and all layout
+constraints. The CI font directory also serves Qt-only consumers. Every remaining
+screen-config fixture uses a basename/cwd pair. See
+[font mechanism, counterexample and scope](WINDOWS_OFFSCREEN_FONTS.md).
+
+The macOS test failure is reproduced by queued real GUI drawing: the committed
+1000 Hz input is correct, but a fixed 80 ms wait can return before the overdue
+45 ms debounce timer is dispatched. The test now observes bounded real completion,
+with separate pending/error/recovery and exact coefficient/sample-time/identity
+checks. It neither invokes recalculation nor substitutes a local controller.
+The exact candidate passes nine original/strengthened module cases and four
+independent boundary/late-result cases. No controller production code changed.
+
+These corrections are independently reviewed Linux/offscreen candidates, not
+completed Windows/macOS qualification. Current source/frozen and native results
+must retain their own identities; older full passes do not qualify changed font
+startup code. Full tests, frozen execution and literal-false publication gates
+remain mandatory. No tag or release is authorized by this checkpoint.
+
 ## Current native repair checkpoint (2026-10-19)
 
 The `deb0b85` CI Linux job passes 4514 tests (one skipped, two expected failures),

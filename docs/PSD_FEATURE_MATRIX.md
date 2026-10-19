@@ -1,5 +1,27 @@
 # Power Stage Designer feature matrix
 
+## Latest platform evidence boundary (2026-10-19)
+
+`155ae2b` refreshed installed-wheel/Linux-frozen schema-4 execution passes all six
+workspaces, 278 installed desktop checks and 76 MCP cases, with unchanged source
+hashes. The next `3f2d1a4` native preflights still failed: Windows 210 pass / 1 fail /
+1 skip and macOS 491 pass / 1 fail / 1 skip. They did not reach complete native
+regression or freezing. Their subsequent fixes address genuine headless font
+availability and test synchronization, not converter-model coverage.
+
+Windows/offscreen now discovers real installed TTF/TTC/OTF fonts before shared
+theme startup; native Windows, macOS and Linux discovery is unchanged. No font
+shrinking, hidden page, relaxed screen constraint or fake glyph is introduced.
+The real controller ERROR-to-valid test waits for the existing debounce result and
+checks pending/error/recovery and exact b/a/Ts/SHA, including delayed old workers.
+Independent controlled-font and GUI-backlog counterexamples pass with the repairs.
+The original native logs did not record all internal operands, so these causal
+reproductions do not retrospectively establish every native failure detail.
+
+Actual corrected native/full/frozen gates remain pending. These repairs do not
+upgrade any T/X/L/C/A physical domain, supply hardware evidence, establish exact
+TI executable equivalence or remove the publication pause.
+
 ## Native qualification status (2026-10-19)
 
 The latest completed Linux CI on `deb0b85` passes 4514 tests, one skipped and two
