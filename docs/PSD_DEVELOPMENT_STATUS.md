@@ -1,5 +1,27 @@
 # Power Stage Designer development status
 
+## Requalification checkpoint and worker-ownership correction (2026-10-19)
+
+The integrated numerical/layout repair `a698dc533124e9c2d22342761cc2c56bf01a1f88`
+passed clean installed-wheel and actual Linux frozen application checks, including
+both the accepted WARN and rejected FAIL Two-Stage paths. The original five
+independent integrated-magnetics scripts and actual full/half-bridge consumer
+checks also passed on that exact source. However, its new full regression stopped
+with **3707 passed, two opt-in skips and one failure**: an auto-deleted PFC worker's
+Python wrapper remained owned by QThreadPool. This is a genuine retained-wrapper
+race, reproduced with actual PFC methods and independently with an empty QRunnable;
+it is not dismissed as a timeout or test-observer artifact. The 10-second lifecycle
+assertion remains unchanged. A submission barrier orders the binding ownership
+handoff before runnable execution, while preserving native auto-delete and safe
+queued result disposal across all producers. Fresh aggregate qualification remains
+required after this application change.
+
+Separate diagnostic tail: **445 passed, two historical xfails**. This is not an
+aggregate pass. The opt-in finite-Coss PSFB joint sizing test passed separately on
+`a698dc5` in **487.33 s**, with independent current extrema and physical options
+preserved. Public input-only [Two-Stage examples](../examples/llc_two_stage/README.md)
+provide the exact admitted WARN and rejected FAIL configurations and singleton axes.
+
 ## Native qualification corrections in progress (2026-10-19)
 
 The dependency-corrected main `c19e208466d51e09ab657c2c612d2dd6fa2857cb`

@@ -15,6 +15,8 @@ Power Design Toolkit is an engineering-oriented power-electronics design and dig
 
 **v9.9.0 development source:** Power Stage Designer, shared-waveform LLC/PFC analysis, integrated LLC resonant magnetics, source-backed CSC selection and session/export safeguards. Actual native CI exposed numerical and desktop-layout failures after the Linux run passed. The switched-LLC solver and affected consumers are being requalified with independent circuit evidence; previous Linux/wheel/frozen results are historical source-specific evidence, not current native qualification. Formal release remains paused. The published [v9.8.1 binary baseline](https://github.com/yangshuai2022-star/power-design-toolkit/releases/tag/v9.8.1) predates these additions. See [validation and exact source identities](docs/PSD_VALIDATION_REPORT.md) and [Install and run](#8-install-and-run).
 
+Reproducible [LLC Two-Stage GUI/CLI input examples](examples/llc_two_stage/README.md) include a nominal WARN candidate with explicit Apply/save/report steps and a physically rejected candidate that must remain unavailable for Apply. They preserve the 20% validity gate and distinguish nominal TD losses from the remaining FHA workpoints.
+
 ## Current capabilities
 
 One toolkit connects power-stage design, magnetics, loss estimation, voltage/current waveforms, control-loop design, measured FRA, digital coefficients and C99 export.

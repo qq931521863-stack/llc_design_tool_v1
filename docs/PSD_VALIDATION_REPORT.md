@@ -1,5 +1,45 @@
 # Power Stage Designer validation report
 
+## New-source checkpoint, retained-wrapper failure and numerical changes (2026-10-19)
+
+Source `a698dc533124e9c2d22342761cc2c56bf01a1f88` had unchanged tracked-file hashes
+through each of the following separate checks:
+
+- Installed wheel and real Linux PyInstaller production self-test/schema-4 proof
+  passed. Both actual GUI Two-Stage examples were exercised: valid WARN Apply /
+  save / reopen / report, and invalid FAIL with disabled Apply and unchanged input.
+- Independent full/half-bridge actual consumers and all five original integrated
+  magnetics consumer/identity/boundary/FHA-label/TD-label scripts passed.
+- The full regression stopped after **3707 passes, two opt-in skips and one failure**
+  in PFC worker Python-wrapper collection, elapsed **3595.72 s**. Peak aggregate RSS
+  was **1,946,992 KiB**. Native worker/signals were already deleted; the wrapper's
+  strong referrer was QThreadPool. Independent empty QRunnable reproduction excludes
+  product callbacks and test observers as the cause. Red evidence is retained.
+- The remaining-package diagnostic run passed **445 tests with two historical
+  xfails**. It does not convert the failed full run into a pass.
+- The actual finite-Coss PSFB inverse sizing opt-in test passed in **487.33 s**,
+  checking Lout/Lm/ratio recovery and independent physical current extrema.
+
+The shared worker-submission barrier prevents native auto-delete before PySide's
+post-start wrapper parenting. All production producers use it. It does not add a
+sleep, relax collection deadlines, disable auto-delete, purge unrelated jobs, or
+turn a rejected candidate into an accepted one. New-source qualification must
+include normal/error completion, rejected/duplicate submission, queued clear,
+close/reopen, unrelated global work, and aggregate retained-object checks.
+
+The numerical correction changes some integrated-magnetics outputs; historical
+values must not be silently carried forward. In the independently rerun case,
+accepted TD total loss changes **75.4389136301 W → 76.0383304727 W (+0.794572%)**,
+physical B peak **0.09674371783 T → 0.09717147126 T (+0.442151%)**, and output
+**53.0136615067 V → 52.9999971246 V**. The new regulated periodic residual is
+**1.02083e-14**. The independent port/flux/loss identity checks still pass. These
+values qualify this software case, not hardware accuracy or every operating point.
+
+The public [input-only positive and negative examples](../examples/llc_two_stage/README.md)
+were saved/loaded through actual project APIs and separately run through the
+production CLI. They contain no accepted results or saved analysis. Their exact
+singleton axes and nominal-only TD/FHA source split are documented.
+
 ## Actual native failures and independently checked numerical repair (2026-10-19)
 
 [CI run 39227806648](https://github.com/yangshuai2022-star/power-design-toolkit/actions/runs/39227806648)

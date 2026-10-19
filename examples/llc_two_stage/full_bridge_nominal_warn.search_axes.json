@@ -1,0 +1,23 @@
+{
+  "ln_values": [
+    4.5
+  ],
+  "q_values": [
+    0.35
+  ],
+  "fr_values_hz": [
+    100000.0
+  ],
+  "primary_turn_values": [
+    32
+  ],
+  "secondary_turn_values": [
+    4
+  ],
+  "primary_devices": [
+    "REF_650V_SIC_45M"
+  ],
+  "sr_parallel_values": [
+    2
+  ]
+}

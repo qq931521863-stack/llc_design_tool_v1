@@ -1,5 +1,18 @@
 # Power Stage Designer feature matrix
 
+## Current qualification boundary (2026-10-19)
+
+The event-resolved numerical repair and real Linux wheel/frozen consumers passed
+at `a698dc533124e9c2d22342761cc2c56bf01a1f88`. Its full suite nevertheless stopped
+at **3707 passed / two skipped / one retained-worker-wrapper failure**. An
+independent empty-QRunnable reproduction confirms a PySide thread-pool ownership
+race; all GUI producers now use an explicit submission handoff. This keeps native
+auto-delete, the original collection deadline, close/reopen semantics and unrelated
+pool work. Complete new-source aggregate/native qualification is still pending.
+The separate tail pass is diagnostic only. T18's finite-Coss joint sizing long test
+passed on `a698dc5`; T20/T21 public examples retain both an accepted WARN and a
+physically rejected FAIL instead of treating convergence as validity.
+
 ## Native requalification notice (2026-10-19)
 
 The bounded feature domains below remain the implementation contract. Their
