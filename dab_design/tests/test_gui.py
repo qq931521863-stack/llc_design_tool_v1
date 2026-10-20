@@ -100,13 +100,25 @@ def test_three_phase_gui_runs_and_exports(monkeypatch, tmp_path):
     monkeypatch.setattr(
         qt.QFileDialog, "getSaveFileName", lambda *a: (str(path), "CSV")
     )
-    view.inputs["output_power_w"].setValue(5)
     view.export_results()
     assert (
         json.loads(path.with_suffix(".json").read_text())["config"]["output_power_w"]
         == 10000
     )
     assert len(view.figures["SVPWM 六路"].axes[1].lines) == 6
+    # A current-source export succeeds; changing inputs must not silently
+    # deliver the former result as if it still described those inputs.
+    stale_path = tmp_path / "stale-dq.csv"
+    dialogs = []
+    monkeypatch.setattr(
+        qt.QFileDialog, "getSaveFileName",
+        lambda *a: (dialogs.append(a) or str(stale_path), "CSV"),
+    )
+    view.inputs["output_power_w"].setValue(5)
+    view.export_results()
+    assert not dialogs
+    assert not stale_path.exists()
+    assert not stale_path.with_suffix(".json").exists()
     view.close()
 
 

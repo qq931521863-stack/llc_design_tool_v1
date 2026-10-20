@@ -1,5 +1,35 @@
 # Power Stage Designer feature matrix
 
+## Control-workspace fan-out follow-up (2026-10-20)
+
+The shared exact-controller/session/report work now extends to DAB forward
+TPS/SPS power-command loops, Vienna ABC/bus/auxiliary-midpoint loops and the
+separate two-level dq/lifted bus model. This does not add new PSD L01–L06
+power-stage formulas or certify arbitrary control modes. See
+[CONTROL_FANOUT_MATRIX.md](CONTROL_FANOUT_MATRIX.md) for implemented consumers,
+[CONTROL_FANOUT_VALIDATION.md](CONTROL_FANOUT_VALIDATION.md) for independent
+checks and remaining full/package qualification gates, and the topology-specific contracts linked there.
+Detailed analog ADC/FRA parity, Vienna dq and its timing/energy-chain corrections
+remain real unimplemented work. A bounded working consumer is not labeled full
+LLC/TTPL parity. The interrupted a74 full suite remains INCOMPLETE; the new source
+requires its own complete qualification.
+
+## Guided System Design loop audit (2026-10-20)
+
+This launcher entry is separate from PSD analog loops. LLC FM voltage and TTPL
+PFC current/voltage adapters have actual GUI, saved replay, candidate Apply and
+independent numerical evidence. Guided Buck/Boost, Vienna, generic and imported
+plant adapters remain disabled. Original wizard context is not a persisted,
+automatically synchronized expert session; the UI now states that limitation.
+
+Corrected consumers cover literal SOC spacing and single-frame limits, command
+ZOH ownership, ADC operating headroom, full continuous coefficients, per-loop
+Nyquist domains and nonoverlapping phase budgets. Finite-band margins are not
+closed-loop or hardware certification. The default TTPL outer PM is about 10.85°.
+Full qualification of the combined corrections is pending; prior native and
+artifact results below retain their own source identity. See the
+[dedicated loop scope and evidence](GUIDED_LOOP_VALIDATION.md).
+
 ## Native controller-export follow-up (2026-10-19)
 
 Actual native run `39338660357` passes all 100 complete controls at each of

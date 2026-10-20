@@ -40,7 +40,7 @@ from .solution_map import SolutionMapConstraints
 
 SESSION_SCHEMA = "power-design-toolkit/control-session"
 SESSION_SCHEMA_VERSION = 1
-MODEL_REVISION = "llc-edf-ttpl-double-loop-v1"
+MODEL_REVISION = "llc-edf-ttpl-principal-bands-v2"
 MAX_FILE_BYTES = 32 * 1024 * 1024
 MAX_DEPTH = 48
 MAX_ARRAY_ITEMS = 100_000
@@ -336,6 +336,10 @@ def decode_model(value: Any) -> Any:
                 for field in fields(cls):
                     if (field.name == "magnetics_mode" or field.name.startswith("integrated_")) and field.name not in payload:
                         payload[field.name] = encode_model(getattr(defaults, field.name))
+            if cls is PFCFirmwareAlgorithmConfig and type(payload) is dict:
+                # Old sessions always included both command holds.
+                payload = dict(payload)
+                payload.setdefault("include_command_zero_order_hold", True)
             _require(type(payload) is dict and set(payload) == {f.name for f in fields(cls)},
                      f"{name} fields do not match schema")
             kwargs = {key: decode(v) for key, v in payload.items()}

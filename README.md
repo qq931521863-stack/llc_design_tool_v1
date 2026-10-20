@@ -1,5 +1,7 @@
 # Power Design Toolkit
 
+> Submission checkpoint (2026-10-20): installed wheel and original Linux frozen gates pass; source coverage accounting and long/native checks are not complete. Release paused. See [validation status](docs/CONTROL_FANOUT_VALIDATION.md#submission-checkpoint-2026-10-20-0707-utc).
+
 > **Open-source power electronics CAE toolkit for power-stage design, LLC, PFC, FRA, digital control, C99 code generation and switching verification.**
 
 Power Stage Designer · LLC · DAB TPS · Totem-Pole PFC · Vienna / Two-Level PFC · SRF / DDSRF / DSOGI PLL · Multi-harmonic PR · Magnetics · FRA · C99 · ngspice · Web / MCP
@@ -13,9 +15,13 @@ Power Stage Designer · LLC · DAB TPS · Totem-Pole PFC · Vienna / Two-Level P
 
 Power Design Toolkit is an engineering-oriented power-electronics design and digital-control platform. It connects **power-stage design, component/loss screening, multi-fidelity models, measured FRA data, exact discrete controller H(z), stability analysis, C99 code generation, firmware-correlated switching co-simulation and Agent/API access** in one codebase.
 
-**v9.9.0 development source:** Power Stage Designer, shared-waveform LLC/PFC analysis, integrated LLC resonant magnetics, source-backed CSC selection, corrected actual circuit drawings and session/export safeguards. Complete Linux application/long-test and installed-wheel/frozen checks have passed on the exact sources documented in the validation report. Native Windows/macOS full-suite and frozen qualification is still in progress. Ordinary three-screen native LLC flows and 10/12 pt whole-control checks now pass on both platforms, including the compact Two-Stage input layout. Later native controller-snapshot/export checks exposed a pending-publication test capture and a Windows C99 header byte-identity defect; their focused repairs retain the original numerical and fail-closed gates. Native full-suite and frozen acceptance remain open. Earlier failed qualifications are retained with their exact source identities. Formal release remains paused. The published [v9.8.1 binary baseline](https://github.com/yangshuai2022-star/power-design-toolkit/releases/tag/v9.8.1) predates these additions. See [validation and exact source identities](docs/PSD_VALIDATION_REPORT.md) and [Install and run](#8-install-and-run).
+**v9.9.0 development source:** Power Stage Designer, shared-waveform LLC/PFC analysis, integrated LLC resonant magnetics, source-backed CSC selection, corrected circuit drawings and session/export safeguards. Historical Linux application/wheel/frozen results remain bound to the exact sources in the validation report; they are not reused for newer changes. Native snapshot `320b3e3` passed Linux CI and actual macOS frozen self-test/package upload. Windows acceptance and the newer Guided/control fan-out qualification remain pending. Formal release is paused. The published [v9.8.1 binary baseline](https://github.com/yangshuai2022-star/power-design-toolkit/releases/tag/v9.8.1) predates these additions. See [validation and source identities](docs/PSD_VALIDATION_REPORT.md), [current control-stage validation](docs/CONTROL_FANOUT_VALIDATION.md) and [Install and run](#8-install-and-run).
+
+**Guided loop follow-up:** The launcher’s **系统建模与设计 / Guided System Design** connects LLC FM and TTPL PFC models to their actual expert loop workspaces. Recent audits corrected timing/hold wiring, continuous-transfer coefficient preservation, per-loop Nyquist limits, ADC headroom checks and phase-budget composition. Default TTPL outer-loop margins remain low; a plotted Bode curve is not hardware approval. Other Guided topology adapters remain disabled, and saved expert settings are authoritative rather than the historical wizard form. See [exact scope and validation](docs/GUIDED_LOOP_VALIDATION.md); current-source whole-suite and package requalification are pending.
 
 Reproducible [LLC Two-Stage GUI/CLI input examples](examples/llc_two_stage/README.md) include a nominal WARN candidate with explicit Apply/save/report steps and a physically rejected candidate that must remain unavailable for Apply. They preserve the 20% validity gate and distinguish nominal TD losses from the remaining FHA workpoints.
+
+**Control-workspace fan-out (development checkpoint):** DAB now exposes forward TPS/SPS power-command loops, exact controller import, explicit candidate Apply, retained operating points and reproducible report/C99 delivery. Two-level PFC uses the same exact native/imported H(z) in its nonlinear runtime, lifted local model and exports. Vienna adds per-loop valid bands, source-bound candidates, sessions and reports; its ABC model remains distinct from dq. See the [capability matrix](docs/CONTROL_FANOUT_MATRIX.md) and [stage validation](docs/CONTROL_FANOUT_VALIDATION.md). Complete fixed-source qualification of this checkpoint is pending; detailed analog ADC parity and Vienna timing/energy-chain corrections remain open.
 
 ## Current capabilities
 
@@ -23,6 +29,7 @@ One toolkit connects power-stage design, magnetics, loss estimation, voltage/cur
 
 | Module | Implemented capabilities | Workspace / documentation |
 |---|---|---|
+| **Guided System Design** | Eight-page setup linked to the actual LLC FM voltage loop or TTPL current/voltage loops; explicit SOC timing, command hold, ADC headroom and valid per-loop Bode bands, candidate Apply and reproducible expert sessions | Launcher → 系统建模与设计; [verified paths, repairs and limits](docs/GUIDED_LOOP_VALIDATION.md) |
 | **Power Stage Designer** | 19 direct periodic stage models, existing LLC HB/FB integration, component-linked voltage/current and total/AC RMS, target-driven parameter suggestions, analog loops, calculators, corner scans and reproducible projects/reports | Power Stage Designer; [scope and feature matrix](docs/PSD_FEATURE_MATRIX.md) |
 | **LLC resonant converter** | FHA, multi-harmonic HB, switched time-domain analysis, gain/ZVS maps, primary/SR device libraries, magnetics, digital voltage control, interleaving and optional ngspice correlation | LLC Design; [model hierarchy](docs/LLC_MODELING.md) |
 | **DAB TPS** | Operating-point sweeps, periodic L / L+Cp solutions, power/backflow/capacitor stress, PWM counts, automatic calculation on point selection and 10 fps periodic replay | DAB TPS; [model conventions](docs/DAB_TPS_AND_THREE_PHASE_DQ.md) |
@@ -173,11 +180,16 @@ manufacture a transient simulation.
 
 The **Voltage Loop / TPS Optimization** tab reuses LLC digital-controller coefficients and adds:
 
-- PI or imported C(z) → power command → TPS → capacitor/load → Vout;
+- PI or exact imported C(z) → forward power command → TPS or SPS → capacitor/load → Vout;
 - local power-map linearization, matched discrete bus-energy update and sample delay, Bode and discrete poles;
 - reference/load steps with nonlinear bus-energy integration and command limits;
 - formula/grid/multi-start constrained-search comparison and PWM-count checks;
-- frozen JSON snapshots and portable controller C99.
+- explicit candidate Apply and fixed-controller operating-point scans;
+- typed sessions with fresh-process replay, HTML/JSON reports, standalone research scripts and portable controller C99.
+
+The input remains power command in watts: SPS phase is obtained by inversion. A
+raw phase-command controller and reverse-power loop are not implemented here.
+See [DAB workflow and limits](docs/DAB_CONTROL_WORKSPACE.md).
 
 The optional Cp path is a **periodic power map**, not a complete Cp/L transient
 state-space model. The optimizer uses exact ideal-L segment integrals and does
@@ -427,14 +439,21 @@ zero, copper loss and R/CPL load slope. Existing current/voltage/midpoint Bode,
 sensing and delay models remain topology-specific. Carrier reconstruction is a
 local CCM screening model; zero-crossing DCM, device parasitics and hardware
 correlation remain outside its scope. Circuit-level Vienna closed-loop coverage
-does not follow from TTPL ngspice support.
+does not follow from TTPL ngspice support. The present line-cycle waveform does
+not apply every Bode delay and does not yet share the complete bus-energy loss
+chain; changing those frequency-domain settings is not a matching transient
+validation. See [Vienna workflow and explicit model gaps](docs/VIENNA_LOOP_WORKSPACE.md).
 
 ### Three-phase two-level dq control and PLL comparison
 
 The two-level model provides abc RL and bus-energy dynamics, measured-voltage PLL,
 dq current decoupling, voltage PI, current limits/slew and SVPWM. Its control page
 includes `Gi(s)=1/(Ls+R)`, the current-to-bus energy plant, PWM delay and a lifted
-multi-rate voltage-loop model with margins and discrete-pole checks.
+multi-rate voltage-loop model with margins and discrete-pole checks. The current
+native PI retains forward-Euler integration and the outer native PI retains
+backward-Euler integration, matching the time-domain runtime. Exact imported
+controllers, sampled sensing, Apply, retained corners and saved/exported source
+identity share this model. See [the complete dq workflow contract](docs/THREE_PHASE_DQ_WORKSPACE.md).
 
 The shared PLL experiment compares **SRF / DDSRF / DDSOGI** under the same
 frequency/phase step, negative sequence, voltage harmonics and sag. DDSOGI here
@@ -543,7 +562,7 @@ analytical model
 
 Passing an earlier stage is evidence, not permission to skip a later stage.
 
-The latest complete local application qualification is on clean source `6138f0fd36f07539f78ed208ca4cdee5ce2f136d`, identical tree to remote `02c2ca3`: **4,512 passed, 2 opt-in skips and 2 historical expected failures**. Both skipped long PFC/PSFB consumers subsequently passed on that same unchanged source. The complete Linux CI on `deb0b85` passes **4,514 tests, with 1 skip and 2 expected failures**. Refreshed source `2e724b9` / main `6323518` also passes the installed-wheel and actual Linux frozen schema-4 runtime, **292 installed checks and 76 MCP tests**, with exact source/resource provenance. Both native platforms pass ordinary 9 pt three-screen LLC flows, but their preflights stop at the later 10 pt whole-widget scroll test. Its independently reviewed correction preserves all controls, font sizes and visibility/counterexample checks without changing production code. Corrected native/full/frozen acceptance remains pending. See [PSD validation](docs/PSD_VALIDATION_REPORT.md) and [Windows offscreen font scope](docs/WINDOWS_OFFSCREEN_FONTS.md) for retained red/green evidence. Publication remains paused. None of these software checks qualifies hardware or expands the documented model domains.
+Historical complete local qualification on `6138f0fd36f07539f78ed208ca4cdee5ce2f136d` (tree-identical to remote `02c2ca3`) recorded **4,512 passed, 2 opt-in skips and 2 historical expected failures**, followed by both long consumers. Later installed-wheel/frozen results remain bound to their documented sources. Native snapshot `320b3e3` subsequently passed Linux CI and macOS full-suite, actual frozen self-test and package upload; Windows remained pending at this checkpoint. These results do not qualify the newer Guided/control fan-out. Its predecessor full run stopped at 66% without a terminal result and is **INCOMPLETE**; a new exact-source full/wheel/frozen qualification is required. See [current control-stage evidence](docs/CONTROL_FANOUT_VALIDATION.md) and [retained historical validation](docs/PSD_VALIDATION_REPORT.md). Publication remains paused; none of these software checks qualifies hardware or expands model domains.
 
 The historical application regression on clean source `4f9f5b4513a62fa9c5effb1b4cad5beacf36daac` completed: **4,140 passed, 2 opt-in skips, 2 historical expected failures and 43 warnings in 2,728.51 s**, exit 0, with all 760 tracked-file hashes unchanged. Final native owner/scene/plot/menu/group counts were zero; peak aggregate RSS was 1,847,560 KiB. The skips are the long real-PFC GUI and finite-Coss PSFB joint-sizing cases; both separate reruns passed on the same exact application source, and the installed-wheel/Linux frozen runtime checks passed on `759a8fb54a0443a2e97125335dc69b61b5942ec7`. The expected failures retain the backend single-2P2Z attainable-phase-margin limit. The final artifact/push SHA and any CI/docs-only source difference must be recorded separately; this full result must not be relabeled as a run on a later SHA. Earlier `bfc8bd9` results remain historical. See [PSD validation](docs/PSD_VALIDATION_REPORT.md).
 

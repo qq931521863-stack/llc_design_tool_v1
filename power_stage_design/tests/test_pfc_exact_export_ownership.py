@@ -12,16 +12,22 @@ from llc_design.tests.conftest import desktop_qapp  # noqa: F401
 from pfc_design.control import (
     PFCControlLabConfig,
     build_pfc_control_lab_analysis,
+    illustrative_ttpl_config,
     tune_pfc_current_loop,
 )
+from power_codegen.generator import validate_ttpl_codegen
 
 
 @pytest.fixture(scope="module")
 def analysis():
-    base = PFCControlLabConfig()
+    # Current-loop tuning alone cannot qualify the legacy 5.396 V bus-ADC
+    # input. Positive C99 ownership tests need an explicitly in-range front end.
+    base = illustrative_ttpl_config()
     tuning = tune_pfc_current_loop(base)
     assert tuning.accepted
-    return build_pfc_control_lab_analysis(replace(base, current_controller=tuning.controller))
+    result = build_pfc_control_lab_analysis(replace(base, current_controller=tuning.controller))
+    assert validate_ttpl_codegen(result).passed
+    return result
 
 
 @pytest.fixture
@@ -86,6 +92,7 @@ def _assert_current_artifact(tmp_path, action, analysis):
         validation = json.loads((path.parent / "c99_verification.json").read_text())
         assert validation == manifest["codegen_verification"]
         assert validation["linear_coefficient_identity"] == "PASS"
+        assert validation["stability_configuration_gate"] == "PASS"
         assert validation["float32_execution"] == "NOT_RUN"
         assert validation["hardware_qualification"] == "NOT_RUN"
         for filename, digest in validation["source_sha256"].items():
@@ -160,6 +167,10 @@ def test_real_host_input_edit_during_dialog_invalidates_then_new_analysis_export
     windows.append(host)
     view = host.control_lab_view.exact_hz_view
     control = host.control_lab_view.control_lab
+    # Set the real editor fields too: recomputation after the angle edit must
+    # not fall back to the historical overrange divider.
+    control.vbus_sense["gain"].setValue(1600.0 / (249000.0 + 1600.0))
+    control.vbus_sense["source_r"].setValue(249000.0 * 1600.0 / (249000.0 + 1600.0))
     view.set_analysis(analysis)
     _dialog(monkeypatch, tmp_path, action, lambda: control.angle.setValue(63.0))
     _export(view, action)
@@ -169,7 +180,44 @@ def test_real_host_input_edit_during_dialog_invalidates_then_new_analysis_export
     assert tuning.accepted
     fresh = build_pfc_control_lab_analysis(replace(config, current_controller=tuning.controller))
     assert fresh.config.power_stage.line_angle_deg == 63.0
+    assert validate_ttpl_codegen(fresh).passed
     view.set_analysis(fresh)
     _dialog(monkeypatch, tmp_path, action)
     _export(view, action)
     _assert_current_artifact(tmp_path, action, fresh)
+
+
+def test_legacy_adc_overrange_is_rejected_then_current_valid_analysis_exports(
+    desktop, analysis, tmp_path, monkeypatch,
+):
+    from pfc_design.gui.exact_hz_view import TTPLExactHzView
+
+    windows, messages = desktop
+    legacy = replace(analysis.config, vbus_sense=PFCControlLabConfig().vbus_sense)
+    assert legacy.power_stage.bus_voltage_v * legacy.vbus_sense.raw_dc_gain == pytest.approx(
+        5.396290050590219,
+    )
+    assert legacy.vbus_sense.adc_vref_v == 3.3
+    rejected = build_pfc_control_lab_analysis(legacy)
+    # The actual configuration, not a carried warning, must stop C99 export.
+    rejected = replace(rejected, warnings=())
+    validation = validate_ttpl_codegen(rejected)
+    assert not validation.passed
+    assert all("(PASS)" in check for check in validation.checks if "margin screen=" in check)
+    assert any("Configured ADC magnitude range: FAIL" in check for check in validation.checks)
+
+    view = TTPLExactHzView()
+    windows.append(view)
+    view.set_analysis(rejected)
+    _dialog(monkeypatch, tmp_path, "codegen")
+    _export(view, "codegen")
+    assert not list(tmp_path.iterdir())
+    assert len(messages) == 1
+    assert messages[0][0] == "critical"
+    assert "model-evidence gate failed" in messages[0][1]
+
+    messages.clear()
+    view.set_analysis(analysis)
+    _export(view, "codegen")
+    _assert_current_artifact(tmp_path, "codegen", analysis)
+    assert len(messages) == 1 and messages[0][0] == "information"

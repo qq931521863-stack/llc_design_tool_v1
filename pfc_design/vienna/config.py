@@ -1,8 +1,13 @@
 """Three-phase Vienna PFC control-lab configuration."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 import math
+import types
+from functools import lru_cache
+from typing import get_args, get_origin, get_type_hints, Union
+
+import numpy as np
 
 from llc_design.control.digital_loop import PIControllerConfig
 from pfc_design.control.config import (
@@ -12,6 +17,38 @@ from pfc_design.control.config import (
     ExternalSenseConfig,
     LoadModel,
 )
+
+
+@lru_cache(maxsize=32)
+def _hints(cls):
+    return get_type_hints(cls)
+
+
+def _matches_type(value, hint):
+    origin=get_origin(hint)
+    if origin in (Union,types.UnionType):return any(_matches_type(value,item) for item in get_args(hint))
+    if origin is tuple:
+        args=get_args(hint)
+        return type(value) is tuple and len(value)==len(args) and all(_matches_type(v,t) for v,t in zip(value,args))
+    if hint is float:return type(value) in (int,float)
+    if hint in (bool,int,str):return type(value) is hint
+    return isinstance(value,hint)
+
+
+def _finite_model(value, path="Vienna") -> None:
+    """Reject NaN/Inf before arithmetic or NumPy silently propagates them."""
+    if is_dataclass(value):
+        for item in fields(value):
+            member=getattr(value,item.name)
+            if not _matches_type(member,_hints(type(value))[item.name]):
+                raise ValueError(f"{path}.{item.name} has invalid type")
+            _finite_model(member, f"{path}.{item.name}")
+    elif isinstance(value, (tuple, list)):
+        for index, item in enumerate(value):
+            _finite_model(item, f"{path}[{index}]")
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        if not math.isfinite(value):
+            raise ValueError(f"{path} must be finite")
 
 
 @dataclass(frozen=True)
@@ -53,6 +90,7 @@ class ViennaPowerStageConfig:
         return cp * cn / (cp + cn)
 
     def validate(self) -> None:
+        _finite_model(self)
         values = [
             self.line_line_rms_v, self.line_frequency_hz, self.bus_voltage_v,
             self.output_power_w, self.switching_frequency_hz,
@@ -87,13 +125,17 @@ class ViennaFirmwareConfig:
     inductor_voltage_drop_feedforward_enabled: bool = True
 
     def validate(self) -> None:
+        _finite_model(self)
         rates = [self.current_loop_rate_hz, self.reference_rate_hz, self.voltage_loop_rate_hz, self.balance_loop_rate_hz]
         if min(rates) <= 0.0:
             raise ValueError("Vienna firmware rates must be positive")
         if self.current_loop_rate_hz < max(self.reference_rate_hz, self.voltage_loop_rate_hz, self.balance_loop_rate_hz):
             raise ValueError("current loop must be the fastest Vienna control rate")
-        if self.balance_injection_limit <= 0.0:
-            raise ValueError("balance injection limit must be positive")
+        if self.balance_injection_limit <= 0.0 or self.midpoint_current_gain_a_per_pu <= 0.0:
+            raise ValueError("balance injection limit and midpoint gain must be positive")
+        if min(self.current_computation_delay_s, self.pwm_update_delay_s,
+               self.reference_update_delay_s, self.voltage_computation_delay_s) < 0.0:
+            raise ValueError("Vienna firmware delays cannot be negative")
 
 
 def default_vienna_current_controller() -> PIControllerConfig:
@@ -205,15 +247,70 @@ class ViennaControlLabConfig:
     split_bus_gain_scale: tuple[float, float] = (1.0, 1.0)
     split_bus_offset_v: tuple[float, float] = (0.0, 0.0)
 
+    def loop_nyquist_hz(self, loop: str) -> float:
+        fw = self.firmware
+        if loop == "current":
+            rates = [fw.current_loop_rate_hz, self.phase_current_sense.timing.sample_rate_hz]
+            times = [self.current_controller.sample_time_s]
+        elif loop == "voltage":
+            rates = [fw.current_loop_rate_hz, self.phase_current_sense.timing.sample_rate_hz,
+                     fw.voltage_loop_rate_hz, fw.reference_rate_hz,
+                     self.phase_voltage_sense.timing.sample_rate_hz,
+                     self.split_bus_sense.timing.sample_rate_hz]
+            times = [self.current_controller.sample_time_s, self.voltage_controller.sample_time_s]
+        elif loop == "balance":
+            rates = [fw.balance_loop_rate_hz, self.split_bus_sense.timing.sample_rate_hz]
+            times = [self.balance_controller.sample_time_s]
+        else:
+            raise ValueError("Vienna loop must be current, voltage or balance")
+        if any(not math.isfinite(v) or v <= 0 for v in rates + times):
+            raise ValueError("Vienna sample rates and controller sample times must be finite and positive")
+        return min([0.5 * r for r in rates] + [0.5 / ts for ts in times])
+
+    def loop_frequencies_hz(self, loop: str) -> np.ndarray:
+        f = np.geomspace(self.frequency_start_hz, self.frequency_stop_hz, self.frequency_points)
+        f = f[f < self.loop_nyquist_hz(loop)]
+        if len(f) < 2 or np.any(np.diff(f) <= 0):
+            raise ValueError(f"Vienna {loop} loop needs at least two requested samples below Nyquist")
+        return f
+
+    def sensing_frequencies_hz(self) -> np.ndarray:
+        f = np.geomspace(self.frequency_start_hz, self.frequency_stop_hz, self.frequency_points)
+        limit = 0.5 * min(s.timing.sample_rate_hz for s in (
+            self.phase_current_sense, self.phase_voltage_sense, self.split_bus_sense))
+        f = f[f < limit]
+        if len(f) < 2:
+            raise ValueError("Vienna sensing panel needs at least two samples below all sensor Nyquist limits")
+        return f
+
     def validate(self) -> None:
+        _finite_model(self)
         self.power_stage.validate(); self.firmware.validate()
         self.phase_current_sense.validate(); self.phase_voltage_sense.validate(); self.split_bus_sense.validate()
+        if not all(sense.normalize_to_engineering_units for sense in (
+                self.phase_current_sense,self.phase_voltage_sense,self.split_bus_sense)):
+            raise ValueError("Vienna supported controller units require calibrated engineering-unit sensors")
+        if not isinstance(self.power_stage.load_model, LoadModel):
+            raise ValueError("Invalid Vienna load model")
         if self.frequency_start_hz <= 0 or self.frequency_stop_hz <= self.frequency_start_hz:
             raise ValueError("invalid Vienna Bode frequency range")
-        if self.frequency_stop_hz >= 0.5*self.firmware.current_loop_rate_hz:
-            raise ValueError("Vienna Bode stop must be below current-loop Nyquist")
-        if self.frequency_points < 100:
+        if not isinstance(self.frequency_points, int) or isinstance(self.frequency_points, bool) or self.frequency_points < 100:
             raise ValueError("Vienna Bode requires >=100 points")
+        for loop in ("current", "voltage", "balance"):
+            self.loop_frequencies_hz(loop)
+            ctrl = getattr(self, loop + "_controller")
+            rate = getattr(self.firmware, loop + "_loop_rate_hz")
+            if not math.isclose(ctrl.sample_time_s * rate, 1.0, rel_tol=1e-9, abs_tol=0):
+                raise ValueError(f"Vienna {loop} controller sample time must match its firmware loop rate")
+            if ctrl.output_min >= ctrl.output_max:
+                raise ValueError("Vienna controller output minimum must be below maximum")
+            ctrl.transfer_function()
+        self.sensing_frequencies_hz()
+        for name in ("waveform_line_cycles", "switching_cycles", "switching_samples_per_cycle"):
+            if not isinstance(getattr(self, name), int) or isinstance(getattr(self, name), bool):
+                raise ValueError(f"Vienna {name} must be an integer")
+        if not 1 <= self.switching_cycles <= 50 or self.switching_samples_per_cycle < 100:
+            raise ValueError("Vienna switching requires 1..50 cycles and >=100 samples/cycle")
         if self.waveform_line_cycles < 3:
             raise ValueError("Vienna line-cycle simulation needs >=3 cycles")
         if abs(self.initial_midpoint_imbalance_v) >= 0.5*self.power_stage.bus_voltage_v:
@@ -235,8 +332,22 @@ class ViennaControlLabConfig:
             raise ValueError("split-bus gain scales must be positive")
 
 
+def illustrative_vienna_config() -> ViennaControlLabConfig:
+    """New opt-in divider example; never migrate loaded legacy numbers.
+
+    249 kΩ / 1.6 kΩ yields 2.235 V at 350 V; 1/250 Vabc gain fits
+    the nominal bipolar span inside 3.3 V. Bipolar sensor bias is
+    deliberately still unknown: this example is not a hardware qualification.
+    """
+    base = ViennaControlLabConfig()
+    return replace(base, phase_voltage_sense=replace(base.phase_voltage_sense, front_end_gain_v_per_unit=1/250),
+        split_bus_sense=replace(base.split_bus_sense,
+        front_end_gain_v_per_unit=1600.0 / (249000.0 + 1600.0),
+        source_resistance_ohm=249000.0 * 1600.0 / (249000.0 + 1600.0)))
+
+
 __all__ = [
-    "ViennaControlLabConfig", "ViennaFirmwareConfig", "ViennaPowerStageConfig",
+    "illustrative_vienna_config", "ViennaControlLabConfig", "ViennaFirmwareConfig", "ViennaPowerStageConfig",
     "default_phase_current_sense", "default_phase_voltage_sense", "default_split_bus_sense",
     "default_vienna_current_controller", "default_vienna_voltage_controller", "default_vienna_balance_controller",
 ]

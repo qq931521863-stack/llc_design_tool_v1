@@ -38,31 +38,24 @@ def _require_signals(signals: Mapping[str, object], keys: tuple[str, ...], *, st
 
 def validate_vienna_analysis(analysis: ViennaControlLabAnalysis) -> None:
     """Validate every response consumed by the Vienna Bode GUI."""
-    freq = _finite_array("Vienna Bode frequency", analysis.frequencies_hz)
-    if np.any(freq <= 0.0) or np.any(np.diff(freq) <= 0.0):
-        raise ValueError("Vienna Bode frequency vector must be positive and increasing")
-
-    loops = (
-        ("current", analysis.current_loop.responses),
-        ("voltage", analysis.voltage_loop.responses),
-        ("balance", analysis.balance_loop.responses),
-    )
-    for label, responses in loops:
-        for key, value in responses.items():
-            arr = _finite_array(f"Vienna {label} loop.{key}", value)
-            if len(arr) != len(freq):
-                raise ValueError(
-                    f"Vienna {label} loop.{key}: {len(arr)} points, expected {len(freq)}"
-                )
-
+    for name in ("current", "voltage", "balance"):
+        loop = getattr(analysis, name + "_loop")
+        freq = _finite_array(f"Vienna {name} Bode frequency", loop.frequencies_hz)
+        if np.any(freq <= 0) or np.any(np.diff(freq) <= 0) or np.any(freq >= loop.nyquist_hz):
+            raise ValueError(f"Vienna {name} Bode samples must increase strictly below Nyquist")
+        for key, value in loop.responses.items():
+            arr = _finite_array(f"Vienna {name} loop.{key}", value)
+            if arr.shape != freq.shape:
+                raise ValueError(f"Vienna {name} loop.{key}: response shape differs from loop band")
+    freq = analysis.sensing_frequencies_hz
     for label, response in (
         ("current sense", analysis.current_sense_response.total),
         ("phase-voltage sense", analysis.phase_voltage_sense_response.total),
         ("split-bus sense", analysis.split_bus_sense_response.total),
     ):
         arr = _finite_array(f"Vienna {label}", response)
-        if len(arr) != len(freq):
-            raise ValueError(f"Vienna {label}: response length does not match Bode frequency vector")
+        if arr.shape != freq.shape:
+            raise ValueError(f"Vienna {label}: response shape differs from sensor band")
 
 
 def validate_vienna_line_cycle(line: ViennaLineCycleWaveforms) -> None:

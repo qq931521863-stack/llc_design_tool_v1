@@ -635,10 +635,16 @@ class DigitalLoopView(QWidget):
         self.conversion_cycles = self._double(1, 100, 3, 13.0, " cycles")
         self.soc_count = QSpinBox(); self.soc_count.setRange(1, 16); self.soc_count.setValue(3)
         self.previous_weight = self._double(0, 0.999, 6, 0.25)
+        self.soc_offsets = QPlainTextEdit()
+        self.soc_offsets.setMaximumHeight(70)
+        self.soc_offsets.setPlaceholderText("留空 = 顺序 SOC；或逗号分隔的中心偏移（秒）")
+        self.soc_offsets.setToolTip("每个采样孔径中心相对触发点的偏移，单位秒；数量必须等于 SOC 数。\n"
+                                    "向导使用 Ta/2 + i × SOC spacing；0 spacing 表示同一时刻。")
         form.addRow("ADCCLK", self.adc_clock_mhz)
         form.addRow("Acquisition window", self.acq_ns)
         form.addRow("转换周期", self.conversion_cycles)
-        form.addRow("连续 SOC 数", self.soc_count)
+        form.addRow("SOC 数", self.soc_count)
+        form.addRow("SOC 中心偏移 (s)", self.soc_offsets)
         form.addRow("上一平均值权重", self.previous_weight)
         pl.addWidget(adc); pl.addStretch(1)
         self._add_parameter_page("adc", page)
@@ -1000,7 +1006,11 @@ class DigitalLoopView(QWidget):
             conversion_cycles=self.conversion_cycles.value(),
             soc_count=self.soc_count.value(),
             recursive_previous_weight=self.previous_weight.value(),
+            soc_sample_offsets_s=(tuple(float(value.strip()) for value in
+                                        self.soc_offsets.toPlainText().split(","))
+                                  if self.soc_offsets.toPlainText().strip() else None),
         )
+        adc.validate()
         timing = CommandTimingConfig(
             computation_delay_s=self.computation_us.value() * 1e-6,
             pwm_update_delay_s=self.pwm_update_us.value() * 1e-6,
@@ -1240,8 +1250,8 @@ class DigitalLoopView(QWidget):
             f"Divider DC gain={analog.divider_gain:.10g}; calibration gain={analog.effective_calibration_gain:.10g}",
             f"Rup||Rlow={analog.divider_thevenin_ohm:.8g} Ω; divider pole={analog.divider_pole_hz/1e3:.8g} kHz",
             f"ADC RC pole={analog.adc_rc_pole_hz/1e3:.8g} kHz",
-            f"SOC sample offsets={np.array2string(adc.sample_offsets_s*1e6, precision=6)} µs",
-            f"SOC4 EOC delay≈{adc.eoc_delay_s*1e6:.7g} µs; recursive filter weight={adc.recursive_previous_weight:.6g}",
+            f"SOC aperture centres from trigger={np.array2string(adc.sample_offsets_s*1e6, precision=6)} µs",
+            f"Last SOC trigger-to-EOC delay≈{adc.eoc_delay_s*1e6:.7g} µs; recursive filter weight={adc.recursive_previous_weight:.6g}",
             "",
             "稳定性",
             "-" * 88,

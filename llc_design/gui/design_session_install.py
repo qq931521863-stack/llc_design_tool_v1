@@ -326,6 +326,10 @@ def _reflect_llc(loop, inputs, external_metadata=None):
     if command is not None:
         _set(loop.pcmd, command)
     analog, adc, timing = digital["analog_sense"], digital["adc_sampling"], digital["command_timing"]
+    with QSignalBlocker(loop.soc_offsets):
+        loop.soc_offsets.setPlainText(
+            "" if adc.soc_sample_offsets_s is None else
+            ", ".join(format(value, ".17g") for value in adc.soc_sample_offsets_s))
     values = {
         "rup_k": analog.rup_ohm / 1e3, "rlow_k": analog.rlow_ohm / 1e3,
         "cdiv_nf": analog.divider_capacitance_f * 1e9, "opamp_gain": analog.opamp_gain,
@@ -444,6 +448,13 @@ def _reflect_ttpl(control, config):
         if not widget.minimum() <= value <= widget.maximum():
             raise ValueError(f"{name} is outside the supported GUI range; session not restored")
     stage, fw = config.power_stage, config.firmware
+    rate_fields = {"current_rate_khz": fw.current_loop_rate_hz / 1e3,
+                   "voltage_rate_khz": fw.voltage_loop_rate_hz / 1e3,
+                   "amc_rate_khz": fw.amc_rate_hz / 1e3}
+    for name, value in rate_fields.items():
+        widget = getattr(control, name)
+        if not widget.minimum() <= value <= widget.maximum():
+            raise ValueError(f"{name} is outside the supported GUI range; session not restored")
     names = {
         "vin_rms": stage.vin_rms_v, "vbus": stage.bus_voltage_v, "pout": stage.output_power_w,
         "line_hz": stage.line_frequency_hz, "fsw": stage.switching_frequency_hz / 1e3,
@@ -456,10 +467,12 @@ def _reflect_ttpl(control, config):
         "current_delay_us": fw.current_computation_delay_s * 1e6,
         "amc_delay_us": fw.amc_update_delay_s * 1e6,
         "voltage_delay_us": fw.voltage_computation_delay_s * 1e6,
+        "include_command_zoh": fw.include_command_zero_order_hold,
         "switch_cycles": config.switching_cycles, "switch_samples": config.switching_samples_per_cycle,
         "waveform_line_cycles": config.waveform_line_cycles,
         "waveform_integration_rate_hz": config.waveform_integration_rate_hz,
     }
+    names.update(rate_fields)
     for name, value in names.items():
         _set(getattr(control, name), value)
     control.engineering_efficiency = stage.efficiency

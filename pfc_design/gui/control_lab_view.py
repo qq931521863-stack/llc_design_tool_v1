@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +13,7 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -212,10 +214,36 @@ class PFCControlLabView(QWidget):
         for widget in self.input_tabs.findChildren(QComboBox):
             widget.currentIndexChanged.connect(self._notify_inputs_changed)
         self.codegen_button.setEnabled(False)
+        self._refresh_rate_labels(self._config())
 
     def _notify_inputs_changed(self, *_args) -> None:
         self.invalidate_results()
         self.inputs_changed.emit()
+        self._refresh_rate_labels(self._config())
+
+    def _refresh_rate_labels(self, config) -> None:
+        """Use the actual input/result model, including preserved guided rates."""
+        fw = config.firmware
+        current = format_frequency(fw.current_loop_rate_hz)
+        voltage = format_frequency(fw.voltage_loop_rate_hz)
+        amc = format_frequency(fw.amc_rate_hz)
+        subtitles = {
+            "current_controller": f"Ci(z) · {current}",
+            "voltage_controller": f"Cv(z) · {voltage}",
+            "iref": f"Gcmd·|Vac| · {amc}",
+        }
+        blocks = [replace(block, subtitle=subtitles.get(block.key, block.subtitle))
+                  for block in self._diagram_blocks]
+        if blocks != self._diagram_blocks:
+            selected = self.diagram.selected_key
+            self._diagram_blocks = blocks
+            self.diagram.set_diagram(blocks, self._diagram_connections)
+            if selected and self.diagram.has_block(selected):
+                self.diagram.select_block(selected, emit=False)
+        self.current_controller_group.setTitle(f"电感电流内环（{current}）")
+        self.voltage_controller_group.setTitle(f"母线电压外环（{voltage}）")
+        self.autotune_current_button.setToolTip(
+            f"按当前 Boost L/R、采样链、{current} 命令更新/延迟与 indu_comp 包络自动设计 PI")
 
     def invalidate_results(self) -> None:
         """A result/export belongs to one immutable input snapshot."""
@@ -436,6 +464,8 @@ class PFCControlLabView(QWidget):
             "电感电流内环（50 kHz）", voltage=False)
         voltage_group, self.voltage_ctrl = self._controller_group(
             "母线电压外环（10 kHz）", voltage=True)
+        self.current_controller_group = current_group
+        self.voltage_controller_group = voltage_group
         layout.addWidget(current_group)
 
         tune_group = QGroupBox("电流环稳定设计起点")
@@ -461,13 +491,23 @@ class PFCControlLabView(QWidget):
 
         fw_group = QGroupBox("AMC / 前馈 / 调度")
         form = QFormLayout(fw_group)
+        self.current_rate_khz = self._spin(.001, 1000, 6, 50, " kHz")
+        self.voltage_rate_khz = self._spin(.001, 1000, 6, 10, " kHz")
+        self.amc_rate_khz = self._spin(.001, 1000, 6, 25, " kHz")
         self.vff_gain = self._spin(1e-6, 10, 8, 0.01)
         self.gcmd_max = self._spin(0.001, 10, 5, 0.18, " A/V")
         self.indu_gain = self._spin(0, 10, 5, 0.085)
         self.current_delay_us = self._spin(0, 100, 3, 11, " µs")
         self.amc_delay_us = self._spin(0, 100, 3, 20, " µs")
         self.voltage_delay_us = self._spin(0, 100, 3, 4, " µs")
+        self.include_command_zoh = QCheckBox("包含 PWM / AMC 命令 ZOH（ADC hold 独立保留）")
+        self.include_command_zoh.setChecked(True)
+        self.include_command_zoh.toggled.connect(self._notify_inputs_changed)
+        form.addRow(self.include_command_zoh)
         for label, widget in (
+            ("电流控制器 / 命令更新率", self.current_rate_khz),
+            ("电压控制器 / 命令更新率", self.voltage_rate_khz),
+            ("AMC 命令更新率", self.amc_rate_khz),
             ("Vrms 前馈 K", self.vff_gain),
             ("gcmd 上限", self.gcmd_max),
             ("indu_comp 斜率", self.indu_gain),
@@ -819,6 +859,9 @@ class PFCControlLabView(QWidget):
             deadtime_s=self.deadtime_ns.value() * 1e-9,
         )
         fw = PFCFirmwareAlgorithmConfig(
+            current_loop_rate_hz=self.current_rate_khz.value() * 1e3,
+            voltage_loop_rate_hz=self.voltage_rate_khz.value() * 1e3,
+            amc_rate_hz=self.amc_rate_khz.value() * 1e3,
             vac_rms_feedforward_gain=self.vff_gain.value(),
             gcmd_max_a_per_v=self.gcmd_max.value(),
             indu_comp_gain=self.indu_gain.value(),
@@ -826,14 +869,15 @@ class PFCControlLabView(QWidget):
             current_pwm_update_delay_s=0.0,
             amc_update_delay_s=self.amc_delay_us.value() * 1e-6,
             voltage_computation_delay_s=self.voltage_delay_us.value() * 1e-6,
+            include_command_zero_order_hold=self.include_command_zoh.isChecked(),
         )
         return PFCControlLabConfig(
             power_stage=stage,
             firmware=fw,
             current_controller=self._controller(
-                self.current_ctrl, 50e3, -2.0, 0.98),
+                self.current_ctrl, fw.current_loop_rate_hz, -2.0, 0.98),
             voltage_controller=self._controller(
-                self.voltage_ctrl, 10e3, -1.0, 40.0),
+                self.voltage_ctrl, fw.voltage_loop_rate_hz, -1.0, 40.0),
             current_sense=self._sense(
                 "PFC inductor current", self.current_sense,
                 self.current_sense["sample"].value() * 1e3),
@@ -879,6 +923,7 @@ class PFCControlLabView(QWidget):
     def set_result(self, result, *, engineering_v3=None) -> None:
         self.result = result
         analysis, line_cycle, switching = result
+        self._refresh_rate_labels(analysis.config)
         self.research_export.set_analysis(analysis)
         pm = analysis.current_loop.margins.phase_margin_deg
         fc = analysis.current_loop.margins.critical_gain_crossover_hz
@@ -934,7 +979,7 @@ class PFCControlLabView(QWidget):
         self._show_summary(analysis, line_cycle, switching)
 
     def _set_bode_results(self, analysis: PFCControlLabAnalysis) -> None:
-        f = analysis.frequencies_hz
+        f = analysis.current_loop.frequencies_hz
         ci = analysis.current_loop.responses
         self.current_bode.set_curves(f, [
             PFCBodeCurve("plant_gid", "Gid 功率级", ci["plant_gid"]),
@@ -960,12 +1005,12 @@ class PFCControlLabView(QWidget):
         ], margins=analysis.current_loop.margins, open_loop_key="open_current")
 
         cv = analysis.voltage_loop.responses
-        self.voltage_bode.set_curves(f, [
+        self.voltage_bode.set_curves(analysis.voltage_loop.frequencies_hz, [
             PFCBodeCurve(
                 "current_closed_for_outer", "已闭合电流内环",
                 cv["current_closed_for_outer"]),
             PFCBodeCurve("amc_vff", "AMC/Vrms 前馈", cv["amc_vff"]),
-            PFCBodeCurve("bus_plant_gvg", "母线功率级 Gvg", cv["bus_plant_gvg"]),
+            PFCBodeCurve("bus_plant_gvg", "母线功率级 Gvg（含闭合内环）", cv["bus_plant_gvg"]),
             PFCBodeCurve("controller_cv", "Cv 数字控制器", cv["controller_cv"]),
             PFCBodeCurve("sense_hv_analog", "Hv 模拟滤波", cv["sense_hv_analog"]),
             PFCBodeCurve("sense_hv_adc", "Hv ADC/数字链", cv["sense_hv_adc"]),
@@ -980,28 +1025,32 @@ class PFCControlLabView(QWidget):
                 cv["sensitivity_voltage"]),
         ], margins=analysis.voltage_loop.margins, open_loop_key="open_voltage")
 
-        self.sense_bode.set_curves(f, [
+        # A common sensing panel uses the intersection of all sensor bands.
+        sense_f = analysis.voltage_loop.frequencies_hz
+        sense_f = sense_f[sense_f < 0.5 * analysis.config.vac_sense.timing.sample_rate_hz]
+        count = len(sense_f)
+        self.sense_bode.set_curves(sense_f, [
             PFCBodeCurve(
                 "current_total", "电流采样总链",
-                analysis.current_sense_response.total,
+                analysis.current_sense_response.total[:count],
                 default_visible=True),
             PFCBodeCurve(
                 "current_analog", "电流采样模拟部分",
-                analysis.current_sense_response.calibrated_analog),
+                analysis.current_sense_response.calibrated_analog[:count]),
             PFCBodeCurve(
                 "vac_total", "Vac 采样总链",
-                analysis.vac_sense_response.total,
+                analysis.vac_sense_response.total[:count],
                 default_visible=True),
             PFCBodeCurve(
                 "vac_analog", "Vac 采样模拟部分",
-                analysis.vac_sense_response.calibrated_analog),
+                analysis.vac_sense_response.calibrated_analog[:count]),
             PFCBodeCurve(
                 "vbus_total", "Vbus 采样总链",
-                analysis.vbus_sense_response.total,
+                analysis.vbus_sense_response.total[:count],
                 default_visible=True),
             PFCBodeCurve(
                 "vbus_analog", "Vbus 采样模拟部分",
-                analysis.vbus_sense_response.calibrated_analog),
+                analysis.vbus_sense_response.calibrated_analog[:count]),
         ])
 
         for panel in (self.current_bode, self.voltage_bode, self.sense_bode):
@@ -1029,16 +1078,23 @@ class PFCControlLabView(QWidget):
                 analysis = self.result[0]
                 if sender is self.current_bode:
                     responses = analysis.current_loop.responses
+                    frequencies = analysis.current_loop.frequencies_hz
                     labels = {"controller_ci":"Ci", "indu_comp_gain":"Kindu", "pwm_zoh":"PWM/ZOH", "plant_gid":"Gid", "sense_hi":"Current Sense", "open_current":"Li"}
                     keys = ["controller_ci","indu_comp_gain","pwm_zoh","plant_gid","sense_hi","open_current"]
                 elif sender is self.voltage_bode:
                     responses = analysis.voltage_loop.responses
-                    labels = {"controller_cv":"Cv", "amc_vff":"AMC/VFF", "current_closed_for_outer":"Closed current loop", "bus_plant_gvg":"Bus plant", "sense_hv":"Vbus Sense", "open_voltage":"Lv"}
-                    keys = ["controller_cv","amc_vff","current_closed_for_outer","bus_plant_gvg","sense_hv","open_voltage"]
+                    frequencies = analysis.voltage_loop.frequencies_hz
+                    labels = {"controller_cv":"Cv", "amc_vff":"AMC/VFF", "bus_plant_gvg":"Bus + closed current loop", "sense_hv":"Vbus Sense", "open_voltage":"Lv"}
+                    # Gvg already includes the actual closed current-loop response.
+                    # Listing it again would double-count its gain and phase.
+                    keys = ["controller_cv","amc_vff","bus_plant_gvg","sense_hv","open_voltage"]
                 else:
                     responses, labels, keys = {}, {}, []
                 if keys:
-                    budget = phase_budget(analysis.frequencies_hz, responses, labels, measurement.frequency_hz, keys)
+                    if not frequencies[0] <= measurement.frequency_hz <= frequencies[-1]:
+                        self.phase_budget_label.setText("Phase budget unavailable outside this loop's valid frequency range.")
+                        return
+                    budget = phase_budget(frequencies, responses, labels, measurement.frequency_hz, keys)
                     self.phase_budget_label.setText(
                         "Phase budget @ " + format_frequency(measurement.frequency_hz) + "\n" +
                         " | ".join(f"{b.label}: {b.gain_db:+.2f} dB / {b.phase_deg:+.2f}°" for b in budget)
@@ -1154,9 +1210,9 @@ class PFCControlLabView(QWidget):
         axes[4].plot(time_ms, s["minimum_pulse_active"], label="Min-pulse active")
         axes[4].set_ylabel("Ripple/logic")
 
-        axes[5].plot(time_ms, s["current_update_strobe"], label="Current 50 kHz")
-        axes[5].plot(time_ms, s["amc_update_strobe"], label="AMC 25 kHz")
-        axes[5].plot(time_ms, s["voltage_update_strobe"], label="Voltage 10 kHz")
+        axes[5].plot(time_ms, s["current_update_strobe"], label=f"Current {format_frequency(analysis.config.firmware.current_loop_rate_hz)}")
+        axes[5].plot(time_ms, s["amc_update_strobe"], label=f"AMC {format_frequency(analysis.config.firmware.amc_rate_hz)}")
+        axes[5].plot(time_ms, s["voltage_update_strobe"], label=f"Voltage {format_frequency(analysis.config.firmware.voltage_loop_rate_hz)}")
         axes[5].set_ylabel("Update")
 
         self._style_axes(axes, "Time in final AC period (ms)")
@@ -1283,10 +1339,12 @@ class PFCControlLabView(QWidget):
             "- 闭环、灵敏度、控制器、功率级和采样分量由复选框按需显示",
             "",
             f"电流环: fc={ci.critical_gain_crossover_hz}, PM={ci.phase_margin_deg}, "
-            f"GM={ci.gain_margin_db}, stable={analysis.current_loop.likely_stable}",
+            f"GM={ci.gain_margin_db}, margin screen={analysis.current_loop.margin_screen}",
             f"电压环: fc={cv.critical_gain_crossover_hz}, PM={cv.phase_margin_deg}, "
-            f"GM={cv.gain_margin_db}, stable={analysis.voltage_loop.likely_stable}",
+            f"GM={cv.gain_margin_db}, margin screen={analysis.voltage_loop.margin_screen}",
             "",
+            "裕度筛查仅覆盖有效分析频段；闭环稳定性 NOT_PROVEN（未完成闭环极点 / Nyquist 证明）。",
+            "PI/PIF 的单个 z=1 积分极点不等于闭环不稳定；POSITIVE_MARGINS 也不是稳定性证明。",
             f"PF={m.power_factor:.7f}, displacement={m.displacement_factor:.7f}, "
             f"distortion={m.distortion_factor:.7f}, THD={m.current_thd_percent:.5f}%",
             f"I1 RMS={m.fundamental_current_rms_a:.6f} A, min-pulse occupancy={m.minimum_pulse_fraction*100:.4f}%",
@@ -1301,6 +1359,14 @@ class PFCControlLabView(QWidget):
             f"每周期 {analysis.config.switching_samples_per_cycle} 点",
             "",
             "注意：半波同步观察器未纳入本模块；Vac 直接来自实际采样链。",
+        ]
+        text += [
+            "", "完整有效频域交越（scalar GM 沿用非负优先选择，不能替代全部交越）:",
+            f"Current gain crossings / PM: {list(zip(ci.gain_crossovers_hz, ci.phase_margins_deg))}",
+            f"Current phase crossings / signed GM: {list(zip(ci.phase_crossovers_hz, ci.gain_margins_db))}",
+            f"Voltage gain crossings / PM: {list(zip(cv.gain_crossovers_hz, cv.phase_margins_deg))}",
+            f"Voltage phase crossings / signed GM: {list(zip(cv.phase_crossovers_hz, cv.gain_margins_db))}",
+            "负 GM 表示临界增益缩小倍率，不单独证明闭环稳定或不稳定。",
         ]
         if analysis.warnings or line.warnings:
             text += ["", "警告:"] + [

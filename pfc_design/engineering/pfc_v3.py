@@ -1035,7 +1035,7 @@ def build_pfc_smart_control_v3(
     current = _stability_from_loop(
         "current",
         analysis.current_loop,
-        analysis.frequencies_hz,
+        analysis.current_loop.frequencies_hz,
         "open_current",
         ("controller_ci", "indu_comp_gain", "pwm_zoh", "plant_gid", "sense_hi"),
         {
@@ -1049,7 +1049,7 @@ def build_pfc_smart_control_v3(
     voltage = _stability_from_loop(
         "voltage",
         analysis.voltage_loop,
-        analysis.frequencies_hz,
+        analysis.voltage_loop.frequencies_hz,
         "open_voltage",
         # bus_plant_gvg already embeds closed current dynamics — do not also budget Ti.
         ("controller_cv", "amc_vff", "bus_plant_gvg", "sense_hv"),

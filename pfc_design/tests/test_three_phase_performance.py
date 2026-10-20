@@ -84,7 +84,7 @@ def test_vienna_voltage_plant_includes_load_slope_and_energy_zero():
 
     c = ViennaControlLabConfig()
     a = build_vienna_control_lab_analysis(c)
-    f = a.frequencies_hz
+    f = a.voltage_loop.frequencies_hz
     stage = c.power_stage
     s = 2j * np.pi * f
     g0 = stage.input_conductance_a_per_v

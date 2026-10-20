@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import traceback
+from threading import Event
 from dataclasses import dataclass, replace
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from PySide6.QtCore import QThreadPool, QTimer, Signal
+from PySide6.QtCore import QThreadPool, QTimer, Signal, QSize
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -38,6 +39,7 @@ from pfc_design.engineering.pfc_v3 import (
 )
 from pfc_design.vienna import (
     ViennaControlLabConfig,
+    ViennaAnalysisCancelled,
     build_vienna_control_lab_analysis,
     build_vienna_switching_waveforms,
     simulate_vienna_line_cycle,
@@ -66,6 +68,39 @@ class _TTPLCalculation:
     displayed_config: PFCControlLabConfig | None = None
 
 
+@dataclass(frozen=True)
+class _ViennaCalculation:
+    legacy_result: tuple
+    input_revision: int
+    displayed_config: ViennaControlLabConfig
+
+
+class _WorkspaceTabs(QTabWidget):
+    """Size the scroll viewport for the active workspace, not every hidden page.
+
+    QTabWidget normally takes the maximum page hint. A large hidden TTPL table
+    must not force scrolling around a compact Vienna/dq page at 1280×720.
+    The active page still retains its own real minimum and scroll reachability.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.currentChanged.connect(lambda _index: self.updateGeometry())
+
+    def _active_hint(self, minimum):
+        page = self.currentWidget()
+        if page is None:
+            return super().minimumSizeHint() if minimum else super().sizeHint()
+        hint = page.minimumSizeHint() if minimum else page.sizeHint()
+        return QSize(max(0, hint.width()) + 4,
+                     max(0, hint.height()) + self.tabBar().sizeHint().height() + 4)
+
+    def minimumSizeHint(self):
+        return self._active_hint(True)
+
+    def sizeHint(self):
+        return self._active_hint(False)
+
+
 class PFCMainWindow(QMainWindow):
     """Independent PFC workspace: engineering TTPL + three-phase Vienna."""
 
@@ -79,10 +114,12 @@ class PFCMainWindow(QMainWindow):
         self._active_workers = []
         self._worker_request_id = 0
         self._ttpl_input_revision = 0
+        self._vienna_input_revision = 0
+        self._vienna_cancel_event: Event | None = None
         self.result = None
         self.engineering_result = None
 
-        self.subtabs = QTabWidget()
+        self.subtabs = _WorkspaceTabs()
         self.subtabs.setDocumentMode(True)
         self.subtabs.setUsesScrollButtons(True)
         # Keep the historical attribute name as a compatibility surface for
@@ -119,6 +156,22 @@ class PFCMainWindow(QMainWindow):
         self._build_statusbar()
         self._apply_pfc_style()
         self.control_lab_view.control_lab.inputs_changed.connect(self._invalidate_ttpl_results)
+        self.vienna_view.config_changed.connect(self._invalidate_vienna_results)
+        self.vienna_view.cancel_requested.connect(self._cancel_vienna_analysis)
+
+    def _invalidate_vienna_results(self) -> None:
+        """Invalidate only Vienna ownership, including an in-flight request."""
+        if self._vienna_cancel_event is not None:
+            self._vienna_cancel_event.set()
+        self._vienna_input_revision += 1
+        self.vienna_view.invalidate_result()
+        if (isinstance(self.result, tuple) and self.result
+                and isinstance(getattr(self.result[0], "config", None), ViennaControlLabConfig)):
+            self.result = None
+
+    def _cancel_vienna_analysis(self) -> None:
+        self._invalidate_vienna_results()
+        self.statusBar().showMessage("Vienna 计算已请求取消；旧结果已失效，等待后台释放。")
 
     def _invalidate_ttpl_results(self) -> None:
         """Drop every accepted TTPL consumer/export without cancelling Vienna."""
@@ -279,10 +332,20 @@ class PFCMainWindow(QMainWindow):
             widget.run_analysis()
 
     def closeEvent(self, event):
-        if (self._active_workers or self.three_phase_view._worker is not None
+        maps = self.vienna_view.solution_map_view
+        dq_active = bool(getattr(self.three_phase_view, "has_active_work",
+                                 self.three_phase_view._worker is not None))
+        if (self._active_workers or dq_active or maps.scan_running
                 or self.three_phase_view.pll_comparison._worker is not None
                 or self.vienna_view.pll_comparison._worker is not None):
-            self.statusBar().showMessage("后台计算进行中，请完成后关闭。")
+            if maps.scan_running:
+                maps.cancel_preview()
+            if dq_active and hasattr(self.three_phase_view, "cancel_background_work"):
+                self.three_phase_view.cancel_background_work()
+            if self._vienna_cancel_event is not None:
+                self._cancel_vienna_analysis()
+            else:
+                self.statusBar().showMessage("后台计算正在取消或等待结束；请完成后关闭。")
             event.ignore()
         else:
             super().closeEvent(event)
@@ -338,6 +401,8 @@ class PFCMainWindow(QMainWindow):
         worker.signals.error.disconnect()
         worker.signals.finished.disconnect()
         worker.signals.deleteLater()
+        if not self._active_workers:
+            self._vienna_cancel_event = None
         if isValid(self) and (request_id == self._worker_request_id or not self._active_workers):
             self.set_busy(False)
 
@@ -462,17 +527,28 @@ class PFCMainWindow(QMainWindow):
             self._worker_error("TTPL shared-ngspice 结果绘图/GUI 更新失败\n" + traceback.format_exc())
 
     def run_vienna_analysis(self, config: ViennaControlLabConfig):
+        self._invalidate_vienna_results()
+        revision = self._vienna_input_revision
+        displayed_config = self.vienna_view._config()
+        cancelled = Event()
+        self._vienna_cancel_event = cancelled
         def calculate():
+            if cancelled.is_set():
+                return None
             try:
                 analysis = build_vienna_control_lab_analysis(config)
                 validate_vienna_analysis(analysis)
             except Exception as exc:
                 raise RuntimeError(f"Vienna 小信号/Bode 建模失败: {exc}") from exc
             try:
-                line = simulate_vienna_line_cycle(config)
+                line = simulate_vienna_line_cycle(config, cancelled=cancelled.is_set)
                 validate_vienna_line_cycle(line)
+            except ViennaAnalysisCancelled:
+                return None
             except Exception as exc:
                 raise RuntimeError(f"Vienna 三相 AC 周期求解失败: {exc}") from exc
+            if cancelled.is_set():
+                return None
             try:
                 switching = build_vienna_switching_waveforms(
                     config, line, line_angle_deg=config.switching_line_angle_deg
@@ -480,7 +556,9 @@ class PFCMainWindow(QMainWindow):
                 validate_vienna_switching(switching)
             except Exception as exc:
                 raise RuntimeError(f"Vienna 开关工作点重建失败: {exc}") from exc
-            return analysis, line, switching
+            if cancelled.is_set():
+                return None
+            return _ViennaCalculation((analysis, line, switching), revision, displayed_config)
 
         self._run_worker(
             "正在建立 Vienna ABC 双环、中点平衡、三相 AC 周期与 Sector…",
@@ -489,9 +567,20 @@ class PFCMainWindow(QMainWindow):
         )
 
     def _vienna_ready(self, result):
+        if result is None:
+            return False
         try:
+            if isinstance(result, _ViennaCalculation):
+                if (result.input_revision != self._vienna_input_revision
+                        or result.displayed_config != self.vienna_view._config()):
+                    return False
+                result = result.legacy_result
+            # Reject an obsolete payload without clearing a newer valid result.
+            if result[0].config != self.vienna_view._config():
+                return False
+            if not self.vienna_view.set_result(result):
+                return False
             self.result = result
-            self.vienna_view.set_result(result)
             analysis, line, _ = result
             current = analysis.current_loop.margins
             voltage = analysis.voltage_loop.margins
@@ -501,6 +590,7 @@ class PFCMainWindow(QMainWindow):
                 f"Lv PM={voltage.phase_margin_deg}; Balance PM={balance.phase_margin_deg}; "
                 f"PF={line.metrics.overall_power_factor:.6g}"
             )
+            return True
         except Exception:
             self._worker_error("Vienna 结果绘图/GUI 更新失败\n" + traceback.format_exc())
 

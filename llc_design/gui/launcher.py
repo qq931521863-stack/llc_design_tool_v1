@@ -361,6 +361,7 @@ class WorkspaceApplicationController:
         """Run V9.3 guided definition, then hand off to maintained engines."""
         self._hide_all()
         wizard = SystemModelingDesignDialog(initial_definition=seed_definition)
+        wizard.ttpl_base_config = self.pfc_window.control_lab_view.control_lab._config()
         try:
             accepted = wizard.exec() == QDialog.DialogCode.Accepted
             definition = wizard.definition

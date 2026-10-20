@@ -203,7 +203,7 @@ class ThreePhasePerformanceView(QWidget):
                     label=ph,
                 )
             ax[0, 0].set_ylabel("Inductor current / A")
-            ax[0, 1].set_ylabel("Switch states (offset)")
+            ax[0, 1].set_ylabel("Switch states\n(offset)")
             for axis in ax[0]:
                 axis.set_xlabel("Local switching period / us")
                 axis.legend()
@@ -263,7 +263,7 @@ class ThreePhasePerformanceView(QWidget):
         axes = self.device_figure.subplots(3, 1)
         time = np.array(replay["local_time_s"]) * 1e6
         axes[0].plot(time, replay["local_device_current_a"][key], label=key)
-        axes[0].set_ylabel("Device current / A")
+        axes[0].set_ylabel("Device\ncurrent / A")
         phase = "abc".index(key[0])
         axes[1].plot(
             time,
@@ -273,7 +273,7 @@ class ThreePhasePerformanceView(QWidget):
         axes[1].set_ylabel("Inductor / A")
         for name, value in replay["local_capacitor_current_a"].items():
             axes[2].plot(time, value, label="Cap " + name)
-        axes[2].set_ylabel("Capacitor current / A")
+        axes[2].set_ylabel("Capacitor\ncurrent / A")
         axes[2].set_xlabel("Local switching period / us (line cycle at 90 deg)")
         for ax in axes:
             ax.grid(True, alpha=0.25)

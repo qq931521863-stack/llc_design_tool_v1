@@ -41,35 +41,34 @@ def ttpl_sources(analysis, *, provenance="TTPL maintained analysis") -> list[Loo
     """Build sources only from a newly completed maintained-model result."""
     from llc_design.control.design_session import encode_model, ttpl_inputs
     model_inputs = encode_model(ttpl_inputs(analysis))
-    f = np.asarray(analysis.frequencies_hz, dtype=float)
+    fi = np.asarray(analysis.current_loop.frequencies_hz, dtype=float)
+    fv = np.asarray(analysis.voltage_loop.frequencies_hz, dtype=float)
     ci = analysis.current_loop.responses
     cv = analysis.voltage_loop.responses
-    current_band = f < 0.5 / analysis.current_loop.controller.sample_time_s
-    voltage_band = f < 0.5 / analysis.voltage_loop.controller.sample_time_s
     stage = analysis.config.power_stage
     operating_point = (f"Vin={stage.vin_rms_v:.9g} Vrms; Vbus={stage.bus_voltage_v:.9g} V; "
                        f"Pout={stage.output_power_w:.9g} W; line phase={stage.line_angle_deg:.9g}°")
     return [
         LoopMapSource(
-            key="current", label="Current inner loop Li", frequencies_hz=f[current_band],
-            fixed_loop_response=_remove_controller(ci["open_current"], ci["controller_ci"])[current_band],
-            current_loop_response=ci["open_current"][current_band],
+            key="current", label="Current inner loop Li", frequencies_hz=fi,
+            fixed_loop_response=_remove_controller(ci["open_current"], ci["controller_ci"]),
+            current_loop_response=ci["open_current"],
             sample_rate_hz=1.0 / analysis.current_loop.controller.sample_time_s,
             switching_frequency_hz=analysis.config.power_stage.switching_frequency_hz,
             provenance=(provenance + " | fixed: plant + Kindu + PWM/ZOH/delay + current sense/ADC"
-                        + (" | retained samples below current-loop Nyquist" if not np.all(current_band) else "")),
+                        + f" | valid f < {analysis.current_loop.nyquist_hz:g} Hz (all sampled current-loop blocks)"),
             operating_point=operating_point,
             compatibility_key=_ttpl_source_compatibility(analysis.config, "current"),
             model_inputs=model_inputs,
         ),
         LoopMapSource(
-            key="voltage", label="Bus-voltage outer loop Lv", frequencies_hz=f[voltage_band],
-            fixed_loop_response=_remove_controller(cv["open_voltage"], cv["controller_cv"])[voltage_band],
-            current_loop_response=cv["open_voltage"][voltage_band],
+            key="voltage", label="Bus-voltage outer loop Lv", frequencies_hz=fv,
+            fixed_loop_response=_remove_controller(cv["open_voltage"], cv["controller_cv"]),
+            current_loop_response=cv["open_voltage"],
             sample_rate_hz=1.0 / analysis.voltage_loop.controller.sample_time_s,
             switching_frequency_hz=analysis.config.power_stage.switching_frequency_hz,
             provenance=(provenance + " | fixed: closed current loop + AMC/Vrms + bus plant + Vbus sense/ADC"
-                        + (" | retained samples below voltage-loop Nyquist" if not np.all(voltage_band) else "")),
+                        + f" | valid f < {analysis.voltage_loop.nyquist_hz:g} Hz (all sampled outer-loop blocks)"),
             operating_point=operating_point,
             compatibility_key=_ttpl_source_compatibility(analysis.config, "voltage"),
             model_inputs=model_inputs,
@@ -107,6 +106,7 @@ def install_ttpl_solution_map(pfc_window) -> SolutionMapView:
         state["displayed"] = original_config()
         state["requested_revision"] = state["revision"]
         state["pending_evidence"] = {}
+        control._refresh_rate_labels(config)
 
     def restore_evidence(evidence) -> None:
         restored = validate_saved_evidence("ttpl", evidence)
@@ -158,7 +158,7 @@ def install_ttpl_solution_map(pfc_window) -> SolutionMapView:
         for key, evidence in records.items():
             check_evidence(evidence, controller=getattr(analysis, key + "_loop").controller,
                            config=getattr(analysis.config, key + "_controller"),
-                           model_signature=ttpl_model_signature(analysis.config, key, analysis.frequencies_hz))
+                           model_signature=ttpl_model_signature(analysis.config, key, getattr(analysis, key + "_loop").frequencies_hz))
             if state["requested_revision"] != state["revision"]:
                 invalidate_evidence(evidence, "Inputs changed during analysis; recompute and Apply required.")
         analysis.candidate_evidence.update(records)
@@ -225,7 +225,7 @@ def install_ttpl_solution_map(pfc_window) -> SolutionMapView:
         evidence = build_candidate_evidence(
             point=point, corners=view._active_corners(), constraints=view._constraints(),
             controller=controller, loop_key=loop_key,
-            model_signature=ttpl_model_signature(config, loop_key, analysis.frequencies_hz),
+            model_signature=ttpl_model_signature(config, loop_key, getattr(analysis, loop_key + "_loop").frequencies_hz),
             compatibility_key=view.sources[loop_key].compatibility_key,
             conditional_approved=view.allow_conditional.isChecked(),
             source_models=_candidate_source_models(view),

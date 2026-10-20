@@ -116,10 +116,10 @@ def export_pfc_control_lab(
     paths["summary"] = summary
 
     current_csv = out / "pfc_current_loop_bode.csv"
-    _response_frame(analysis.frequencies_hz, analysis.current_loop.responses).to_csv(current_csv, index=False)
+    _response_frame(analysis.current_loop.frequencies_hz, analysis.current_loop.responses).to_csv(current_csv, index=False)
     paths["current_bode"] = current_csv
     voltage_csv = out / "pfc_voltage_loop_bode.csv"
-    _response_frame(analysis.frequencies_hz, analysis.voltage_loop.responses).to_csv(voltage_csv, index=False)
+    _response_frame(analysis.voltage_loop.frequencies_hz, analysis.voltage_loop.responses).to_csv(voltage_csv, index=False)
     paths["voltage_bode"] = voltage_csv
 
     sensing_csv = out / "pfc_sensing_summary.csv"
@@ -146,13 +146,13 @@ def export_pfc_control_lab(
     paths["switching"] = switching_csv
 
     current_plot = out / "pfc_current_loop_bode.png"
-    _plot_loop(current_plot, analysis.frequencies_hz, [
+    _plot_loop(current_plot, analysis.current_loop.frequencies_hz, [
         ("Li current open loop", analysis.current_loop.responses["open_current"]),
     ], "PFC current-loop stability (open loop)")
     paths["current_plot"] = current_plot
 
     voltage_plot = out / "pfc_voltage_loop_bode.png"
-    _plot_loop(voltage_plot, analysis.frequencies_hz, [
+    _plot_loop(voltage_plot, analysis.voltage_loop.frequencies_hz, [
         ("Lv voltage open loop", analysis.voltage_loop.responses["open_voltage"]),
     ], "PFC voltage-loop stability (open loop)")
     paths["voltage_plot"] = voltage_plot

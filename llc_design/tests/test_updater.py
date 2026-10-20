@@ -17,6 +17,13 @@ from PySide6.QtCore import QObject
 from llc_design.gui import updater
 
 
+@pytest.fixture(autouse=True)
+def exercise_real_updater(desktop_update_boundary, monkeypatch):
+    # Host workflows use the session fake. This module deliberately tests the
+    # real entry point, with its existing explicit urlopen/start/fetch doubles.
+    monkeypatch.setattr(updater, "check_for_updates", desktop_update_boundary)
+
+
 class _Response:
     def __init__(self, payload: dict[str, object]) -> None:
         self._payload = payload

@@ -96,17 +96,22 @@ def test_pfc_loop_selection_and_distinct_sample_times(pfc, loop):
     models = _models(bundle)
     namespace = _execute(bundle)
     assert len(bundle.loops) == (2 if loop == "both" else 1)
+    count = len(bundle.frequencies_hz)
     if loop != "voltage":
         assert models["Ci_z"].sample_time_s == 20e-6
-        np.testing.assert_array_equal(models["Li"].response, pfc.current_loop.responses["open_current"])
-        np.testing.assert_allclose(namespace["evaluate_rational"]("Gi_s", pfc.frequencies_hz), pfc.current_loop.responses["plant_gid"], rtol=1e-13)
+        np.testing.assert_array_equal(models["Li"].response, pfc.current_loop.responses["open_current"][:count])
+        np.testing.assert_allclose(namespace["evaluate_rational"]("Gi_s", bundle.frequencies_hz), pfc.current_loop.responses["plant_gid"][:count], rtol=1e-13)
     if loop != "current":
         assert models["Cv_z"].sample_time_s == 100e-6
         assert not models["Gv"].rational
         np.testing.assert_array_equal(models["Lv"].response, pfc.voltage_loop.responses["open_voltage"])
-        np.testing.assert_allclose(np.asarray(models["Gv_base_s"].response) * pfc.current_loop.responses["closed_current_actual"], models["Gv"].response, rtol=1e-13)
-    assert json.loads(bundle.metadata_json)["samples_above_controller_nyquist"]["voltage"] > 0
-    assert any("not clipped" in note for note in bundle.notes)
+        np.testing.assert_allclose(np.asarray(models["Gv_base_s"].response) * pfc.current_loop.responses["closed_current_actual"][:count], models["Gv"].response, rtol=1e-13)
+    metadata = json.loads(bundle.metadata_json)
+    assert all(value == 0 for value in metadata["samples_above_controller_nyquist"].values())
+    assert metadata["frequency_domain"]["requested_stop_hz"] == 20000
+    assert metadata["exported_frequency_domain"]["stop_hz"] == bundle.frequencies_hz[-1]
+    assert bundle.frequencies_hz[-1] < (25000 if loop == "current" else 5000)
+    assert any("common valid band" in note for note in bundle.notes)
 
 
 @pytest.mark.parametrize("load", list(LoadModel))
@@ -207,7 +212,7 @@ def test_invalid_selection_and_nonfinite_source_fail_clearly(pfc):
     with pytest.raises(ValueError, match="loop must"):
         build_pfc_research_export(pfc, "unknown")
     bad = replace(pfc, frequencies_hz=np.zeros_like(pfc.frequencies_hz))
-    with pytest.raises(ValueError, match="strictly increasing"):
+    with pytest.raises(ValueError, match="frequency grid"):
         build_pfc_research_export(bad, "current")
     responses = dict(pfc.current_loop.responses)
     responses["controller_ci"] = np.full_like(responses["controller_ci"], np.nan)

@@ -56,6 +56,7 @@ class SelectableBodePanel(QWidget):
     def __init__(self, title: str, parent=None) -> None:
         super().__init__(parent)
         self.title = title
+        self.responsive_layout = False
         self.figure = Figure(figsize=(10, 7))
         self.canvas = FigureCanvasQTAgg(self.figure)
         self._frequencies_hz: np.ndarray | None = None
@@ -277,7 +278,10 @@ class SelectableBodePanel(QWidget):
 
         self._draw_margin_marker(ax_mag, ax_phase, visible)
         self.figure.suptitle(self.title)
-        self.figure.tight_layout()
+        if self.responsive_layout:
+            self.figure.set_layout_engine("tight")
+        else:
+            self.figure.tight_layout()
         self.canvas.draw_idle()
 
         if traces:

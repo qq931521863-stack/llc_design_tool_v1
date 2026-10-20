@@ -342,9 +342,14 @@ def save_config(config: DABConfig, path: str | Path) -> None:
 
 def load_config(path: str | Path) -> DABConfig:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if data.get("schema") != "dab-tps-v1":
-        raise ValueError("not a dab-tps-v1 project")
-    values = data["config"]
+    # Stage-only callers may consume a full control session without claiming to
+    # restore its controller/history; the GUI validates that full schema itself.
+    if data.get("schema") == "dab-tps-v1":
+        values = dict(data["config"])
+    elif data.get("schema") == "dab-control-session-v1":
+        values = dict(data["stage"])
+    else:
+        raise ValueError("not a supported DAB stage/control project")
     if set(values) != {f.name for f in fields(DABConfig)}:
         raise ValueError("DAB project configuration fields do not match schema")
     values["vb_cases_v"] = tuple(values["vb_cases_v"])

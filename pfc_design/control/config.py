@@ -16,9 +16,11 @@ are intentionally excluded from linear Bode calculations.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import math
+
+import numpy as np
 
 from llc_design.control.digital_loop import (
     ControllerKind,
@@ -86,7 +88,8 @@ class ADCTimingConfig:
         )
 
     def validate(self) -> None:
-        if self.sample_rate_hz <= 0.0 or self.adc_clock_hz <= 0.0:
+        if (not math.isfinite(self.sample_rate_hz) or not math.isfinite(self.adc_clock_hz)
+                or self.sample_rate_hz <= 0.0 or self.adc_clock_hz <= 0.0):
             raise ValueError("ADC and control sample rates must be positive")
         if self.acquisition_time_s < 0.0 or self.conversion_cycles < 0.0:
             raise ValueError("ADC acquisition/conversion settings cannot be negative")
@@ -94,6 +97,13 @@ class ADCTimingConfig:
             raise ValueError("at least one SOC is required")
         if self.soc_spacing_s < 0.0:
             raise ValueError("SOC spacing cannot be negative")
+        # The sampling sequence belongs to this frame; computation and PWM
+        # command delays may span frames and are deliberately excluded here.
+        eoc = ((self.soc_count - 1) * self.soc_spacing_s + self.acquisition_time_s
+               + self.conversion_cycles / self.adc_clock_hz)
+        frame = 1.0 / self.sample_rate_hz
+        if not math.isfinite(eoc) or not math.isfinite(frame) or eoc > frame:
+            raise ValueError("ADC SOC sequence EOC must fit within one control frame (single-frame model)")
         if not 0.0 <= self.recursive_previous_weight < 1.0:
             raise ValueError("recursive previous weight must lie in [0, 1)")
         if self.computation_delay_s < 0.0 or self.pwm_update_delay_s < 0.0:
@@ -249,6 +259,8 @@ class PFCFirmwareAlgorithmConfig:
     current_pwm_update_delay_s: float = 10.0e-6
     amc_update_delay_s: float = 20.0e-6
     voltage_computation_delay_s: float = 4.0e-6
+    # Frequency-response command holds only; ADC measurement holds remain independent.
+    include_command_zero_order_hold: bool = True
 
     def validate(self) -> None:
         if min(self.current_loop_rate_hz, self.amc_rate_hz, self.voltage_loop_rate_hz) <= 0.0:
@@ -375,18 +387,56 @@ class PFCControlLabConfig:
     switching_samples_per_cycle: int = 800
     waveform_integration_rate_hz: float = 500.0e3
 
+    def loop_nyquist_hz(self, loop: str) -> float:
+        """Strict upper bound for every sampled block in the selected loop."""
+        rates = [self.firmware.current_loop_rate_hz,
+                 self.current_sense.timing.sample_rate_hz]
+        times = [self.current_controller.sample_time_s]
+        if loop == "voltage":
+            rates.extend((self.firmware.voltage_loop_rate_hz,
+                          self.firmware.amc_rate_hz,
+                          self.vbus_sense.timing.sample_rate_hz))
+            times.append(self.voltage_controller.sample_time_s)
+        elif loop != "current":
+            raise ValueError("loop must be 'current' or 'voltage'")
+        if any(not math.isfinite(v) or v <= 0.0 for v in rates + times):
+            raise ValueError("loop sample rates and controller sample times must be finite and positive")
+        return min([0.5 * rate for rate in rates] + [0.5 / ts for ts in times])
+
+    def loop_frequencies_hz(self, loop: str) -> np.ndarray:
+        """Retain requested samples strictly below the loop's Nyquist bound.
+
+        The requested range remains in the configuration and saved sessions.
+        Results report the actual range separately; neither endpoints nor
+        controller targets are silently rewritten.
+        """
+        f = np.geomspace(self.frequency_start_hz, self.frequency_stop_hz,
+                         self.frequency_points)
+        f = f[f < self.loop_nyquist_hz(loop)]
+        if len(f) < 2 or np.any(np.diff(f) <= 0.0):
+            raise ValueError(f"{loop} loop needs at least two requested Bode samples below its Nyquist frequency")
+        return f
+
     def validate(self) -> None:
         self.power_stage.validate()
         self.firmware.validate()
         self.current_sense.validate()
         self.vac_sense.validate()
         self.vbus_sense.validate()
-        if self.frequency_start_hz <= 0.0 or self.frequency_stop_hz <= self.frequency_start_hz:
-            raise ValueError("invalid Bode frequency range")
-        if self.frequency_stop_hz >= 0.5 * self.firmware.current_loop_rate_hz:
-            raise ValueError("Bode stop frequency must be below the current-loop Nyquist frequency")
-        if self.frequency_points < 100:
-            raise ValueError("at least 100 Bode points are required")
+        if (not math.isfinite(self.frequency_start_hz) or not math.isfinite(self.frequency_stop_hz)
+                or self.frequency_start_hz <= 0.0 or self.frequency_stop_hz <= self.frequency_start_hz):
+            raise ValueError("invalid Bode frequency range: finite positive increasing endpoints required")
+        if not isinstance(self.frequency_points, int) or self.frequency_points < 100:
+            raise ValueError("at least 100 integer Bode points are required")
+        for key in ("current", "voltage"):
+            self.loop_frequencies_hz(key)
+            ts = getattr(self, key + "_controller").sample_time_s
+            fs = getattr(self.firmware, key + "_loop_rate_hz")
+            if not math.isclose(ts * fs, 1.0, rel_tol=1e-9, abs_tol=0.0):
+                raise ValueError(f"{key} controller sample time must match its firmware loop rate")
+        common_sense_f = self.loop_frequencies_hz("voltage")
+        if np.count_nonzero(common_sense_f < 0.5 * self.vac_sense.timing.sample_rate_hz) < 2:
+            raise ValueError("sensing panel needs at least two requested Bode samples below every sensor Nyquist frequency")
         if self.waveform_line_cycles < 3:
             raise ValueError("at least three line cycles are required for settled waveform metrics")
         if self.switching_cycles < 1 or self.switching_cycles > 50:
@@ -397,7 +447,21 @@ class PFCControlLabConfig:
             raise ValueError("waveform integration rate must be at least 4x current-loop rate")
 
 
+def illustrative_ttpl_config() -> PFCControlLabConfig:
+    """Opt-in new-design example, without changing loaded legacy numbers.
+
+    The 249 kΩ / 1.6 kΩ bus divider fits nominal 400 V into a 3.3 V ADC.
+    This checks only nominal magnitude, not transient headroom, bipolar bias,
+    isolation, tolerances or hardware qualification.
+    """
+    base = PFCControlLabConfig()
+    return replace(base, vbus_sense=replace(base.vbus_sense,
+        front_end_gain_v_per_unit=1600.0 / (249000.0 + 1600.0),
+        source_resistance_ohm=249000.0 * 1600.0 / (249000.0 + 1600.0)))
+
+
 __all__ = [
+    "illustrative_ttpl_config",
     "ADCTimingConfig",
     "ControllerConfig",
     "ControllerKind",

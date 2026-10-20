@@ -234,9 +234,24 @@ def build_pfc_research_export(analysis: PFCControlLabAnalysis, loop: str = "both
     if loop not in ("current", "voltage", "both"):
         raise ValueError("loop must be 'current', 'voltage' or 'both'")
     a, models, loops = analysis, [], []
-    cfg, stage, f = a.config, a.config.power_stage, a.frequencies_hz
+    cfg, stage = a.config, a.config.power_stage
+    if not np.array_equal(a.frequencies_hz, a.current_loop.frequencies_hz):
+        raise ValueError("analysis frequency grid must match its current-loop frequency grid")
+    # Both-loop files retain exact samples on the common (outer-loop) band.
+    # The current-only export retains the full valid current-loop bandwidth.
+    f = a.current_loop.frequencies_hz if loop == "current" else a.voltage_loop.frequencies_hz
+    count = len(f)
+    for key, result in (("current", a.current_loop), ("voltage", a.voltage_loop)):
+        if not np.array_equal(result.frequencies_hz[:count], f[:len(result.frequencies_hz)]):
+            raise ValueError("PFC loop frequency grids must share their retained source samples")
+        if loop in (key, "both") and np.any(f >= cfg.loop_nyquist_hz(key)):
+            raise ValueError(f"{key} export samples must be strictly below every loop layer's Nyquist frequency")
+
+    def responses(result):
+        return {key: value[:count] for key, value in result.responses.items()}
+
     if loop in ("current", "both"):
-        r = a.current_loop.responses
+        r = responses(a.current_loop)
         models.extend([
             _model("Gi_s", "CCM duty-to-current plant", r["plant_gid"], domain="continuous",
                    numerator=[stage.bus_voltage_v], denominator=[stage.boost_inductance_h, stage.equivalent_series_resistance_ohm],
@@ -247,7 +262,7 @@ def build_pfc_research_export(analysis: PFCControlLabAnalysis, loop: str = "both
         ])
         loops.append(ResearchLoop("PFC current", "Gi_s", "Ci_z", "Li", "Ti", "Si", "Fi", "Hi"))
     if loop in ("voltage", "both"):
-        r = a.voltage_loop.responses
+        r = responses(a.voltage_loop)
         models.extend([
             _model("Gv", "Bus plant including the exact inner-current closed-loop samples", r["bus_plant_gvg"],
                    input_unit="conductance A/V", output_unit="V", source="responses.bus_plant_gvg"),
@@ -274,7 +289,7 @@ def build_pfc_research_export(analysis: PFCControlLabAnalysis, loop: str = "both
     ):
         if loop not in (which, "both"):
             continue
-        r = result.responses
+        r = responses(result)
         controller_key = "controller_ci" if short == "i" else "controller_cv"
         plant_key = "plant_gid" if short == "i" else "bus_plant_gvg"
         closed_key = "closed_current_measured" if short == "i" else "closed_voltage"
@@ -311,19 +326,27 @@ def build_pfc_research_export(analysis: PFCControlLabAnalysis, loop: str = "both
                    {"analysis_kind": "PFCControlLabAnalysis", "selected_loop": loop,
                     "candidate_evidence": ttpl_export_evidence(a),
                     "config": cfg, "operating_point": a.operating_point,
+                    "frequency_domain": a.frequency_domain_dict(),
+                    "loop_margins": {key: asdict(result.margins)
+                                     for key, result in (("current", a.current_loop), ("voltage", a.voltage_loop))
+                                     if loop in (key, "both")},
+                    "margin_interpretation": a.summary_dict()["margin_interpretation"],
+                    "margin_source_domain": "Each margin list covers its full valid per-loop analysis domain, not only the combined export intersection.",
+                    "exported_frequency_domain": {"start_hz": float(f[0]), "stop_hz": float(f[-1]),
+                                                  "points": count, "common_band": loop == "both"},
                     "current_sample_time_s": a.current_loop.controller.sample_time_s,
                     "voltage_sample_time_s": a.voltage_loop.controller.sample_time_s,
                     "amc_sample_time_s": 1.0 / cfg.firmware.amc_rate_hz,
                     "samples_above_controller_nyquist": {
-                        "current": int(np.count_nonzero(f > 0.5 / a.current_loop.controller.sample_time_s)),
-                        "voltage": int(np.count_nonzero(f > 0.5 / a.voltage_loop.controller.sample_time_s)),
-                        "amc": int(np.count_nonzero(f > 0.5 * cfg.firmware.amc_rate_hz)),
+                        "current": int(np.count_nonzero(f >= a.current_loop.nyquist_hz)) if loop != "voltage" else 0,
+                        "voltage": int(np.count_nonzero(f >= a.voltage_loop.nyquist_hz)) if loop != "current" else 0,
+                        "amc": int(np.count_nonzero(f >= 0.5 * cfg.firmware.amc_rate_hz)) if loop != "current" else 0,
                     }, "warnings": a.warnings},
                    ("Li=Ci_z*indu_comp_gain*pwm_zoh*Gi_s*Hi; Fi excludes Hi.",
                     "Gv=Gv_base_s*current_closed_for_outer; Lv=Cv_z*amc_vff*Gv*Hv.",
                     "PFC current, voltage, sensing and AMC layers can have different sample times; no exact single-rate rational full loop is claimed.",
                     "PFC ADC aperture, SOC offsets, sensor timing ZOH and firmware PWM/AMC ZOH are retained exactly as the source analysis defines them.",
-                    "The original frequency grid is not clipped at individual Nyquist frequencies. Samples above a layer's Nyquist rate are source multirate evaluations, not an independently valid unique discrete system; counts are recorded in metadata."))
+                    "Only original samples strictly below every included loop layer's Nyquist frequency are exported. Both-loop exports use the common valid band; current-only exports preserve the wider current band. Requested and actual domains are recorded in metadata."))
 
 
 def _coefficient_checks(model: ResearchModel, frequencies) -> dict[str, Any]:

@@ -29,7 +29,8 @@ from llc_design.control.digital_loop import (
     TwoP2ZControllerConfig,
     controller_kind,
 )
-from pfc_design.control.analysis import PFCControlLabAnalysis
+from pfc_design.control.analysis import PFCControlLabAnalysis, _margin_screen
+from pfc_design.control.sensing import operating_adc_range_warnings
 from pfc_design.control.config import PFCControlLabConfig
 from pfc_design.vienna.analysis import ViennaControlLabAnalysis
 from pfc_design.vienna.config import ViennaControlLabConfig
@@ -95,6 +96,8 @@ def _divider(base_hz: float, sub_hz: float, label: str) -> int:
     rounded = int(round(ratio))
     if rounded < 1 or not math.isclose(ratio, rounded, rel_tol=0.0, abs_tol=1e-9):
         raise ValueError(f"{label}: {base_hz:g}/{sub_hz:g} is not an integer multi-rate divider")
+    if rounded > 65535:
+        raise ValueError(f"{label}: divider {rounded} exceeds the uint16_t counter maximum of 65535")
     return rounded
 
 
@@ -108,6 +111,22 @@ def _controller_initializer(name: str, config: ControllerConfig) -> str:
         return f'''    CTRL_InitPIF(&state->{name}, {_cf(cfg.kp)}, {_cf(cfg.sample_time_s/(2.0*cfg.ti_s))}, {_cf(cfg.alpha)}, {_cf(cfg.output_min)}, {_cf(cfg.output_max)});'''
     cfg = config
     return f'''    CTRL_Init2P2Z(&state->{name}, {_cf(cfg.b0)}, {_cf(cfg.b1)}, {_cf(cfg.b2)}, {_cf(cfg.a1)}, {_cf(cfg.a2)}, {_cf(cfg.output_min)}, {_cf(cfg.output_max)});'''
+
+
+def _controller_initial_output(name: str, config: ControllerConfig, output: float) -> str:
+    """Match the firmware waveform controller's explicit nonzero initial state.
+
+    This precharges state, not a persistent feed-forward addition. A general
+    2P2Z need not hold the initial output at zero error: its recurrence decides.
+    """
+    lines = [
+        f"    state->{name}.out_prev = {_cf(output)};",
+        f"    state->{name}.y1 = {_cf(output)};",
+        f"    state->{name}.y2 = {_cf(output)};",
+    ]
+    if controller_kind(config) in (ControllerKind.PI, ControllerKind.PIF):
+        lines.append(f"    state->{name}.i_state = {_cf(output / max(config.kp, 1e-12))};")
+    return "\n".join(lines)
 
 
 def _controller_kind_macro(config: ControllerConfig) -> str:
@@ -310,36 +329,68 @@ def _margin_ok(value: float | None, minimum: float) -> bool:
     return value is not None and math.isfinite(float(value)) and float(value) >= minimum
 
 
+def _assert_controller_source(analysis, loop_names):
+    """Never validate one H(z) and emit another configuration's runtime."""
+    for name in loop_names:
+        actual = getattr(analysis, name + "_loop").controller
+        expected = getattr(analysis.config, name + "_controller").transfer_function()
+        if (actual.sample_time_s != expected.sample_time_s
+                or not np.array_equal(actual.numerator, expected.numerator)
+                or not np.array_equal(actual.denominator, expected.denominator)):
+            raise ValueError(f"{name}: analyzed controller differs from generated configuration; recompute analysis")
+
+
+def _sampled_margin_checks(analysis, thresholds):
+    """Finite-band evidence screen; not a Nyquist or hardware proof."""
+    checks, passed = [], True
+    for name, minimum in thresholds:
+        loop = getattr(analysis, name + "_loop")
+        margins = loop.margins
+        config = getattr(analysis.config, name + "_controller")
+        screen = _margin_screen(margins, loop.controller,
+            intentional_pi_integrator=isinstance(config, (PIControllerConfig, PIFControllerConfig)))
+        phases = (*margins.phase_margins_deg, margins.phase_margin_deg)
+        phases_ok = all(_margin_ok(value, minimum) for value in phases)
+        ok = screen == "POSITIVE_MARGINS" and phases_ok
+        passed &= ok
+        checks.append(f"{name}: finite-band margin screen={screen}; "
+                      f"all phase margins >= {minimum:g} deg ({'PASS' if ok else 'FAIL'}); "
+                      f"PM={margins.phase_margins_deg!r}, signed GM={margins.gain_margins_db!r}")
+        checks.append(f"{name}: modeled band {loop.frequencies_hz[0]:g}.."
+                      f"{loop.frequencies_hz[-1]:g} Hz; Nyquist < {loop.nyquist_hz:g} Hz; "
+                      "closed-loop stability NOT_PROVEN")
+    return bool(passed), checks
+
+
 def validate_ttpl_codegen(analysis: PFCControlLabAnalysis) -> CodegenValidation:
-    checks: list[str] = []
-    warnings: list[str] = []
-    cm = analysis.current_loop.margins
+    passed, checks = _sampled_margin_checks(analysis, (("current", 45.0), ("voltage", 0.0)))
+    adc_warnings = operating_adc_range_warnings(analysis.config)
+    checks.append(f"Configured ADC magnitude range: {'FAIL' if adc_warnings else 'PASS'} "
+                  "(offset/transient and hardware certification excluded)")
+    warnings = list(analysis.warnings)
+    warnings.extend(w for w in adc_warnings if w not in warnings)
     vm = analysis.voltage_loop.margins
-    current_ok = _margin_ok(cm.phase_margin_deg, 45.0)
-    voltage_ok = _margin_ok(vm.phase_margin_deg, 0.0)
-    checks.append(f"current-loop phase margin = {cm.phase_margin_deg!r} deg ({'PASS' if current_ok else 'FAIL'})")
-    checks.append(f"voltage-loop phase margin = {vm.phase_margin_deg!r} deg ({'PASS' if voltage_ok else 'FAIL'})")
     if vm.phase_margin_deg is not None and vm.phase_margin_deg < 30.0:
-        warnings.append(f"voltage-loop phase margin is only {vm.phase_margin_deg:.3f} deg; generate as a stable baseline, then tune the outer loop")
+        warnings.append(f"voltage-loop phase margin is only {vm.phase_margin_deg:.3f} deg; "
+                        "outer-loop tuning remains necessary; this is not a stable-hardware baseline")
+    cm = analysis.current_loop.margins
     if cm.gain_margin_db is not None and cm.gain_margin_db < 6.0:
         warnings.append(f"current-loop gain margin is only {cm.gain_margin_db:.3f} dB")
-    warnings.extend(analysis.warnings)
-    return CodegenValidation(current_ok and voltage_ok, tuple(checks), tuple(warnings))
+    return CodegenValidation(passed and not adc_warnings, tuple(checks), tuple(warnings))
 
 
 def validate_vienna_codegen(analysis: ViennaControlLabAnalysis) -> CodegenValidation:
-    loops = (
-        ("current", analysis.current_loop.margins.phase_margin_deg, 40.0),
-        ("voltage", analysis.voltage_loop.margins.phase_margin_deg, 30.0),
-        ("balance", analysis.balance_loop.margins.phase_margin_deg, 30.0),
-    )
-    checks = []
-    passed = True
-    for name, margin, minimum in loops:
-        ok = _margin_ok(margin, minimum)
-        passed &= ok
-        checks.append(f"{name}-loop phase margin = {margin!r} deg ({'PASS' if ok else 'FAIL'})")
-    return CodegenValidation(bool(passed), tuple(checks), tuple(analysis.warnings))
+    passed, checks = _sampled_margin_checks(analysis, (("current", 40.0), ("voltage", 30.0), ("balance", 30.0)))
+    # The pure configuration check is shared with analysis; warnings carried by
+    # an input result are not trusted as the only source of range evidence.
+    from pfc_design.vienna.adc_range import operating_adc_range_warnings as vienna_adc_warnings
+    adc_warnings = vienna_adc_warnings(analysis.config)
+    overrange = tuple(w for w in adc_warnings if w.startswith("ADC_OVERRANGE"))
+    checks.append(f"Configured ADC magnitude range: {'FAIL' if overrange else 'PASS'} "
+                  "(bipolar bias/transient and hardware certification excluded)")
+    warnings = list(analysis.warnings)
+    warnings.extend(w for w in adc_warnings if w not in warnings)
+    return CodegenValidation(passed and not overrange, tuple(checks), tuple(warnings))
 
 
 def validate_llc_codegen(analysis: DigitalLoopAnalysis) -> CodegenValidation:
@@ -386,6 +437,9 @@ Base control-step rate: **{base_rate_hz:g} Hz**.
 - `stability_report.txt`: code-generation gate result.
 
 The generated sources contain no dynamic allocation and no vendor MCU headers.
+A finite-band model screen or a successful host compilation does not certify
+hardware, nonlinear startup, ADC/PWM timing or closed-loop operation. A draft
+override retains a failed validation result and must not be treated as qualified.
 ''')
 
 
@@ -399,15 +453,16 @@ def generate_ttpl_control_code(
     """Generate TTPL control-step C99 code from the analyzed GUI configuration."""
     cfg: PFCControlLabConfig = analysis.config
     cfg.validate()
+    _assert_controller_source(analysis, ("current", "voltage"))
     validation = validate_ttpl_codegen(analysis)
     if require_stable and not validation.passed:
-        raise ValueError("TTPL code-generation stability gate failed; auto-tune/apply a stable loop first")
-    out = Path(directory)
-    out.mkdir(parents=True, exist_ok=True)
-    files = _common_files(out)
+        raise ValueError("TTPL code-generation model-evidence gate failed; inspect margin/ADC checks before export")
     stage, fw = cfg.power_stage, cfg.firmware
     amc_div = _divider(fw.current_loop_rate_hz, fw.amc_rate_hz, "TTPL AMC")
     voltage_div = _divider(fw.current_loop_rate_hz, fw.voltage_loop_rate_hz, "TTPL voltage loop")
+    out = Path(directory)
+    out.mkdir(parents=True, exist_ok=True)
+    files = _common_files(out)
     effective_duty_min = max(stage.duty_min, stage.minimum_effective_pulse_s * stage.switching_frequency_hz)
 
     header = f'''#ifndef TTPL_CONTROL_H
@@ -618,6 +673,11 @@ void TTPL_ISR_Template(void)
     files["isr_template"] = _write(out / "isr_template.c", isr)
     snapshot = {
         "topology": "single_phase_ttpl_pfc",
+        "validation_scope": "FINITE_BAND_MODEL_SCREEN_ONLY",
+        "validation_passed": validation.passed,
+        "draft_override": not require_stable,
+        "closed_loop_stability": "NOT_PROVEN",
+        "hardware_validated": False,
         "numeric_format": "C99 float32",
         "bsp_generated": False,
         "duty_feedforward_enabled": duty_feedforward_enabled,
@@ -643,16 +703,17 @@ def generate_vienna_control_code(
 ) -> CodegenResult:
     cfg: ViennaControlLabConfig = analysis.config
     cfg.validate()
+    _assert_controller_source(analysis, ("current", "voltage", "balance"))
     validation = validate_vienna_codegen(analysis)
     if require_stable and not validation.passed:
-        raise ValueError("Vienna code-generation stability gate failed")
-    out = Path(directory)
-    out.mkdir(parents=True, exist_ok=True)
-    files = _common_files(out)
+        raise ValueError("Vienna code-generation model-evidence gate failed; inspect margin/ADC checks before export")
     stage, fw = cfg.power_stage, cfg.firmware
     ref_div = _divider(fw.current_loop_rate_hz, fw.reference_rate_hz, "Vienna reference")
     voltage_div = _divider(fw.current_loop_rate_hz, fw.voltage_loop_rate_hz, "Vienna voltage loop")
     balance_div = _divider(fw.current_loop_rate_hz, fw.balance_loop_rate_hz, "Vienna balance loop")
+    out = Path(directory)
+    out.mkdir(parents=True, exist_ok=True)
+    files = _common_files(out)
     min_frac = stage.minimum_effective_pulse_s * stage.switching_frequency_hz
 
     header = f'''#ifndef VIENNA_CONTROL_H
@@ -776,6 +837,11 @@ void Vienna_Init(Vienna_State_t *state)
 {_controller_initializer('current_c', cfg.current_controller)}
 {_controller_initializer('voltage_ctrl', cfg.voltage_controller)}
 {_controller_initializer('balance_ctrl', cfg.balance_controller)}
+{_controller_initial_output('voltage_ctrl', cfg.voltage_controller, stage.input_conductance_a_per_v)}
+    /* All waveform tasks execute at t=0, then at their respective dividers. */
+    state->reference_div = VIENNA_REFERENCE_DIVIDER - 1u;
+    state->voltage_div = VIENNA_VOLTAGE_DIVIDER - 1u;
+    state->balance_div = VIENNA_BALANCE_DIVIDER - 1u;
     state->gcmd = {_cf(stage.input_conductance_a_per_v)};
 }}
 
@@ -784,7 +850,10 @@ void Vienna_Reset(Vienna_State_t *state)
     if(state == NULL) {{ return; }}
     CTRL_Reset(&state->current_a); CTRL_Reset(&state->current_b); CTRL_Reset(&state->current_c);
     CTRL_Reset(&state->voltage_ctrl); CTRL_Reset(&state->balance_ctrl);
-    state->reference_div = 0u; state->voltage_div = 0u; state->balance_div = 0u;
+{_controller_initial_output('voltage_ctrl', cfg.voltage_controller, stage.input_conductance_a_per_v)}
+    state->reference_div = VIENNA_REFERENCE_DIVIDER - 1u;
+    state->voltage_div = VIENNA_VOLTAGE_DIVIDER - 1u;
+    state->balance_div = VIENNA_BALANCE_DIVIDER - 1u;
     state->gcmd = {_cf(stage.input_conductance_a_per_v)};
     state->balance = 0.0f;
     state->ia_ref = state->ib_ref = state->ic_ref = 0.0f;
@@ -910,6 +979,19 @@ void Vienna_ISR_Template(void)
     files["isr_template"] = _write(out / "isr_template.c", isr)
     snapshot = {
         "topology": "three_phase_vienna_pfc",
+        "runtime_initialization": {
+            "voltage_controller_output_preload_a_per_v": stage.input_conductance_a_per_v,
+            "preload_semantics": "PI/PIF integral and output history; 2P2Z y1/y2 history",
+            "first_enabled_step": "all loops and reference update at t=0; subsequent integer dividers",
+            "reset_semantics": "restore the same preloaded state and first-tick phase as Init",
+            "scope": "controller state and scheduling; not a complete ADC/PWM time-domain equivalence claim",
+        },
+        "validation_scope": "FINITE_BAND_MODEL_SCREEN_ONLY",
+        "validation_passed": validation.passed,
+        "draft_override": not require_stable,
+        "closed_loop_stability": "NOT_PROVEN",
+        "hardware_validated": False,
+        "analysis": analysis.summary_dict(),
         "numeric_format": "C99 float32",
         "bsp_generated": False,
         "config": _jsonable(cfg),

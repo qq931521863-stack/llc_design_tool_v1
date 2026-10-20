@@ -13,10 +13,18 @@ from __future__ import annotations
 import csv
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
+
+from .exact_control import (
+    DF2T,
+    ExactController,
+    SampledSense,
+    adc_headroom,
+    controller_for,
+)
 
 
 def abc_to_dq(abc, theta: float) -> tuple[float, float]:
@@ -55,6 +63,15 @@ class ThreePhaseConfig:
     current_ki: float = 503.0
     voltage_kp: float = 0.5
     voltage_ki: float = 20.0
+    current_controller: ExactController | None = None
+    voltage_controller: ExactController | None = None
+    current_sense: SampledSense = field(default_factory=SampledSense)
+    voltage_sense: SampledSense = field(default_factory=SampledSense)
+    voltage_delay_ticks: int = 0
+    load_model: str = "constant_power"
+    analysis_min_hz: float = 0.05
+    analysis_max_hz: float = 20000.0
+    analysis_points: int = 1200
     current_limit_a: float = 60.0
     iq_reference_a: float = 0.0
     current_slew_a_per_s: float = 2000.0
@@ -77,12 +94,48 @@ class ThreePhaseConfig:
     load_step_ratio: float = 1.0
 
     def validate(self):
+        if (
+            type(self.analysis_points) is not int
+            or not 100 <= self.analysis_points <= 10000
+        ):
+            raise ValueError("analysis points must be integer 100..10000")
+        if not 0 < self.analysis_min_hz < self.analysis_max_hz:
+            raise ValueError(
+                "analysis frequency bounds must be positive and increasing"
+            )
         if self.pll_kind not in ("SRF", "DDSRF", "DDSOGI"):
             raise ValueError("Choose SRF, DDSRF or DDSOGI PLL")
+        if self.load_model not in ("constant_power", "resistance"):
+            raise ValueError("unknown load model")
+        for loop, rate in (
+            ("current", self.control_hz),
+            ("voltage", self.voltage_loop_hz),
+        ):
+            exact = getattr(self, loop + "_controller")
+            if exact is not None and (
+                not isinstance(exact, ExactController) or exact.sample_rate_hz != rate
+            ):
+                raise ValueError(f"{loop} H(z) sample rate mismatch")
+            sense = getattr(self, loop + "_sense")
+            if not isinstance(sense, SampledSense):
+                raise TypeError("sense must be SampledSense")
+            sense.validate()
+        if (
+            type(self.voltage_delay_ticks) is not int
+            or not 0 <= self.voltage_delay_ticks <= 5
+        ):
+            raise ValueError("voltage delay ticks must be integer 0..5")
         for name, value in asdict(self).items():
-            if name == "pll_kind":
+            if name in (
+                "pll_kind",
+                "load_model",
+                "current_controller",
+                "voltage_controller",
+                "current_sense",
+                "voltage_sense",
+            ):
                 continue
-            if not isinstance(value, (int, float)) or not math.isfinite(value):
+            if type(value) not in (int, float) or not math.isfinite(value):
                 raise ValueError(f"{name} must be a finite number")
         for name in (
             "line_line_rms_v",
@@ -232,7 +285,9 @@ class ThreePhaseResult:
     warnings: tuple[str, ...]
 
 
-def simulate_three_phase(config: ThreePhaseConfig) -> ThreePhaseResult:
+def simulate_three_phase(
+    config: ThreePhaseConfig, *, cancel_event=None
+) -> ThreePhaseResult:
     config.validate()
     dt = 1 / config.control_hz
     h = dt / config.integration_substeps
@@ -241,6 +296,18 @@ def simulate_three_phase(config: ThreePhaseConfig) -> ThreePhaseResult:
         f"{prefix}_{p}" for prefix in ("vac", "current", "duty", "vconv") for p in "abc"
     ]
     names += [
+        "current_error_d_a",
+        "current_error_q_a",
+        "current_tracking_d_v",
+        "current_tracking_q_v",
+        "voltage_error_v",
+        "voltage_controller_raw_a",
+        "controller_d_v",
+        "controller_q_v",
+        "id_command_a",
+        "id_feedback_a",
+        "iq_feedback_a",
+        "vbus_feedback_v",
         "id_a",
         "iq_a",
         "id_ref_a",
@@ -263,22 +330,50 @@ def simulate_three_phase(config: ThreePhaseConfig) -> ThreePhaseResult:
     ]
     signals = {name: np.zeros(len(time)) for name in names}
     from .pll import GridPLL, PLLConfig
-    pll = GridPLL(PLLConfig(
-        sample_hz=config.control_hz, nominal_hz=config.nominal_hz,
-        bandwidth_hz=config.pll_bandwidth_hz, damping=config.pll_damping,
-        minimum_hz=config.pll_min_hz, maximum_hz=config.pll_max_hz,
-        nominal_peak_v=config.line_line_rms_v * math.sqrt(2 / 3),
-        initial_angle_deg=config.pll_initial_deg, lock_error=config.pll_lock_error,
-        lock_time_s=config.pll_lock_time_s), config.pll_kind)
+
+    pll = GridPLL(
+        PLLConfig(
+            sample_hz=config.control_hz,
+            nominal_hz=config.nominal_hz,
+            bandwidth_hz=config.pll_bandwidth_hz,
+            damping=config.pll_damping,
+            minimum_hz=config.pll_min_hz,
+            maximum_hz=config.pll_max_hz,
+            nominal_peak_v=config.line_line_rms_v * math.sqrt(2 / 3),
+            initial_angle_deg=config.pll_initial_deg,
+            lock_error=config.pll_lock_error,
+            lock_time_s=config.pll_lock_time_s,
+        ),
+        config.pll_kind,
+    )
     vpk = config.line_line_rms_v * math.sqrt(2 / 3)
     current = np.zeros(3)
     bus_energy = 0.5 * config.bus_capacitance_f * config.bus_voltage_v**2
     initial_energy = bus_energy
     energy_input = 0.0
     bus_v = config.bus_voltage_v
-    integral_i = np.zeros(2)
-    integral_v = config.output_power_w / (1.5 * vpk)
+    ci, cv = controller_for(config, "current"), controller_for(config, "voltage")
+    current_controllers = [DF2T(ci), DF2T(ci)]
+    voltage_controller = DF2T(
+        cv,
+        config.output_power_w / (1.5 * vpk)
+        if config.voltage_controller is None
+        else 0.0,
+    )
+    current_sensors = [
+        DF2T(config.current_sense.controller(config.control_hz)) for _ in range(2)
+    ]
+    voltage_sensor = DF2T(config.voltage_sense.controller(config.voltage_loop_hz))
+    # Initialize bus sensing at the precharged operating point, without a fictitious filter startup.
+    if voltage_sensor.state.size:
+        from scipy.signal import lfilter_zi
+
+        sense_tf = voltage_sensor.controller
+        voltage_sensor.state = lfilter_zi(sense_tf.b, sense_tf.a) * bus_v
+    voltage_queue = [0.0] * config.voltage_delay_ticks
     id_command = id_reference = 0.0
+    error_v = raw_v_command = 0.0
+    sensed_bus = bus_v * config.voltage_sense.gain
     outer_divider = round(config.control_hz / config.voltage_loop_hz)
     initial_duty, _, _ = svpwm(dq_to_abc(vpk, 0, 0), bus_v, config.modulation_limit)
     queue = [initial_duty.copy() for _ in range(config.pwm_delay_ticks)]
@@ -294,33 +389,54 @@ def simulate_three_phase(config: ThreePhaseConfig) -> ThreePhaseResult:
             phase += math.radians(config.phase_step_deg)
         return dq_to_abc(vpk, 0, phase), phase
 
-    def load(t):
+    def load(t, voltage=None):
         factor = config.load_step_ratio if t >= config.disturbance_time_s else 1.0
-        return config.output_power_w * min(t / config.load_ramp_s, 1) * factor
+        voltage = bus_v if voltage is None else voltage
+        load_factor = (
+            (voltage / config.bus_voltage_v) ** 2
+            if config.load_model == "resistance"
+            else 1.0
+        )
+        return (
+            config.output_power_w
+            * min(t / config.load_ramp_s, 1)
+            * factor
+            * load_factor
+        )
 
     for k, t in enumerate(time):
+        if cancel_event is not None and cancel_event.is_set():
+            raise InterruptedError("dq simulation cancelled")
         voltage, grid_theta = grid(t)
         theta = pll.step(voltage)
         vd, vq = abc_to_dq(voltage, theta)
         idq = np.array(abc_to_dq(current, theta))
+        sensed_idq = np.array(
+            [sensor.advance(value) for sensor, value in zip(current_sensors, idq)]
+        )
         if k % outer_divider == 0:
-            error_v = config.bus_voltage_v - bus_v
-            candidate = (
-                integral_v + config.voltage_ki * error_v / config.voltage_loop_hz
-            )
-            raw = config.voltage_kp * error_v + candidate
+            sensed_bus = voltage_sensor.advance(bus_v)
+            error_v = config.bus_voltage_v - sensed_bus
+            raw = voltage_controller.output(error_v)
+            raw_v_command = raw
             d_limit = math.sqrt(
                 max(0, config.current_limit_a**2 - config.iq_reference_a**2)
             )
-            id_command = float(np.clip(raw, 0, d_limit)) if pll.locked else 0.0
-            if pll.locked:
-                integral_v = candidate + (id_command - raw)
+            command = float(np.clip(raw, 0, d_limit)) if pll.locked else 0.0
+            voltage_controller.advance(error_v, command - raw, enabled=pll.locked)
+            voltage_queue.append(command)
+            id_command = voltage_queue.pop(0)
         target = id_command if pll.locked else 0.0
         delta = config.current_slew_a_per_s * dt
         id_reference += float(np.clip(target - id_reference, -delta, delta))
         iq_reference = config.iq_reference_a if pll.locked else 0.0
-        error_i = np.array((id_reference, iq_reference)) - idq
-        u = config.current_kp * error_i + integral_i
+        error_i = np.array((id_reference, iq_reference)) - sensed_idq
+        u = np.array(
+            [
+                controller.output(error)
+                for controller, error in zip(current_controllers, error_i)
+            ]
+        )
         omega_l = 2 * math.pi * pll.frequency_hz * config.inductance_h
         raw_dq = np.array((vd + omega_l * idq[1], vq - omega_l * idq[0])) - u
         duty, actual, limited = svpwm(
@@ -328,9 +444,11 @@ def simulate_three_phase(config: ThreePhaseConfig) -> ThreePhaseResult:
         )
         actual_dq = np.array(abc_to_dq(actual, theta))
         # Back-calculation sign follows u = feedforward - converter voltage.
-        integral_i += config.current_ki * error_i * dt + min(1.0, 1000 * dt) * (
-            raw_dq - actual_dq
-        )
+        correction = min(1.0, 1000 * dt) * (raw_dq - actual_dq)
+        for controller, error, tracking in zip(
+            current_controllers, error_i, correction
+        ):
+            controller.advance(error, tracking)
         queue.append(duty)
         applied = queue.pop(0)
         vconv = bus_v * (applied - np.mean(applied))
@@ -346,6 +464,18 @@ def simulate_three_phase(config: ThreePhaseConfig) -> ThreePhaseResult:
             ):
                 signals[f"{prefix}_{phase}"][k] = value
         values = {
+            "current_error_d_a": error_i[0],
+            "current_error_q_a": error_i[1],
+            "current_tracking_d_v": correction[0],
+            "current_tracking_q_v": correction[1],
+            "voltage_error_v": error_v,
+            "voltage_controller_raw_a": raw_v_command,
+            "controller_d_v": u[0],
+            "controller_q_v": u[1],
+            "id_command_a": id_command,
+            "id_feedback_a": sensed_idq[0],
+            "iq_feedback_a": sensed_idq[1],
+            "vbus_feedback_v": sensed_bus,
             "id_a": idq[0],
             "iq_a": idq[1],
             "id_ref_a": id_reference,
@@ -392,11 +522,11 @@ def simulate_three_phase(config: ThreePhaseConfig) -> ThreePhaseResult:
                 / config.inductance_h
             )
             current -= np.mean(current)
-            bus_energy += h * (float(conv_mid @ imid) - load(ts + 0.5 * h))
+            bus_energy += h * (float(conv_mid @ imid) - load(ts + 0.5 * h, vmid))
             energy_input += h * (
                 float(vgrid_mid @ imid)
                 - config.resistance_ohm * float(imid @ imid)
-                - load(ts + 0.5 * h)
+                - load(ts + 0.5 * h, vmid)
             )
             if (
                 not math.isfinite(bus_energy)
@@ -422,14 +552,17 @@ def simulate_three_phase(config: ThreePhaseConfig) -> ThreePhaseResult:
     phase_error = np.angle(
         np.exp(1j * (signals["grid_theta_rad"] - signals["pll_theta_rad"]))
     )
+    regulated_target_v = config.bus_voltage_v / config.voltage_sense.gain
     settled = (
         np.all(signals["pll_locked"][sl] > 0.5)
-        and abs(vbus_mean - config.bus_voltage_v) < 0.02 * config.bus_voltage_v
+        and abs(vbus_mean - regulated_target_v) < 0.02 * regulated_target_v
         and abs(pin_mean - np.mean(signals["pin_w"][previous]))
         < 0.02 * max(abs(pin_mean), 1)
     )
     warnings = [
-        "Averaged ideal six-switch model; no deadtime, device losses, ADC errors or hardware verification.",
+        "Averaged ideal six-switch model; no deadtime, device losses, ADC quantization/clipping or hardware verification.",
+        "Exact DF2T controllers; tracking correction enters first state, voltage state freezes on PLL unlock. Generic H(z) antiwindup is not a stability guarantee.",
+        "Sense: calibrated sample-domain dq/bus gain, matched-z filter and integer latency; no analog anti-alias/aperture or PLL sensor coupling.",
         f"PLL={config.pll_kind}; separate comparison experiment covers negative sequence and harmonics.",
         "Starts with precharged DC bus; no rectifier diode/precharge/startup protection model.",
     ]
@@ -439,8 +572,15 @@ def simulate_three_phase(config: ThreePhaseConfig) -> ThreePhaseResult:
         )
     if np.any(signals["modulation_limited"][sl]):
         warnings.append("Final-cycle voltage command reaches SVPWM limit.")
+    from .control import request_identity
+
     metrics = {
+        "source_identity": request_identity(config),
         "evidence": "SOFTWARE_MODEL_ONLY",
+        "exact_controllers": {
+            key: asdict(controller_for(config, key)) for key in ("current", "voltage")
+        },
+        "adc_headroom": adc_headroom(config),
         "settled": bool(settled),
         "pll_locked": bool(np.all(signals["pll_locked"][sl] > 0.5)),
         "pll_frequency_hz": float(np.mean(signals["pll_hz"][sl])),
@@ -448,16 +588,23 @@ def simulate_three_phase(config: ThreePhaseConfig) -> ThreePhaseResult:
             np.max(np.abs(phase_error[sl])) * 180 / math.pi
         ),
         "vbus_average_v": vbus_mean,
+        "vbus_regulated_target_v": regulated_target_v,
+        "vbus_feedback_average_v": float(np.mean(signals["vbus_feedback_v"][sl])),
+        "tracking_error_domain": "reference minus calibrated sampled feedback; physical Id/Iq and Vbus remain separate signals",
         "vbus_ripple_pp_v": float(np.ptp(signals["vbus_v"][sl])),
         "pin_w": pin_mean,
         "load_w": float(np.mean(signals["pload_w"][sl])),
         "power_factor": pin_mean / max(float(vrms @ irms), 1e-12),
         "phase_current_rms_a": irms.tolist(),
         "id_error_rms_a": float(
-            np.sqrt(np.mean((signals["id_ref_a"][sl] - signals["id_a"][sl]) ** 2))
+            np.sqrt(
+                np.mean((signals["id_ref_a"][sl] - signals["id_feedback_a"][sl]) ** 2)
+            )
         ),
         "iq_error_rms_a": float(
-            np.sqrt(np.mean((signals["iq_ref_a"][sl] - signals["iq_a"][sl]) ** 2))
+            np.sqrt(
+                np.mean((signals["iq_ref_a"][sl] - signals["iq_feedback_a"][sl]) ** 2)
+            )
         ),
         "modulation_limited_fraction": float(
             np.mean(signals["modulation_limited"][sl])
@@ -493,7 +640,7 @@ def export_result(result: ThreePhaseResult, path: str | Path):
     path.with_suffix(".json").write_text(
         json.dumps(
             {
-                "schema": "three-phase-dq-v1",
+                "schema": "three-phase-dq-result-v2",
                 "config": asdict(result.config),
                 "metrics": result.metrics,
                 "warnings": result.warnings,

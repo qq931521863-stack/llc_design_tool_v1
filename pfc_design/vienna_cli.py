@@ -1,8 +1,8 @@
 """CLI for three-phase Vienna PFC Control Lab."""
 from __future__ import annotations
 
-from dataclasses import asdict, replace
 import json
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import click
@@ -48,19 +48,29 @@ def cli(vll: float, vdc: float, power: float, line_hz: float, fsw_khz: float,
         "current_loop": asdict(analysis.current_loop.margins),
         "voltage_loop": asdict(analysis.voltage_loop.margins),
         "balance_loop": asdict(analysis.balance_loop.margins),
+        "bode_analysis": analysis.summary_dict(),
+        "bode_csv_missing_samples": (
+            "Empty fields are outside that loop's sampled frequency grid; "
+            "responses are not interpolated or extrapolated."
+        ),
         "waveform_metrics": asdict(line.metrics),
         "warnings": [*analysis.warnings, *line.warnings],
     }
     (output/"summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     pd.DataFrame({"time_s": line.time_s, **line.signals}).to_csv(output/"line_cycle.csv", index=False)
     pd.DataFrame({"time_s": switching.time_s, **switching.signals}).to_csv(output/"switching.csv", index=False)
-    rows = {"frequency_hz": analysis.frequencies_hz}
+    rows = {}
     for prefix, loop in (("current",analysis.current_loop),("voltage",analysis.voltage_loop),("balance",analysis.balance_loop)):
         key = {"current":"open_current","voltage":"open_voltage","balance":"open_balance"}[prefix]
         resp = loop.responses[key]
-        rows[f"{prefix}_open_gain_db"] = 20*np.log10(np.maximum(np.abs(resp),1e-300))
-        rows[f"{prefix}_open_phase_deg"] = np.unwrap(np.angle(resp))*180/np.pi
-    pd.DataFrame(rows).to_csv(output/"bode_open_loops.csv", index=False)
+        rows[f"{prefix}_open_gain_db"] = pd.Series(
+            20*np.log10(np.maximum(np.abs(resp),1e-300)), index=loop.frequencies_hz)
+        rows[f"{prefix}_open_phase_deg"] = pd.Series(
+            np.unwrap(np.angle(resp))*180/np.pi, index=loop.frequencies_hz)
+    # Retain each loop's own valid band, including when current is not widest.
+    # The union grid leaves unsupported samples empty rather than extending them.
+    pd.DataFrame(rows).sort_index().rename_axis("frequency_hz").to_csv(
+        output/"bode_open_loops.csv")
 
     click.echo(f"Vienna current loop PM={analysis.current_loop.margins.phase_margin_deg}")
     click.echo(f"Vienna voltage loop PM={analysis.voltage_loop.margins.phase_margin_deg}")

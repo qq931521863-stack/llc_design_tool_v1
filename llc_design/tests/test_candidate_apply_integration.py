@@ -78,6 +78,10 @@ def _ttpl_window(monkeypatch):
     # has independent V3 desktop coverage; keep this fixture inexpensive.
     monkeypatch.setattr(control, "set_result", lambda result, **kwargs: setattr(control, "result", result))
     view = install_ttpl_solution_map(window)
+    # Candidate Apply/export must use the real model gate, not a draft override
+    # for the legacy divider that puts 5.396 V on the 3.3 V bus ADC.
+    control.vbus_sense["gain"].setValue(1600.0 / (249000.0 + 1600.0))
+    control.vbus_sense["source_r"].setValue(249000.0 * 1600.0 / (249000.0 + 1600.0))
     config = control._config()
     config = replace(config, firmware=replace(config.firmware, current_loop_rate_hz=60_000.0, amc_rate_hz=30_000.0),
                      current_controller=replace(config.current_controller, sample_time_s=1 / 60_000.0),
@@ -197,7 +201,8 @@ def test_ttpl_apply_and_next_run_preserve_exact_hz_and_hidden_guided_values(app,
     np.testing.assert_array_equal(applied.current_loop.controller.numerator, expected.transfer_function().numerator)
     handoff = build_pfc_control_handoff(applied)
     np.testing.assert_array_equal(handoff.current.b, applied.current_loop.controller.numerator)
-    generated = generate_ttpl_control_code(applied, tmp_path / "ttpl", require_stable=False)
+    generated = generate_ttpl_control_code(applied, tmp_path / "ttpl")
+    assert generated.validation.passed
     assert generated.directory.exists()
     control.inductance.setValue(control.inductance.value() + 1)
     assert not view.sources
@@ -428,14 +433,13 @@ def test_ttpl_retains_real_points_and_inner_change_invalidates_outer_snapshots(a
         control = window.control_lab_view.control_lab
         baseline = window.result[0]
         voltage_source = view.sources["voltage"]
-        voltage_band = baseline.frequencies_hz < 0.5 / baseline.voltage_loop.controller.sample_time_s
         assert voltage_source.frequencies_hz[-1] < 0.5 * voltage_source.sample_rate_hz
-        np.testing.assert_array_equal(voltage_source.frequencies_hz, baseline.frequencies_hz[voltage_band])
+        np.testing.assert_array_equal(voltage_source.frequencies_hz, baseline.voltage_loop.frequencies_hz)
         np.testing.assert_allclose(
-            voltage_source.fixed_loop_response * baseline.voltage_loop.responses["controller_cv"][voltage_band],
-            baseline.voltage_loop.responses["open_voltage"][voltage_band],
+            voltage_source.fixed_loop_response * baseline.voltage_loop.responses["controller_cv"],
+            baseline.voltage_loop.responses["open_voltage"],
         )
-        assert "below voltage-loop Nyquist" in voltage_source.provenance
+        assert f"valid f < {baseline.voltage_loop.nyquist_hz:g} Hz (all sampled outer-loop blocks)" in voltage_source.provenance
         view.retain_current_source()
         view.source_combo.setCurrentIndex(view.source_combo.findData("voltage"))
         view.retain_current_source()
@@ -475,8 +479,16 @@ def test_ttpl_short_outer_principal_band_is_visible_and_inactive(app, monkeypatc
         baseline = window.result[0].config
         view.source_combo.setCurrentIndex(view.source_combo.findData("voltage"))
         view.retain_current_source()
-        window.run_ttpl_analysis(replace(baseline, frequency_start_hz=start,
-                                         frequency_stop_hz=20000, frequency_points=100))
+        request = replace(baseline, frequency_start_hz=start,
+                          frequency_stop_hz=20000, frequency_points=100)
+        if count < 2:
+            # A complete result cannot plot or assess a zero/one-point outer
+            # band. Validation now rejects it before launching analysis.
+            from pfc_design.control import build_pfc_control_lab_analysis
+            with pytest.raises(ValueError, match="voltage loop needs at least two"):
+                build_pfc_control_lab_analysis(request)
+            return
+        window.run_ttpl_analysis(request)
         assert view.source_combo.currentData() == "voltage"
         assert view.sources["voltage"].frequencies_hz.size == count
         assert not view.generate_button.isEnabled()

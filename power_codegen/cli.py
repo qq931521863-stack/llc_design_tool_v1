@@ -11,8 +11,8 @@ from llc_design.control.analysis import build_small_signal_analysis
 from llc_design.control.digital_loop import PIControllerConfig, build_digital_loop_analysis
 from llc_design.core.spec import LLCDesignSpec
 from llc_design.models.system import LLCSystemAnalyzer
-from pfc_design.control import PFCControlLabConfig, build_pfc_control_lab_analysis, tune_pfc_current_loop
-from pfc_design.vienna import ViennaControlLabConfig, build_vienna_control_lab_analysis
+from pfc_design.control import illustrative_ttpl_config, build_pfc_control_lab_analysis, tune_pfc_current_loop
+from pfc_design.vienna import illustrative_vienna_config, build_vienna_control_lab_analysis
 
 from .generator import generate_llc_control_code, generate_ttpl_control_code, generate_vienna_control_code
 
@@ -25,24 +25,28 @@ def cli() -> None:
 @cli.command("ttpl")
 @click.option("--output", type=click.Path(file_okay=False), default="output/generated_ttpl", show_default=True)
 @click.option("--autotune/--no-autotune", default=True, help="Apply the conservative one-click current-loop tuner before generation.")
-@click.option("--allow-unstable", is_flag=True, default=False)
+@click.option("--allow-unvalidated", "--allow-unstable", "allow_unstable", is_flag=True, default=False,
+              help="Export an explicitly unvalidated draft if the model-evidence gate fails.")
 def ttpl(output: str, autotune: bool, allow_unstable: bool) -> None:
-    cfg = PFCControlLabConfig()
+    cfg = illustrative_ttpl_config()
     if autotune:
         tune = tune_pfc_current_loop(cfg)
         cfg = replace(cfg, current_controller=tune.controller)
     analysis = build_pfc_control_lab_analysis(cfg)
     result = generate_ttpl_control_code(analysis, output, require_stable=not allow_unstable)
+    click.echo("New illustrative ADC front end; hardware and transient headroom remain unqualified.")
     click.echo(f"TTPL C99 generated: {result.directory}")
     click.echo(f"Validation: {'PASS' if result.validation.passed else 'FAIL'}")
 
 
 @cli.command("vienna")
 @click.option("--output", type=click.Path(file_okay=False), default="output/generated_vienna", show_default=True)
-@click.option("--allow-unstable", is_flag=True, default=False)
+@click.option("--allow-unvalidated", "--allow-unstable", "allow_unstable", is_flag=True, default=False,
+              help="Export an explicitly unvalidated draft if the model-evidence gate fails.")
 def vienna(output: str, allow_unstable: bool) -> None:
-    analysis = build_vienna_control_lab_analysis(ViennaControlLabConfig())
+    analysis = build_vienna_control_lab_analysis(illustrative_vienna_config())
     result = generate_vienna_control_code(analysis, output, require_stable=not allow_unstable)
+    click.echo("New illustrative ADC front end; bipolar bias and hardware remain unqualified.")
     click.echo(f"Vienna C99 generated: {result.directory}")
     click.echo(f"Validation: {'PASS' if result.validation.passed else 'FAIL'}")
 
@@ -51,7 +55,8 @@ def vienna(output: str, allow_unstable: bool) -> None:
 @click.option("--output", type=click.Path(file_okay=False), default="output/generated_llc", show_default=True)
 @click.option("--kp", type=float, default=0.002, show_default=True)
 @click.option("--ti-ms", type=float, default=3.0, show_default=True)
-@click.option("--allow-unstable", is_flag=True, default=False)
+@click.option("--allow-unvalidated", "--allow-unstable", "allow_unstable", is_flag=True, default=False,
+              help="Export an explicitly unvalidated draft if the model-evidence gate fails.")
 def llc(output: str, kp: float, ti_ms: float, allow_unstable: bool) -> None:
     spec = LLCDesignSpec()
     system = LLCSystemAnalyzer().analyze(spec)

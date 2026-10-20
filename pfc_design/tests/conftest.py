@@ -6,10 +6,10 @@ test_verify_mathcad.py's own fixtures (mathcad_spec, mathcad_op, db).
 
 import pytest
 
-from pfc_design.core.spec import DesignSpec
-from pfc_design.core.operating_point import compute_mathcad_operating_point
-from pfc_design.magnetics.core_database import CoreDatabase
 from pfc_design.core.line_cycle import build_line_cycle_trace
+from pfc_design.core.operating_point import compute_mathcad_operating_point
+from pfc_design.core.spec import DesignSpec
+from pfc_design.magnetics.core_database import CoreDatabase
 
 
 @pytest.fixture(scope="module")

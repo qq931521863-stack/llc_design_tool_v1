@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import Enum
 import math
+import warnings
 from typing import Callable
 
 import numpy as np
@@ -46,9 +47,14 @@ class SISOTransferFunction:
         self, frequencies_hz: NDArray[np.float64],
     ) -> NDArray[np.complex128]:
         omega = 2.0 * math.pi * np.asarray(frequencies_hz, dtype=float)
-        _, response = signal.freqresp(
-            signal.TransferFunction(self.numerator, self.denominator), w=omega)
-        return np.asarray(response, dtype=complex)
+        # Evaluate the stored polynomial verbatim. scipy.signal normalizes a
+        # TransferFunction and can discard small leading terms before freqresp;
+        # coefficients of different powers of s do not share units or scale.
+        s = 1j * omega
+        return np.asarray(
+            np.polyval(self.numerator, s) / np.polyval(self.denominator, s),
+            dtype=complex,
+        )
 
     def scaled(
         self,
@@ -158,21 +164,51 @@ class LinearizedPlant:
         *,
         input_name: str | None = None,
         output_name: str = "output_voltage_v",
-        relative_trim: float = 1e-11,
+        relative_trim: float = 0.0,
     ) -> SISOTransferFunction:
         input_idx = 0 if input_name is None else self.input_index(input_name)
         output_idx = self.output_index(output_name)
+        # ss2tf forms characteristic-polynomial differences. Normalize the
+        # selected input/output so a harmless unit change cannot make B*C
+        # disappear next to A in that subtraction. Restore the exact gain
+        # afterward; this is coordinate scaling, not coefficient truncation.
+        selected_b = self.b[:, [input_idx]]
+        selected_c = self.c[[output_idx], :]
+        direct = float(self.d[output_idx, input_idx])
+        b_norm = float(np.max(np.abs(selected_b)))
+        a_norm = max(float(np.max(np.abs(self.a))), 1.0)
+        input_scale = b_norm / a_norm if b_norm else 1.0
+        output_scale = max(float(np.max(np.abs(selected_c))), abs(direct / input_scale))
+        if output_scale == 0.0:
+            output_scale = 1.0
+        gain_scale = input_scale * output_scale
         num_all, den = signal.ss2tf(
-            self.a, self.b, self.c, self.d, input=input_idx)
-        numerator = np.asarray(num_all[output_idx], dtype=float)
+            self.a, selected_b / input_scale, selected_c / output_scale,
+            np.asarray([[direct / gain_scale]], dtype=float), input=0)
+        numerator = np.asarray(num_all[0], dtype=float) * gain_scale
         denominator = np.asarray(den, dtype=float)
+        if b_norm == 0.0 or not np.any(selected_c):
+            # There is exactly no dynamic path; avoid subtracting identical
+            # characteristic polynomials to recover a tiny direct feedthrough.
+            numerator = direct * denominator
         if denominator[0] == 0.0:
             raise ValueError("invalid transfer-function denominator")
         numerator = numerator / denominator[0]
         denominator = denominator / denominator[0]
-        max_num = max(float(np.max(np.abs(numerator))), 1.0)
+        if not math.isfinite(relative_trim) or relative_trim < 0.0:
+            raise ValueError("relative_trim must be finite and nonnegative")
+        if relative_trim:
+            warnings.warn(
+                "relative_trim is deprecated for continuous polynomials; only exact "
+                "leading zeros are removed because s-power coefficients have different units",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        # ss2tf already represents the complete state-space model. Comparing
+        # coefficients against max(abs(num)) silently removes real dynamics
+        # (and changes with time units); only exact leading zeros are redundant.
         first = 0
-        while first < len(numerator) - 1 and abs(numerator[first]) <= relative_trim * max_num:
+        while first < len(numerator) - 1 and numerator[first] == 0.0:
             first += 1
         numerator = numerator[first:]
         zeros = (

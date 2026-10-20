@@ -1,6 +1,7 @@
 """Desktop fixture ownership must end at the test boundary, with native Qt."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -12,8 +13,6 @@ import pytest
 _ROOT = Path(__file__).resolve().parents[2]
 _PREAMBLE = '''
 from contextlib import contextmanager
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent
@@ -21,28 +20,28 @@ from PySide6.QtWidgets import QMainWindow
 from pyqtgraph import GraphicsLayoutWidget
 from shiboken6 import isValid
 
-from llc_design.tests.conftest import (
-    desktop_qapp, isolate_desktop_background_updates,
+from llc_design.tests.conftest import desktop_qapp
+from llc_design.tests.desktop_support import (
+    offline_update_checks, load_root_test_fixtures, record_test_fixture_proof,
 )
+root_fixtures = load_root_test_fixtures()
 
 session = contextmanager(desktop_qapp.__wrapped__)
-isolate = contextmanager(isolate_desktop_background_updates.__wrapped__)
-with session() as app, pytest.MonkeyPatch.context() as monkeypatch:
+isolate = contextmanager(root_fixtures.dispose_test_owned_desktop_widgets.__wrapped__)
+with offline_update_checks(), session() as app, pytest.MonkeyPatch.context() as monkeypatch:
     app.setQuitOnLastWindowClosed(False)
-    request = SimpleNamespace(
-        node=SimpleNamespace(path=Path("test_i18n.py")),
-        getfixturevalue=lambda name: app,
-    )
 '''
 
 
 def _run_python(arguments, tmp_path):
     pytest.importorskip("PySide6.QtWidgets")
     pytest.importorskip("pyqtgraph")
+    proof_path = tmp_path / "fixture-origins.jsonl"
     result = subprocess.run(
         [sys.executable, *arguments], cwd=_ROOT, capture_output=True,
         text=True, timeout=120,
-        env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "PYTHONFAULTHANDLER": "1"},
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "PYTHONFAULTHANDLER": "1",
+             "PDT_TEST_FIXTURE_PROOF": str(proof_path)},
         check=False,
     )
     output = result.stdout + result.stderr
@@ -50,10 +49,14 @@ def _run_python(arguments, tmp_path):
     assert result.returncode == 0, output
     assert "Traceback" not in output, output
     assert "Error calling Python override" not in output, output
+    proofs = [json.loads(line) for line in proof_path.read_text(encoding="utf-8").splitlines()]
+    assert proofs and all(row["product_root"] == str(_ROOT) for row in proofs)
+    assert proofs[-1]["product_origins"]
 
 
 def _run_fixture_script(body, tmp_path):
-    script = _PREAMBLE + textwrap.indent(textwrap.dedent(body), "    ")
+    script = (_PREAMBLE + textwrap.indent(textwrap.dedent(body), "    ")
+              + "\nrecord_test_fixture_proof(root_fixtures)\n")
     _run_python(["-c", script], tmp_path)
 
 
@@ -63,7 +66,7 @@ def test_short_pytest_sequence_retains_roots_and_exits_cleanly(tmp_path):
     probe = tmp_path / "test_i18n.py"
     probe.write_text(textwrap.dedent('''
         from shiboken6 import isValid
-        pytest_plugins = ("llc_design.tests.conftest",)
+        pytest_plugins = ("llc_design.tests.root_fixture_plugin", "llc_design.tests.conftest")
         retained = []
 
         def test_create(desktop_qapp):
@@ -95,7 +98,7 @@ def test_repeated_fixture_cycles_destroy_only_new_workspace_owners(tmp_path):
         existing_scene = existing_graphics.scene()
         retained = []
         for cycle in range(3):
-            with isolate(request, monkeypatch):
+            with isolate():
                 controller = WorkspaceApplicationController(LLCDesignSpec())
                 windows = [controller.llc_window, controller.pfc_window,
                            controller.dab_window, controller.control_window,
@@ -130,7 +133,7 @@ def test_fixture_finishes_real_worker_and_rejects_late_result(tmp_path):
         from threading import Event
         from llc_design.gui.main_window import LLCMainWindow
 
-        with isolate(request, monkeypatch):
+        with isolate():
             window = LLCMainWindow()
             window.show()
             app.processEvents()
@@ -161,7 +164,7 @@ def test_fixture_finishes_real_worker_and_rejects_late_result(tmp_path):
 
 def test_fixture_handles_already_closed_and_deleted_graphics(tmp_path):
     _run_fixture_script('''
-        with isolate(request, monkeypatch):
+        with isolate():
             window = QMainWindow()
             graphics = GraphicsLayoutWidget()
             window.setCentralWidget(graphics)

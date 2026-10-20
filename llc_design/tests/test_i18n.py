@@ -258,6 +258,54 @@ def test_new_feature_buttons_retranslate_and_restore(workspace_controller):
         apply_language("zh-Hans", app)
 
 
+def test_control_fanout_shell_controls_retranslate_and_restore(workspace_controller):
+    """New TTPL/dq controls and tab labels keep their source through switches."""
+    from PySide6.QtWidgets import QTabWidget, QWidget
+
+    from llc_design.gui.i18n_ui import apply_language
+    from llc_design.i18n import catalogue
+
+    app, controller = workspace_controller
+    sources = (
+        "保存完整会话 JSON", "保留当前工况", "候选 / 工况 / Apply",
+        "包含 PWM / AMC 命令 ZOH（ADC hold 独立保留）", "双环精确系数 / C99",
+        "取消运行", "只计算局部环路", "同一控制器扫描工况", "导入精确 H(z) JSON",
+        "导出报告 / CSV / Python / MATLAB / C99", "恢复原生 PI", "打开完整会话 JSON",
+        "控制框图 / 模型边界", "清空保留工况", "游标 / 增益相位预算",
+        "状态极点 / 全部 signed margins", "独立频域 / 可选 Bode", "计算 Fc × PM 3×3 候选",
+    )
+    controls = {source: [] for source in sources}
+    tabs = {source: [] for source in sources}
+    window = controller.pfc_window
+    for widget in window.findChildren(QWidget):
+        source = widget.property("i18nSourceText")
+        if source in controls:
+            controls[source].append(widget)
+    for widget in window.findChildren(QTabWidget):
+        for index, source in enumerate(widget.property("i18nTabSources") or []):
+            if source in tabs:
+                tabs[source].append((widget, index))
+    assert all(controls[source] or tabs[source] for source in sources), [
+        source for source in sources if not controls[source] and not tabs[source]
+    ]
+    try:
+        for code in ("zh-Hans", "en", "ja", "ko", "zh-Hans", "en", "zh-Hans"):
+            apply_language(code, app)
+            app.processEvents()
+            for source in sources:
+                expected = source if code == "zh-Hans" else catalogue(code)[source]
+                if code != "zh-Hans":
+                    assert expected != source
+                for widget in controls[source]:
+                    assert widget.text() == expected, (code, source)
+                    assert widget.property("i18nSourceText") == source
+                for widget, index in tabs[source]:
+                    assert widget.tabText(index) == expected, (code, source)
+                    assert widget.property("i18nTabSources")[index] == source
+    finally:
+        apply_language("zh-Hans", app)
+
+
 def test_language_choice_is_persisted():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     qt_widgets = pytest.importorskip("PySide6.QtWidgets")

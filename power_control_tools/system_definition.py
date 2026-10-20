@@ -14,7 +14,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from enum import Enum
+import math
 from typing import Any
+
+from .adc_range import assess_adc_magnitude, boost_input_current_peak_bound
 
 
 class SystemTopology(str, Enum):
@@ -305,6 +308,12 @@ class ControlSystemDefinition:
             self.ttpl_stage.validate()
         if not self.sensors:
             raise ValueError("at least one explicit sensing path is required")
+        if self.topology == SystemTopology.LLC and len(self.sensors) != 1:
+            raise ValueError("LLC guided adapter requires exactly one output-voltage sensing path")
+        if self.topology == SystemTopology.TTPL_PFC:
+            expected = {"PFC inductor current", "AC input voltage", "PFC bus voltage"}
+            if len(self.sensors) != 3 or {sensor.name for sensor in self.sensors} != expected:
+                raise ValueError("TTPL guided adapter requires distinct current, AC input voltage and bus voltage sensing paths")
         for sensor in self.sensors:
             sensor.validate()
         self.adc.validate()
@@ -338,6 +347,23 @@ class ControlSystemDefinition:
             ReviewCheck("Topology", "Guided adapter available", True, 0, self.architecture.value),
             ReviewCheck("Power Stage", "Power stage valid", True, 1, type(stage).__name__),
         ]
+        if self.topology == SystemTopology.LLC:
+            assert self.llc_stage is not None
+            required_peaks = {self.sensors[0].name: (
+                self.llc_stage.vout_v, "nominal regulated output")}
+        else:
+            assert self.ttpl_stage is not None
+            stage = self.ttpl_stage
+            required_peaks = {
+                "PFC inductor current": (boost_input_current_peak_bound(
+                    output_power_w=stage.output_power_w, efficiency=stage.efficiency,
+                    minimum_vin_rms_v=stage.vin_min_rms_v, bus_voltage_v=stage.bus_voltage_v,
+                    inductance_h=stage.boost_inductance_h,
+                    switching_frequency_hz=stage.switching_frequency_hz),
+                    "minimum-line sine peak + conservative ideal CCM ripple"),
+                "AC input voltage": (math.sqrt(2)*stage.vin_max_rms_v, "maximum-line sine peak"),
+                "PFC bus voltage": (stage.bus_voltage_v, "nominal DC bus"),
+            }
         for sensor in self.sensors:
             checks.append(ReviewCheck(
                 "Sensing", f"{sensor.name} gain/polarity",
@@ -350,15 +376,26 @@ class ControlSystemDefinition:
                 bw_ok, 2,
                 f"BW={sensor.amplifier_bandwidth_hz/1e3:.5g} kHz",
             ))
-            full_scale = self.adc.vref_v / max(
-                sensor.front_end_gain_v_per_unit * sensor.amplifier_gain, 1e-30
+            peak, basis = required_peaks[sensor.name]
+            headroom = assess_adc_magnitude(
+                sensor.name, peak, sensor.front_end_gain_v_per_unit * sensor.amplifier_gain,
+                self.adc.vref_v, basis,
             )
             checks.append(ReviewCheck(
-                "ADC", f"{sensor.name} engineering full-scale",
-                full_scale > 0.0, 3,
-                f"{full_scale:.6g} eng / {self.adc.vref_v:g} Vref",
+                "ADC", f"{sensor.name} operating magnitude below full-scale",
+                headroom.within_range, 2, headroom.detail,
             ))
+        trigger_to_eoc_s = (self.adc.acquisition_time_s + self.adc.conversion_time_s
+                            + (self.adc.soc_count - 1) * self.adc.soc_spacing_s)
+        shortest_frame_s = 1.0 / max(sample_rates)
         checks.extend([
+            ReviewCheck(
+                "ADC", "SOC sequence completes within each control frame",
+                trigger_to_eoc_s <= shortest_frame_s, 3,
+                f"trigger-to-EOC={trigger_to_eoc_s*1e6:.7g} us, "
+                f"shortest frame={shortest_frame_s*1e6:.7g} us; "
+                "single-frame ADC model (command computation/PWM delays are separate)",
+            ),
             ReviewCheck(
                 "ADC", "Sampling rate valid",
                 min_fs > 0.0, 3,
@@ -386,14 +423,22 @@ class ControlSystemDefinition:
                 f"{self.controller.structure} / {self.controller.design_mode}",
             ),
         ])
+        # TTPL Guided intent is handed to the current-inner-loop designer.
+        # The voltage-loop sample rate must not silently redefine that target.
+        target_nyquist = nyquist
+        if self.topology == SystemTopology.TTPL_PFC:
+            target_nyquist = 0.5 * next(
+                (sensor.sample_rate_hz for sensor in self.sensors if sensor.name == "PFC inductor current"),
+                min_fs,
+            )
         if (
             self.controller.target_crossover_hz is not None
-            and self.controller.target_crossover_hz >= nyquist
+            and self.controller.target_crossover_hz >= target_nyquist
         ):
             checks.append(ReviewCheck(
                 "Controller", "Target Fc below Nyquist",
                 False, 6,
-                f"Fc={self.controller.target_crossover_hz:.5g} Hz >= Nyquist={nyquist:.5g} Hz",
+                f"Fc={self.controller.target_crossover_hz:.5g} Hz >= target-loop Nyquist={target_nyquist:.5g} Hz",
             ))
         return tuple(checks)
 

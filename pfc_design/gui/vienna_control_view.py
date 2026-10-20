@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import fields, is_dataclass, replace
 
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QSizePolicy,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -65,6 +67,28 @@ from .bode_panel import PFCBodeCurve, SelectableBodePanel
 from .inductor_design import PFCInductorDesignEditor, PFCInductorDesignResultView
 
 
+class _ResultTabs(QTabWidget):
+    """Keep a hidden candidate canvas from enlarging the active Bode page."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.currentChanged.connect(lambda _index: self.updateGeometry())
+
+    def _active_hint(self, minimum):
+        page = self.currentWidget()
+        if page is None:
+            return super().minimumSizeHint() if minimum else super().sizeHint()
+        hint = page.minimumSizeHint() if minimum else page.sizeHint()
+        hint = hint.expandedTo(page.minimumSize())
+        return QSize(max(0, hint.width()) + 4,
+                     max(0, hint.height()) + self.tabBar().sizeHint().height() + 4)
+
+    def minimumSizeHint(self):
+        return self._active_hint(True)
+
+    def sizeHint(self):
+        return self._active_hint(False)
+
+
 class ViennaControlLabView(QWidget):
     """Interactive Vienna design page.
 
@@ -74,15 +98,22 @@ class ViennaControlLabView(QWidget):
     """
 
     analysis_requested = Signal(object)
+    config_changed = Signal()
+    cancel_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.result = None
+        self._busy = False
+        self._closed = False
+        self._loading = False
+        self._source_config = None
+        self._display_config = None
         self._syncing_cursor = False
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(7)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(4)
 
         # Same compact interaction bar as the LLC/TTPL workspaces.  The old
         # Vienna page used a separate 18 px title row plus a second diagram
@@ -94,15 +125,21 @@ class ViennaControlLabView(QWidget):
         diagram_bar.addWidget(diagram_title)
         diagram_hint = QLabel("Vdc 外环 + ABC 电流内环 + Midpoint Balance · 点击模块联动参数/Bode")
         diagram_hint.setStyleSheet(f"color:{theme.active_theme().text_muted};")
+        diagram_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        diagram_hint.setMinimumWidth(0)
         diagram_bar.addWidget(diagram_hint)
         diagram_bar.addStretch(1)
 
         self.run_button = QPushButton("运行分析")
         self.run_button.clicked.connect(self._request)
+        self.cancel_button = QPushButton("取消计算")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self._cancel_analysis)
         self.codegen_button = QPushButton("生成 C99")
         self.codegen_button.setToolTip("生成 Vienna C99/float32 ControlStep + ISR 模板；不生成 BSP")
         self.codegen_button.clicked.connect(self._generate_c99)
         diagram_bar.addWidget(self.run_button)
+        diagram_bar.addWidget(self.cancel_button)
         diagram_bar.addWidget(self.codegen_button)
 
         self.fit_diagram_button = QPushButton("适应")
@@ -188,6 +225,41 @@ class ViennaControlLabView(QWidget):
         root.addWidget(self.splitter, 1)
         self.inspector_toggle.toggled.connect(self._toggle_inspector)
         self.input_tabs.currentChanged.connect(self._input_tab_changed)
+        for widget in self.input_tabs.findChildren(QDoubleSpinBox):
+            widget.valueChanged.connect(self._source_changed)
+        for widget in self.input_tabs.findChildren(QComboBox):
+            widget.currentIndexChanged.connect(self._source_changed)
+        for widget in self.input_tabs.findChildren(QCheckBox):
+            widget.toggled.connect(self._source_changed)
+        self.codegen_button.setEnabled(False)
+        self._update_rate_labels()
+        from pfc_design.vienna.workspace_ui import install_workspace
+        install_workspace(self)
+        self._workflow_layout_state = None
+        self._diagram_layout_state = None
+        self.tabs.currentChanged.connect(self._result_tab_changed)
+
+    def _result_tab_changed(self, _index: int) -> None:
+        """Reserve the work area for candidate controls and plots at laptop sizes."""
+        workflow = self.tabs.currentWidget() is self.solution_map_view.parentWidget()
+        bode_page = self.tabs.currentWidget() in (self.bi, self.bv, self.bb, self.bs)
+        # Stacked waveforms and candidate comparisons need the diagram's
+        # vertical space. Restore the user's choice on returning to a Bode page.
+        if not bode_page and self._diagram_layout_state is None:
+            self._diagram_layout_state = self.diagram_toggle.isChecked()
+            self.diagram_toggle.setChecked(False)
+        elif bode_page and self._diagram_layout_state is not None:
+            visible = self._diagram_layout_state
+            self._diagram_layout_state = None
+            self.diagram_toggle.setChecked(visible)
+        if workflow and self._workflow_layout_state is None:
+            self._workflow_layout_state = self.inspector_toggle.isChecked()
+            self.inspector_toggle.setChecked(False)
+        elif not workflow and self._workflow_layout_state is not None:
+            visible = self._workflow_layout_state
+            self._workflow_layout_state = None
+            self.inspector_toggle.setChecked(visible)
+        self.bode_status.setVisible(bode_page)
 
     def _toggle_diagram(self, visible: bool) -> None:
         self.diagram.setVisible(bool(visible))
@@ -341,12 +413,20 @@ class ViennaControlLabView(QWidget):
         gc, self.cc = self._controller_group("ABC 相电流内环 50 kHz", (.02, .25, -.45, .45))
         gv, self.vc = self._controller_group("DC 总线电压外环 10 kHz", (2e-5, 80, 0, .30))
         gb, self.bc = self._controller_group("DC Midpoint Balance 10 kHz（辅助）", (.001, 20, -.08, .08))
+        self._controller_groups = (gc, gv, gb)
         layout.addWidget(gc)
         layout.addWidget(gv)
         layout.addWidget(gb)
 
         group = QGroupBox("多速率 / Vienna Modulator")
         form = QFormLayout(group)
+        self.current_rate = self._spin(.1, 1000, 6, 50, " kHz")
+        self.voltage_rate = self._spin(.1, 1000, 6, 10, " kHz")
+        self.balance_rate = self._spin(.1, 1000, 6, 10, " kHz")
+        self.reference_rate = self._spin(.1, 1000, 6, 25, " kHz")
+        for label, widget in (("Current firmware rate", self.current_rate), ("Voltage firmware rate", self.voltage_rate),
+                              ("Balance firmware rate", self.balance_rate), ("Reference firmware rate", self.reference_rate)):
+            form.addRow(label, widget)
         self.balance_limit = self._spin(.001, .5, 4, .08)
         self.mid_gain = self._spin(.1, 500, 3, 30, " A/pu")
         self.current_delay = self._spin(0, 100, 3, 9, " µs")
@@ -487,6 +567,7 @@ class ViennaControlLabView(QWidget):
     def _build_results(self):
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(4, 4, 4, 4)
         status_row = QHBoxLayout()
         status_row.setSpacing(6)
         self.cursor = QLabel("Bode 光标：主环路默认仅显示系统开环；点击框图环节可聚焦对应传递函数。")
@@ -497,15 +578,29 @@ class ViennaControlLabView(QWidget):
         self.budget.setWordWrap(True)
         self.budget.setStyleSheet(f"QLabel {{padding:5px 7px;border:1px solid {_t.border_card};border-radius:5px;background:{_t.card_bg_alt};color:{_t.text};}}")
         status_row.addWidget(self.cursor, 1); status_row.addWidget(self.budget, 2)
-        layout.addLayout(status_row)
+        # Long cursor/phase-budget evidence must stay reachable without
+        # stealing an unbounded number of rows from the actual Bode canvas.
+        status_page = QWidget()
+        status_page.setLayout(status_row)
+        status_row.setContentsMargins(0, 0, 0, 0)
+        self.bode_status = QScrollArea()
+        self.bode_status.setWidgetResizable(True)
+        self.bode_status.setFixedHeight(56)
+        self.bode_status.setWidget(status_page)
+        layout.addWidget(self.bode_status)
 
-        self.tabs = QTabWidget()
+        self.tabs = _ResultTabs()
         self.tabs.setDocumentMode(True)
         self.bi = SelectableBodePanel("Vienna Phase-A Current Loop")
         self.bv = SelectableBodePanel("Vienna DC Voltage Loop")
         self.bb = SelectableBodePanel("Vienna Midpoint Balance Loop")
         self.bs = SelectableBodePanel("Vienna Sensor Chains")
         for bode in (self.bi, self.bv, self.bb, self.bs):
+            # Reserve a usable two-axis chart at 720p; the diagram yields its
+            # optional height before labels are squeezed out of the canvas.
+            bode.canvas.setMinimumHeight(220)
+            bode.responsive_layout = True
+            bode.figure.set_layout_engine("tight")
             bode.cursor_changed.connect(self._cursor_changed)
         self.tabs.addTab(self.bi, "Current Bode")
         self.tabs.addTab(self.bv, "Vdc Bode")
@@ -525,6 +620,29 @@ class ViennaControlLabView(QWidget):
         self.tabs.addTab(self.summary, "Summary")
         from .pll_comparison_view import PLLComparisonView
         self.pll_comparison = PLLComparisonView()
+        # Only the parameter sidebar scrolls. A Matplotlib canvas nested inside
+        # an outer QScrollArea can crash during native Qt paint on tab switches.
+        pll_layout = self.pll_comparison.layout()
+        items = []
+        while pll_layout.count():
+            items.append(pll_layout.takeAt(0))
+        pll_parameters = QWidget()
+        pll_parameters_layout = QVBoxLayout(pll_parameters)
+        for item in items:
+            if item.widget() is self.pll_comparison.tabs:
+                continue
+            if item.widget() is not None:
+                pll_parameters_layout.addWidget(item.widget())
+            elif item.layout() is not None:
+                pll_parameters_layout.addLayout(item.layout())
+        pll_scroll = QScrollArea()
+        pll_scroll.setWidgetResizable(True)
+        pll_scroll.setWidget(pll_parameters)
+        pll_splitter = QSplitter()
+        pll_splitter.addWidget(pll_scroll)
+        pll_splitter.addWidget(self.pll_comparison.tabs)
+        pll_splitter.setSizes([350, 650])
+        pll_layout.addWidget(pll_splitter)
         self.tabs.addTab(self.pll_comparison, "PLL 对比 / C99")
         from .three_phase_performance_view import ThreePhasePerformanceView
         self.performance = ThreePhasePerformanceView()
@@ -581,7 +699,7 @@ class ViennaControlLabView(QWidget):
     def _value_tuple(fields):
         return tuple(float(w.value()) for w in fields)
 
-    def _config(self):
+    def _ui_config(self):
         stage = ViennaPowerStageConfig(
             line_line_rms_v=self.vll.value(), line_frequency_hz=self.line_hz.value(),
             bus_voltage_v=self.vdc.value(), output_power_w=self.pout.value(),
@@ -590,10 +708,14 @@ class ViennaControlLabView(QWidget):
             phase_series_resistance_ohm=self.rphase.value() * 1e-3,
             upper_bus_capacitance_f=self.cplus.value() * 1e-6,
             lower_bus_capacitance_f=self.cminus.value() * 1e-6,
-            load_model=self.load.currentData(), modulation_limit=self.modlim.value(),
+            load_model=LoadModel(self.load.currentData()), modulation_limit=self.modlim.value(),
             minimum_effective_pulse_s=self.minpulse.value() * 1e-6,
         )
         fw = ViennaFirmwareConfig(
+            current_loop_rate_hz=self.current_rate.value()*1e3,
+            voltage_loop_rate_hz=self.voltage_rate.value()*1e3,
+            balance_loop_rate_hz=self.balance_rate.value()*1e3,
+            reference_rate_hz=self.reference_rate.value()*1e3,
             current_computation_delay_s=self.current_delay.value() * 1e-6,
             pwm_update_delay_s=0.0,
             balance_injection_limit=self.balance_limit.value(),
@@ -605,9 +727,9 @@ class ViennaControlLabView(QWidget):
         return ViennaControlLabConfig(
             power_stage=stage,
             firmware=fw,
-            current_controller=self._ctrl(self.cc, 50e3),
-            voltage_controller=self._ctrl(self.vc, 10e3),
-            balance_controller=self._ctrl(self.bc, 10e3),
+            current_controller=self._ctrl(self.cc, fw.current_loop_rate_hz),
+            voltage_controller=self._ctrl(self.vc, fw.voltage_loop_rate_hz),
+            balance_controller=self._ctrl(self.bc, fw.balance_loop_rate_hz),
             phase_current_sense=self._sense("Vienna current", self.si),
             phase_voltage_sense=self._sense("Vienna phase voltage", self.sv),
             split_bus_sense=self._sense("Vienna split bus", self.sb),
@@ -621,15 +743,148 @@ class ViennaControlLabView(QWidget):
             split_bus_offset_v=(0.0, 0.0) if locked else self._value_tuple(self.bus_off),
         )
 
+    @staticmethod
+    def _merge_display_edits(source, displayed, edited):
+        # Preserve exact loaded numbers and all unexposed fields. Only actual
+        # widget changes replace authoritative values, including nested models.
+        if displayed == edited:
+            return source
+        if is_dataclass(source) and type(source) is type(displayed) is type(edited):
+            return replace(source, **{item.name: ViennaControlLabView._merge_display_edits(
+                getattr(source, item.name), getattr(displayed, item.name), getattr(edited, item.name))
+                for item in fields(source)})
+        return edited
+
+    def _config(self):
+        edited = self._ui_config()
+        if self._source_config is None:
+            return edited
+        merged = self._merge_display_edits(self._source_config, self._display_config, edited)
+        if (edited.firmware.current_computation_delay_s != self._display_config.firmware.current_computation_delay_s):
+            # One visible total owns both hidden delay terms. Editing that
+            # total must not retain the old PWM term a second time.
+            merged = replace(merged, firmware=replace(merged.firmware,
+                current_computation_delay_s=edited.firmware.current_computation_delay_s,
+                pwm_update_delay_s=0.0))
+        return merged
+
+    def _config_assignments(self, config):
+        from pfc_design.vienna.workspace import validate_config
+        validate_config(config)
+        stage, fw = config.power_stage, config.firmware
+        pairs = [(self.vll,stage.line_line_rms_v),(self.line_hz,stage.line_frequency_hz),
+                 (self.vdc,stage.bus_voltage_v),(self.pout,stage.output_power_w),
+                 (self.fsw,stage.switching_frequency_hz/1e3),(self.lphase,stage.boost_inductance_h*1e6),
+                 (self.rphase,stage.phase_series_resistance_ohm*1e3),
+                 (self.cplus,stage.upper_bus_capacitance_f*1e6),(self.cminus,stage.lower_bus_capacitance_f*1e6),
+                 (self.modlim,stage.modulation_limit),(self.minpulse,stage.minimum_effective_pulse_s*1e6),
+                 (self.sw_angle,config.switching_line_angle_deg),(self.mid_init,config.initial_midpoint_imbalance_v),
+                 (self.current_rate,fw.current_loop_rate_hz/1e3),(self.voltage_rate,fw.voltage_loop_rate_hz/1e3),
+                 (self.balance_rate,fw.balance_loop_rate_hz/1e3),(self.reference_rate,fw.reference_rate_hz/1e3),
+                 (self.current_delay,(fw.current_computation_delay_s+fw.pwm_update_delay_s)*1e6),
+                 (self.balance_limit,fw.balance_injection_limit),(self.mid_gain,fw.midpoint_current_gain_a_per_pu)]
+        for controller, widgets in ((config.current_controller,self.cc),(config.voltage_controller,self.vc),(config.balance_controller,self.bc)):
+            if isinstance(controller,(PIControllerConfig,PIFControllerConfig)):
+                pairs.extend(((widgets['kp'],controller.kp),(widgets['ti'],controller.ti_s*1e3)))
+                if isinstance(controller,PIFControllerConfig):pairs.append((widgets['fc'],controller.lpf_cutoff_hz))
+            else:
+                pairs.extend((widgets[key],getattr(controller,key if key not in ('a1','a2') else key)) for key in ('b0','b1','b2','a1','a2'))
+        for sense, widgets in ((config.phase_current_sense,self.si),(config.phase_voltage_sense,self.sv),(config.split_bus_sense,self.sb)):
+            pairs.extend(((widgets['gain'],sense.front_end_gain_v_per_unit),(widgets['bw'],sense.amplifier_bandwidth_hz/1e3),
+                          (widgets['r'],sense.output_resistance_ohm),(widgets['c'],sense.adc_capacitance_f*1e9),
+                          (widgets['sample'],sense.timing.sample_rate_hz/1e3),(widgets['alpha'],sense.timing.digital_filter.alpha)))
+        for widgets,values,scale in ((self.i_gain,config.phase_current_gain_scale,100),(self.i_off,config.phase_current_offset_a,1),
+                (self.v_gain,config.phase_voltage_gain_scale,100),(self.v_off,config.phase_voltage_offset_v,1),
+                (self.bus_gain,config.split_bus_gain_scale,100),(self.bus_off,config.split_bus_offset_v,1)):
+            pairs.extend((widget,value*scale) for widget,value in zip(widgets,values))
+        for widget,value in pairs:
+            if not widget.minimum() <= value <= widget.maximum():
+                raise ValueError(f"Loaded value {value:.17g} lies outside the Vienna editor range [{widget.minimum()}, {widget.maximum()}]")
+        return pairs
+
+    def set_config(self, config, *, assignments=None):
+        pairs = self._config_assignments(config) if assignments is None else assignments
+        self._loading = True
+        try:
+            for widget,value in pairs:widget.setValue(value)
+            self.load.setCurrentIndex(self.load.findData(config.power_stage.load_model))
+            for controller,widgets in ((config.current_controller,self.cc),(config.voltage_controller,self.vc),(config.balance_controller,self.bc)):
+                kind = ControllerKind.PIF if isinstance(controller,PIFControllerConfig) else ControllerKind.PI if isinstance(controller,PIControllerConfig) else ControllerKind.TWO_P_TWO_Z
+                widgets['kind'].setCurrentIndex(widgets['kind'].findData(kind))
+                widgets['min']=controller.output_min;widgets['max']=controller.output_max
+            self.third_harmonic.setChecked(config.firmware.third_harmonic_injection_enabled)
+            self.inductor_ff.setChecked(config.firmware.inductor_voltage_drop_feedforward_enabled)
+            locked=(config.phase_current_gain_scale==(1.,1.,1.) and config.phase_voltage_gain_scale==(1.,1.,1.)
+                    and config.split_bus_gain_scale==(1.,1.) and not any((*config.phase_current_offset_a,*config.phase_voltage_offset_v,*config.split_bus_offset_v)))
+            self.lock_abc.setChecked(locked)
+            self._source_config=config
+            self._display_config=self._ui_config()
+        finally:
+            self._loading=False
+        self._source_changed()
+
+    def _cancel_analysis(self):
+        self.invalidate_result()
+        self.cancel_button.setEnabled(False)
+        self.cancel_requested.emit()
+
+    def closeEvent(self,event):
+        self._closed=True
+        self._cancel_analysis()
+        super().closeEvent(event)
+
+    def _update_rate_labels(self):
+        rates = (self.current_rate.value(), self.voltage_rate.value(), self.balance_rate.value())
+        for group, title, rate in zip(self._controller_groups,
+                ("ABC 相电流内环", "DC 总线电压外环", "Midpoint 辅助近似"), rates):
+            group.setTitle(f"{title} · {rate:g} kHz")
+        subtitles = {"current_controller": f"CiA/B/C · {rates[0]:g} kHz",
+                     "voltage_controller": f"Cv(z) · {rates[1]:g} kHz",
+                     "balance": f"Cbal(z) · {rates[2]:g} kHz"}
+        self._diagram_blocks = [replace(block, subtitle=subtitles.get(block.key, block.subtitle))
+                                for block in self._diagram_blocks]
+        self.diagram.set_diagram(self._diagram_blocks, self._diagram_connections)
+
+    def _source_changed(self, *_):
+        if self._loading:
+            return
+        self.invalidate_result()
+        self._update_rate_labels()
+        self.config_changed.emit()
+
+    def invalidate_result(self):
+        self.result = None
+        if hasattr(self,'solution_map_view'):
+            self.solution_map_view.invalidate("Vienna inputs changed; run current model before candidate synthesis or Apply.")
+            self._candidate_evidence=None
+        self.codegen_button.setEnabled(False)
+        self.cursor.setText("STALE / 参数已修改：请重新分析。旧结果不可导出或应用。")
+        self.budget.setText("Phase budget unavailable until current inputs are analyzed.")
+        self.summary.setPlainText("STALE: current inputs have no accepted Vienna analysis.")
+        for panel in (self.bi, self.bv, self.bb, self.bs):
+            panel.setEnabled(False)
+            panel.empty_hint.setText("STALE: historical plot, current result unavailable.")
+            panel.empty_hint.show()
+        self.performance.setEnabled(False)
+
+    def has_current_result(self) -> bool:
+        return not self._closed and self.result is not None and self.result[0].config == self._config()
+
     def _generate_c99(self):
-        if self.result is None:
+        if self._busy or not self.has_current_result():
             QMessageBox.information(self, t("C99 代码生成"), t("请先运行 Vienna 完整分析。"))
             return
+        snapshot = self.result
         directory = QFileDialog.getExistingDirectory(self, "选择 Vienna C99 输出目录")
         if not directory:
             return
         try:
-            analysis = self.result[0]
+            if self._busy or self._closed or self.result is not snapshot or not self.has_current_result():
+                raise ValueError("Inputs/results changed during directory selection; analyze current inputs again.")
+            analysis = snapshot[0]
+            from pfc_design.vienna.adc_range import operating_adc_range_warnings
+            if operating_adc_range_warnings(analysis.config):
+                raise ValueError("ADC_OVERRANGE: configured split-bus signal exceeds Vref; linear analysis omits clipping.")
             result = generate_vienna_control_code(analysis, Path(directory) / "vienna_control_generated")
         except Exception as exc:
             show_operation_issue(self, t("C99 代码生成失败"), str(exc), critical=False)
@@ -640,6 +895,8 @@ class ViennaControlLabView(QWidget):
         )
 
     def _request(self):
+        if self._busy or self._closed:
+            return
         try:
             config = self._config()
             config.validate()
@@ -648,15 +905,30 @@ class ViennaControlLabView(QWidget):
             show_operation_issue(self, t("Vienna 参数错误"), str(exc), critical=False)
 
     def set_busy(self, busy):
-        self.run_button.setEnabled(not busy)
+        self._busy = bool(busy)
+        self.run_button.setEnabled(not busy and not self._closed)
+        self.cancel_button.setEnabled(bool(busy) and not self._closed)
+        if hasattr(self,'solution_map_view'):
+            if busy:self.solution_map_view.cancel_scan()
+            self.solution_map_view.setEnabled(not busy and not self._closed)
+            for button in self._workspace_buttons:button.setEnabled(not busy and not self._closed)
         if hasattr(self, "input_tabs"):
             self.input_tabs.setEnabled(not busy)
         if hasattr(self, "codegen_button"):
-            self.codegen_button.setEnabled(not busy)
+            self.codegen_button.setEnabled(not busy and self.has_current_result())
 
     def set_result(self, result):
-        self.result = result
         analysis, line, switching = result
+        if self._closed or analysis.config != self._config():
+            self.invalidate_result()
+            return False
+        self.result = result
+        self.cursor.setText("Bode 光标：点击或拖动曲线查看幅相。")
+        self.budget.setText("Phase budget：选择环路并移动光标。")
+        for panel in (self.bi, self.bv, self.bb, self.bs):
+            panel.setEnabled(True)
+        self.performance.setEnabled(True)
+        self.codegen_button.setEnabled(not self._busy)
         self.performance.set_vienna(analysis.config, line)
         f = analysis.frequencies_hz
 
@@ -673,8 +945,9 @@ class ViennaControlLabView(QWidget):
         ], margins=analysis.current_loop.margins, open_loop_key="open_current")
 
         cv = analysis.voltage_loop.responses
-        self.bv.set_curves(f, [
+        self.bv.set_curves(analysis.voltage_loop.frequencies_hz, [
             PFCBodeCurve("controller_cv", "Cv", cv["controller_cv"]),
+            PFCBodeCurve("voltage_command_hold", "Voltage command ZOH/delay", cv["voltage_command_hold"]),
             PFCBodeCurve("current_closed_for_outer", "Closed current", cv["current_closed_for_outer"]),
             PFCBodeCurve("bus_plant_gvg", "Bus plant", cv["bus_plant_gvg"]),
             PFCBodeCurve("sense_hv", "Vdc sense", cv["sense_hv"]),
@@ -685,8 +958,9 @@ class ViennaControlLabView(QWidget):
         ], margins=analysis.voltage_loop.margins, open_loop_key="open_voltage")
 
         cb = analysis.balance_loop.responses
-        self.bb.set_curves(f, [
+        self.bb.set_curves(analysis.balance_loop.frequencies_hz, [
             PFCBodeCurve("controller_cb", "Cbal", cb["controller_cb"]),
+            PFCBodeCurve("balance_command_hold", "Balance command ZOH", cb["balance_command_hold"]),
             PFCBodeCurve("balance_plant", "Midpoint plant", cb["balance_plant"]),
             PFCBodeCurve("sense_balance", "Split bus sense", cb["sense_balance"]),
             PFCBodeCurve("forward_balance", "Balance forward", cb["forward_balance"]),
@@ -695,7 +969,7 @@ class ViennaControlLabView(QWidget):
             PFCBodeCurve("sensitivity_balance", "Sbal", cb["sensitivity_balance"]),
         ], margins=analysis.balance_loop.margins, open_loop_key="open_balance")
 
-        self.bs.set_curves(f, [
+        self.bs.set_curves(analysis.sensing_frequencies_hz, [
             PFCBodeCurve("current_total", "Iabc total sense", analysis.current_sense_response.total),
             PFCBodeCurve("current_analog", "Iabc analog", analysis.current_sense_response.calibrated_analog),
             PFCBodeCurve("phase_voltage_total", "Vabc total sense", analysis.phase_voltage_sense_response.total),
@@ -711,6 +985,10 @@ class ViennaControlLabView(QWidget):
         self._plot_sector(line)
         self._plot_harm(line)
         self._summary(analysis, line, switching)
+        if hasattr(self,'solution_map_view'):
+            from pfc_design.vienna.workspace import loop_sources
+            self.solution_map_view.set_sources(loop_sources(analysis))
+        return True
 
     def _last(self, line):
         period = 1.0 / self.line_hz.value()
@@ -724,6 +1002,10 @@ class ViennaControlLabView(QWidget):
         for ax in axes:
             ax.grid(True, alpha=.3)
             ax.legend(fontsize=8, ncol=3)
+        # These panels share one time axis. Repeating its tick labels on every
+        # row wastes the vertical space needed for waveforms at laptop sizes.
+        for ax in axes[:-1]:
+            ax.tick_params(axis="x", labelbottom=False)
         axes[-1].set_xlabel(xlabel)
 
     def _plot_ac(self, line):
@@ -746,7 +1028,7 @@ class ViennaControlLabView(QWidget):
         axes[3].set_ylabel("W")
         self._style(axes, "Time in final AC period (ms)")
         f.suptitle("Vienna 完整一个三相 AC 周期：测量 / 参考 / 调制 / 功率")
-        f.tight_layout(); self.cac.draw_idle()
+        f.set_layout_engine("tight"); self.cac.draw_idle()
 
     def _plot_bus(self, line):
         t, s = self._last(line)
@@ -766,7 +1048,7 @@ class ViennaControlLabView(QWidget):
         axes[4].plot(t, s["bus_series_current"], label="Bus series current")
         self._style(axes, "Time in final AC period (ms)")
         f.suptitle("Vienna Split DC Bus / Voltage Loop / Balance / Feedforward")
-        f.tight_layout(); self.cbus.draw_idle()
+        f.set_layout_engine("tight"); self.cbus.draw_idle()
 
     def _plot_switch(self, sw):
         t = sw.time_s * 1e6
@@ -793,7 +1075,7 @@ class ViennaControlLabView(QWidget):
         self._style(axes, "Time (µs)")
         src = "" if sw.source_time_s is None else f", source t={sw.source_time_s*1e3:.4f} ms"
         f.suptitle(f"Vienna switching derived from AC workpoint @ {sw.line_angle_deg:.2f}°{src}")
-        f.tight_layout(); self.csw.draw_idle()
+        f.set_layout_engine("tight"); self.csw.draw_idle()
 
     def _plot_sector(self, line):
         t, s = self._last(line)
@@ -811,7 +1093,7 @@ class ViennaControlLabView(QWidget):
         axes[2].plot(t, np.sign(s["vc"]), label="sign Vc")
         self._style(axes, "Time in final AC period (ms)")
         f.suptitle("Vienna Sector / phase polarity / zero-state duty / midpoint current")
-        f.tight_layout(); self.csec.draw_idle()
+        f.set_layout_engine("tight"); self.csec.draw_idle()
 
     def _plot_harm(self, line):
         f = self.fharm; f.clear()
@@ -829,7 +1111,7 @@ class ViennaControlLabView(QWidget):
         ax.set_title(
             f"PF={m.overall_power_factor:.6f}; THD A/B/C={tuple(round(x,4) for x in m.phase_current_thd_percent)}%; "
             f"unbalance={m.current_unbalance_percent:.4f}%")
-        f.tight_layout(); self.charm.draw_idle()
+        f.set_layout_engine("tight"); self.charm.draw_idle()
 
     def _summary(self, analysis, line, switching):
         m = line.metrics
@@ -839,7 +1121,9 @@ class ViennaControlLabView(QWidget):
             "=" * 88,
             f"Vll={cfg.power_stage.line_line_rms_v:.2f} V, Vdc={cfg.power_stage.bus_voltage_v:.2f} V, P={cfg.power_stage.output_power_w:.1f} W",
             "Main control: DC voltage outer loop + three ABC stationary-frame current inner loops",
-            "Auxiliary control: split-bus midpoint balance",
+            "Auxiliary control: split-bus midpoint gain approximation; no dq claim",
+            "Finite-band evidence only; closed_loop_stability=NOT_PROVEN",
+            *[f"{key}: {getattr(analysis, key+'_loop').margin_screen}; band={getattr(analysis, key+'_loop').frequencies_hz[0]:.7g}..{getattr(analysis, key+'_loop').frequencies_hz[-1]:.7g} Hz; all PM={getattr(analysis, key+'_loop').margins.phase_margins_deg}; all signed GM={getattr(analysis, key+'_loop').margins.gain_margins_db}; phase crossings={getattr(analysis, key+'_loop').margins.phase_crossovers_hz}" for key in ("current", "voltage", "balance")],
             f"Third-harmonic/common-mode injection: {cfg.firmware.third_harmonic_injection_enabled}",
             f"Inductor R/L feedforward: {cfg.firmware.inductor_voltage_drop_feedforward_enabled}",
             "",
@@ -901,18 +1185,21 @@ class ViennaControlLabView(QWidget):
                 return
             analysis = self.result[0]
             if sender is self.bi:
-                responses = analysis.current_loop.responses
+                loop = analysis.current_loop
+                responses = loop.responses
                 labels = {"controller_ci":"Ci", "pwm_zoh":"PWM", "plant_gid":"Plant", "sense_hi":"Sense", "open_current":"Li"}
                 keys = list(labels)
             elif sender is self.bv:
-                responses = analysis.voltage_loop.responses
-                labels = {"controller_cv":"Cv", "current_closed_for_outer":"Ti", "bus_plant_gvg":"Bus", "sense_hv":"Sense", "open_voltage":"Lv"}
+                loop = analysis.voltage_loop
+                responses = loop.responses
+                labels = {"controller_cv":"Cv", "voltage_command_hold":"Command ZOH/delay", "current_closed_for_outer":"Ti", "bus_plant_gvg":"Bus", "sense_hv":"Sense", "open_voltage":"Lv"}
                 keys = list(labels)
             else:
-                responses = analysis.balance_loop.responses
-                labels = {"controller_cb":"Cbal", "balance_plant":"Plant", "sense_balance":"Sense", "open_balance":"Lbal"}
+                loop = analysis.balance_loop
+                responses = loop.responses
+                labels = {"controller_cb":"Cbal", "balance_command_hold":"Command ZOH", "balance_plant":"Plant", "sense_balance":"Sense", "open_balance":"Lbal"}
                 keys = list(labels)
-            budget = phase_budget(analysis.frequencies_hz, responses, labels, measurement.frequency_hz, keys)
+            budget = phase_budget(loop.frequencies_hz, responses, labels, measurement.frequency_hz, keys)
             self.budget.setText(" | ".join(f"{x.label}: {x.gain_db:+.2f}dB/{x.phase_deg:+.2f}°" for x in budget))
         finally:
             self._syncing_cursor = False

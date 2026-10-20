@@ -597,8 +597,20 @@ class ADCSamplingConfig:
             raise ValueError("SOC count must be positive")
         if not (0.0 <= self.recursive_previous_weight < 1.0):
             raise ValueError("recursive previous weight must be in [0,1)")
-        if self.soc_sample_offsets_s is not None and len(self.soc_sample_offsets_s) != self.soc_count:
-            raise ValueError("explicit SOC sample offsets must match SOC count")
+        if self.soc_sample_offsets_s is not None:
+            if len(self.soc_sample_offsets_s) != self.soc_count:
+                raise ValueError("explicit SOC sample offsets must match SOC count")
+            if any(not math.isfinite(value) or value < 0.0 for value in self.soc_sample_offsets_s):
+                raise ValueError("explicit SOC sample offsets must be finite and non-negative")
+        # This model indexes all SOCs within one control frame. Pipelined ADC
+        # schedules spanning frames need a different model; command delays do not.
+        conversion = self.conversion_cycles / self.adc_clock_hz
+        eoc = (max(self.soc_sample_offsets_s) + 0.5 * self.acquisition_time_s + conversion
+               if self.soc_sample_offsets_s is not None else
+               self.soc_count * (self.acquisition_time_s + conversion))
+        if (not math.isfinite(eoc) or not math.isfinite(self.control_sample_time_s)
+                or eoc > self.control_sample_time_s):
+            raise ValueError("ADC SOC sequence EOC must fit within one control frame (single-frame model)")
 
     @property
     def conversion_time_s(self) -> float:

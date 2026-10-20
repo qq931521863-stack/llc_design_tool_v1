@@ -148,7 +148,11 @@ def _mismatch3(values: NDArray[np.float64], gain: tuple[float, float, float], of
     return values * np.asarray(gain, dtype=float) + np.asarray(offset, dtype=float)
 
 
-def simulate_vienna_line_cycle(config: ViennaControlLabConfig) -> ViennaLineCycleWaveforms:
+class ViennaAnalysisCancelled(RuntimeError):
+    """Cooperative cancellation; no partial result is published."""
+
+
+def simulate_vienna_line_cycle(config: ViennaControlLabConfig, *, cancelled=None) -> ViennaLineCycleWaveforms:
     """Simulate the final settled three-phase line cycle of a Vienna PFC.
 
     The plant is an averaged three-wire model.  Converter phase commands are
@@ -157,6 +161,8 @@ def simulate_vienna_line_cycle(config: ViennaControlLabConfig) -> ViennaLineCycl
     directly force line current.  Midpoint current is produced by the averaged
     zero-state occupancy ``sum(D0_x * i_x)`` and drives the split capacitors.
     """
+    if cancelled is not None and cancelled():
+        raise ViennaAnalysisCancelled("Vienna analysis cancelled")
     config.validate()
     stage, fw = config.power_stage, config.firmware
     rate = max(config.waveform_integration_rate_hz, 4.0 * fw.current_loop_rate_hz)
@@ -219,6 +225,8 @@ def simulate_vienna_line_cycle(config: ViennaControlLabConfig) -> ViennaLineCycl
         rload = math.inf
 
     for idx, t in enumerate(time):
+        if idx % 256 == 0 and cancelled is not None and cancelled():
+            raise ViennaAnalysisCancelled("Vienna analysis cancelled")
         wt = 2.0 * math.pi * stage.line_frequency_hz * t
         volts = np.asarray(_phase_values(stage.phase_peak_v, wt), dtype=float)
 
@@ -518,7 +526,7 @@ def build_vienna_switching_waveforms(
 # Imported late to avoid exposing control config implementation details above.
 from pfc_design.control.config import LoadModel  # noqa: E402
 
-__all__ = [
+__all__ = ["ViennaAnalysisCancelled",
     "ViennaLineCycleWaveforms",
     "ViennaSwitchingWaveforms",
     "ViennaWaveformMetrics",

@@ -301,6 +301,6 @@ def ttpl_export_evidence(analysis) -> dict:
             continue
         check_evidence(record, controller=getattr(analysis, key + "_loop").controller,
                        config=getattr(analysis.config, key + "_controller"),
-                       model_signature=ttpl_model_signature(analysis.config, key, analysis.frequencies_hz))
+                       model_signature=ttpl_model_signature(analysis.config, key, getattr(analysis, key + "_loop").frequencies_hz))
         evidence[key] = json.loads(json.dumps(record, allow_nan=False))
     return evidence

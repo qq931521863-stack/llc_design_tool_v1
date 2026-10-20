@@ -16,6 +16,7 @@ from .config import (
     PFCControlLabConfig,
     PFCFirmwareAlgorithmConfig,
     PFCPowerStageConfig,
+    illustrative_ttpl_config,
     default_current_controller,
     default_current_sense,
     default_vac_sense,
@@ -47,6 +48,7 @@ from .waveforms import (
 from .autotune import CurrentLoopEnvelopePoint, CurrentLoopTuneResult, tune_pfc_current_loop
 
 __all__ = [
+    "illustrative_ttpl_config",
     "ADCTimingConfig",
     "COEFFICIENT_CONVENTION",
     "ControllerConfig",

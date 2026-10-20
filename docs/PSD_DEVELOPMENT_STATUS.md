@@ -1,5 +1,33 @@
 # Power Stage Designer development status
 
+## 2026-10-20 control-workspace fan-out follow-up
+
+DAB, Vienna and two-level dq workspaces now have topology-specific candidate,
+source/session and report/export consumers. This is ongoing staged development.
+The prior Guided a74 whole-suite run was interrupted at 66% and is INCOMPLETE;
+no earlier full result is reused as this new source qualification. See the
+[control fan-out matrix](CONTROL_FANOUT_MATRIX.md) and [independent stage
+validation](CONTROL_FANOUT_VALIDATION.md) for independently passed consumers, pending full/package
+qualification and genuinely unimplemented physical/timing domains. Native
+package results for earlier remote snapshots remain separate. Publication is
+still paused.
+
+## Guided System Design corrective checkpoint (2026-10-20)
+
+The user's loop-analysis question prompted actual launcher-to-expert audits.
+Repairs for SOC timing, ZOH ownership, ADC validity, polynomial preservation,
+frequency bands and truthful diagnostic labels are integrated locally after
+remote base `5247ac4`. Both supported Guided adapters have independent real-GUI
+and mathematical evidence; remaining unsupported adapters stay disabled.
+
+Next: finish independent phase-budget recheck, freeze the complete source,
+run monitored whole-suite regression, rerun the affected long PFC consumer, and
+qualify the actual installed wheel and Linux frozen application. Retain the
+historical PSFB long result only while its conservative dependency hashes match.
+The original Windows/macOS CI continues separately on its own commit. Formal
+publication remains paused; no partial evidence is called current-source full
+qualification. See [Guided loop validation](GUIDED_LOOP_VALIDATION.md).
+
 ## Native controller-export follow-up (2026-10-19)
 
 Actual native run `39338660357` passes all 100 complete controls at each of

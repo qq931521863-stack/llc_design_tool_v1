@@ -133,24 +133,21 @@ def tune_pfc_current_loop(
     config.validate()
     stage, fw = config.power_stage, config.firmware
     ts = 1.0 / fw.current_loop_rate_hz
-    nyquist = 0.5 * fw.current_loop_rate_hz
+    nyquist = config.loop_nyquist_hz("current")
+    frequencies = config.loop_frequencies_hz("current")
     safe_high = min(
         0.08 * fw.current_loop_rate_hz,
         0.08 * stage.switching_frequency_hz,
         0.16 * nyquist,
-        config.frequency_stop_hz * 0.80,
+        frequencies[-1] * 0.80,
     )
     if maximum_crossover_hz is not None:
+        if not math.isfinite(maximum_crossover_hz) or maximum_crossover_hz <= 0.0:
+            raise ValueError("maximum crossover must be finite and positive")
         safe_high = min(safe_high, float(maximum_crossover_hz))
-    safe_low = max(200.0, 0.008 * fw.current_loop_rate_hz)
+    safe_low = max(frequencies[0], min(max(200.0, 0.008 * fw.current_loop_rate_hz), safe_high * 0.5))
     if safe_high <= safe_low:
-        safe_high = max(safe_low * 1.25, min(1000.0, config.frequency_stop_hz * 0.25))
-
-    frequencies = np.geomspace(
-        max(0.5, min(config.frequency_start_hz, 1.0)),
-        min(config.frequency_stop_hz, 0.45 * fw.current_loop_rate_hz),
-        max(config.frequency_points, 2200),
-    )
+        raise ValueError("requested Bode range and maximum crossover leave no valid tuning interval")
     current_sense = sense_frequency_response(config.current_sense, frequencies)
 
     target_candidates = np.geomspace(safe_high, safe_low, 20)

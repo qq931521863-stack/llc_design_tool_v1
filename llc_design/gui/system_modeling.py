@@ -55,6 +55,7 @@ from power_control_tools.system_definition import (
     ModulatorDefinition,
     PlantSource,
     SensorDefinition,
+    ReviewCheck,
     SystemTopology,
     TTPLStageDefinition,
     TimingDefinition,
@@ -171,6 +172,7 @@ class SystemModelingDesignDialog(QDialog):
     def __init__(self, parent=None, initial_definition: ControlSystemDefinition | None = None) -> None:
         super().__init__(parent)
         self.definition: ControlSystemDefinition | None = None
+        self.ttpl_base_config: PFCControlLabConfig | None = None
         self._selected_topology = SystemTopology.LLC
         self.setWindowTitle("系统建模与设计 / Guided System Design — V9.3")
         self.resize(1280, 860)
@@ -472,7 +474,10 @@ class SystemModelingDesignDialog(QDialog):
 
         ttpl = QWidget()
         ttpl_layout = QVBoxLayout(ttpl)
-        ttpl_layout.addWidget(QLabel("Select a sense path, then edit its front-end parameters."))
+        ttpl_layout.addWidget(QLabel(
+            "Select a sense path, then edit its front-end parameters. Initial dividers are "
+            "illustrative; verify board gain, bipolar offset and transient headroom."
+        ))
         self.sense_path_list = QListWidget()
         for name in ("IL Sense", "VAC Sense", "VBUS Sense"):
             self.sense_path_list.addItem(name)
@@ -482,7 +487,7 @@ class SystemModelingDesignDialog(QDialog):
         self.current_sense = self._ttpl_sensor_fields(0.03, 2000, 0, 0, 220, 2, 50)
         self.vac_sense = self._ttpl_sensor_fields(1 / 150, 1000, 2000, 1, 220, 2, 50)
         self.vbus_sense = self._ttpl_sensor_fields(
-            1600 / (117000 + 1600), 1000, 117000 * 1600 / (117000 + 1600), 1, 220, 2, 10
+            1600 / (249000 + 1600), 1000, 249000 * 1600 / (249000 + 1600), 1, 220, 2, 10
         )
         self.ttpl_sense_stack = QStackedWidget()
         for fields, title in (
@@ -602,14 +607,15 @@ class SystemModelingDesignDialog(QDialog):
         form = QFormLayout(basic)
         self.compute_delay = self._double(0, 1000, 4, 1.0, " µs")
         self.pwm_delay = self._double(0, 1000, 4, 10.0, " µs")
-        self.include_zoh = QCheckBox("Include Zero-Order Hold")
+        self.include_zoh = QCheckBox("Include command Zero-Order Hold (PWM / AMC)")
         self.include_zoh.setChecked(True)
         form.addRow("Computation delay", self.compute_delay)
         form.addRow("PWM / shadow update delay", self.pwm_delay)
         form.addRow(self.include_zoh)
         note = QLabel(
             "ADC EOC delay is owned by the ADC page and is not double-counted here. "
-            "Timing semantics follow the frozen sampling / firmware contract."
+            "This checkbox controls command holds (LLC PWM; TTPL PWM and AMC). "
+            "TTPL ADC measurement holds remain independent and are not removed."
         )
         note.setWordWrap(True)
         left = QVBoxLayout()
@@ -910,7 +916,7 @@ class SystemModelingDesignDialog(QDialog):
             f"Acquisition delay    : {adc.acquisition_time_s*1e9:.4g} ns\n"
             f"Conversion delay     : {adc.conversion_time_s*1e9:.4g} ns\n"
             f"Sequence delay       : {max(adc.soc_count-1,0)*adc.soc_spacing_s*1e6:.4g} µs\n"
-            f"Effective ready      : {adc.acquisition_to_ready_s*1e6:.4g} µs\n"
+            f"First centre → ready : {adc.acquisition_to_ready_s*1e6:.4g} µs\n"
             f"Nyquist              : {0.5*sample/1e3:.4g} kHz\n"
             f"Sample rates         : {rates}"
         )
@@ -1101,6 +1107,24 @@ class SystemModelingDesignDialog(QDialog):
         try:
             definition = self.build_definition()
             checks = definition.engineering_checklist()
+            if definition.topology == SystemTopology.TTPL_PFC:
+                try:
+                    config = ttpl_config_from_system_definition(definition, self.ttpl_base_config)
+                    detail = "; ".join(
+                        f"{key}: {config.loop_frequencies_hz(key)[0]:g}–{config.loop_frequencies_hz(key)[-1]:g} Hz, "
+                        f"strictly below {config.loop_nyquist_hz(key):g} Hz Nyquist"
+                        for key in ("current", "voltage")
+                    )
+                    checks += (ReviewCheck("Controller", "Actual Bode frequency domains", True, 3,
+                                           f"Requested {config.frequency_start_hz:g}–{config.frequency_stop_hz:g} Hz; {detail}"),)
+                    target = definition.controller.target_crossover_hz
+                    if target is not None:
+                        current_f = config.loop_frequencies_hz("current")
+                        checks += (ReviewCheck("Controller", "Current-inner-loop target Fc covered",
+                                               bool(current_f[0] <= target <= current_f[-1]), 6,
+                                               f"Fc={target:g} Hz; actual current-loop band {current_f[0]:g}–{current_f[-1]:g} Hz; target is not clipped"),)
+                except ValueError as exc:
+                    checks += (ReviewCheck("Controller", "Actual Bode frequency domains", False, 3, str(exc)),)
             all_ok = all(item.ok for item in checks)
             categories = ("Topology", "Power Stage", "Sensing", "ADC", "PWM / FM", "Timing", "Controller")
             cards = []
@@ -1356,6 +1380,7 @@ def ttpl_config_from_system_definition(
         current_pwm_update_delay_s=definition.timing.pwm_update_delay_s,
         amc_update_delay_s=base.firmware.amc_update_delay_s,
         voltage_computation_delay_s=definition.timing.computation_delay_s,
+        include_command_zero_order_hold=definition.timing.include_zero_order_hold,
     )
     current_controller = replace(base.current_controller, sample_time_s=1.0 / current_rate)
     voltage_controller = replace(base.voltage_controller, sample_time_s=1.0 / voltage_rate)
@@ -1377,8 +1402,8 @@ def _set_guided_status(window, definition: ControlSystemDefinition | None) -> No
     if definition is None:
         return
     message = (
-        f"System Source: V9.3 Guided System Definition ({definition.topology.value})  |  "
-        "Edit System Definition available in toolbar"
+        f"Origin: V9.3 Guided System Definition ({definition.topology.value})  |  "
+        "Expert values are current; original guided setup may differ"
     )
     window.statusBar().showMessage(message, 0)
     action = getattr(window, "_guided_edit_action", None)
@@ -1388,16 +1413,20 @@ def _set_guided_status(window, definition: ControlSystemDefinition | None) -> No
 
 
 def install_guided_context_actions(window, edit_callback) -> QAction:
-    """Expose Edit System Definition on Expert toolbars without losing context."""
+    """Expose the original wizard setup, explicitly distinct from later edits."""
     from PySide6.QtWidgets import QToolBar
 
     action = getattr(window, "_guided_edit_action", None)
     if action is None:
-        action = QAction("Edit System Definition", window)
+        action = QAction("Original Guided Setup", window)
         action.setObjectName("edit_system_definition_action")
         action.setEnabled(False)
         action.setVisible(False)
-        action.setToolTip("Re-open Guided System Design with the current ControlSystemDefinition")
+        action.setToolTip(
+            "Re-open the original Guided System Definition. Later expert edits are not "
+            "synchronized into this setup; applying it replaces those model fields. "
+            "Saved expert sessions preserve the actual analysis inputs, not this wizard context."
+        )
         toolbars = window.findChildren(QToolBar)
         if toolbars:
             toolbars[0].addSeparator()
@@ -1451,6 +1480,10 @@ def apply_definition_to_llc_window(window, definition: ControlSystemDefinition) 
     loop.acq_ns.setValue(definition.adc.acquisition_time_s * 1e9)
     loop.conversion_cycles.setValue(definition.adc.conversion_cycles)
     loop.soc_count.setValue(definition.adc.soc_count)
+    loop.soc_offsets.setPlainText(", ".join(
+        format(0.5 * definition.adc.acquisition_time_s + index * definition.adc.soc_spacing_s, ".17g")
+        for index in range(definition.adc.soc_count)
+    ))
     loop.previous_weight.setValue(definition.adc.recursive_previous_weight)
     loop._solution_map_sample_time = 1.0 / sensor.sample_rate_hz
     if previous_controller is not None:
@@ -1502,6 +1535,7 @@ def apply_definition_to_ttpl_window(window, definition: ControlSystemDefinition)
     control.deadtime_ns.setValue(definition.modulator.deadtime_s * 1e9)
     control.current_delay_us.setValue(definition.timing.total_command_delay_s * 1e6)
     control.voltage_delay_us.setValue(definition.timing.computation_delay_s * 1e6)
+    control.include_command_zoh.setChecked(definition.timing.include_zero_order_hold)
 
     sensor_widgets = {
         "PFC inductor current": control.current_sense,

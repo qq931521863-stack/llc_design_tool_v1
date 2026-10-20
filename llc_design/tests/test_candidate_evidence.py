@@ -225,7 +225,8 @@ def test_ttpl_gui_common_apply_exports_and_restore_never_upgrades(app, monkeypat
         assert json.loads(build_pfc_research_export(analysis).metadata_json)["candidate_evidence"]["current"] == evidence
         path = export_pfc_exact_hz_manifest(analysis, tmp_path / "exact.json")
         assert json.loads(path.read_text(encoding="utf-8"))["candidate_evidence"]["current"] == evidence
-        code = generate_ttpl_control_code(analysis, tmp_path / "code", require_stable=False)
+        code = generate_ttpl_control_code(analysis, tmp_path / "code")
+        assert code.validation.passed
         assert json.loads(code.files["snapshot"].read_text(encoding="utf-8"))["analysis"]["candidate_evidence"]["current"] == evidence
         control._restore_candidate_evidence(analysis.candidate_evidence)
         assert not control._candidate_evidence()["current"]["accepted_current"]

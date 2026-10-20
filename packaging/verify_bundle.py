@@ -17,6 +17,17 @@ from collections.abc import Sequence
 from pathlib import Path
 
 
+def _print_console(text: str, *, end: str = "\n") -> None:
+    """Keep evidence logging usable on legacy Windows console encodings.
+
+    The authoritative report remains UTF-8. Unsupported console characters are
+    escaped, so logging cannot turn a validated bundle into a failed job.
+    """
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    printable = text.encode(encoding, errors="backslashreplace").decode(encoding)
+    print(printable, end=end)
+
+
 def validate_report(report: dict, *, expected_version: str,
                     expected_taxonomy_sha256: str, expected_platform: str,
                     expected_magnetic_sha256: dict[str, str] | None = None) -> None:
@@ -570,7 +581,7 @@ def verify_bundle(
         )
         for output in (process.stdout, process.stderr):
             if output:
-                print(output, end="" if output.endswith("\n") else "\n")
+                _print_console(output, end="" if output.endswith("\n") else "\n")
         process.check_returncode()
         if not report_path.is_file():
             raise RuntimeError("packaged self-test report was not produced")
@@ -596,7 +607,7 @@ def main() -> int:
     )
     text = json.dumps(report, ensure_ascii=False, indent=2)
     args.output.write_text(text + "\n", encoding="utf-8")
-    print(text)
+    _print_console(text)
     print("Frozen application verification: PASS")
     return 0
 

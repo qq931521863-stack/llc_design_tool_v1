@@ -9,8 +9,8 @@ from llc_design.control.analysis import build_small_signal_analysis
 from llc_design.control.digital_loop import PIControllerConfig, build_digital_loop_analysis
 from llc_design.core.spec import LLCDesignSpec
 from llc_design.models.system import LLCSystemAnalyzer
-from pfc_design.control import PFCControlLabConfig, build_pfc_control_lab_analysis
-from pfc_design.vienna import ViennaControlLabConfig, build_vienna_control_lab_analysis
+from pfc_design.control import illustrative_ttpl_config, build_pfc_control_lab_analysis
+from pfc_design.vienna import illustrative_vienna_config, build_vienna_control_lab_analysis
 from power_codegen import generate_llc_control_code, generate_ttpl_control_code, generate_vienna_control_code
 
 
@@ -28,8 +28,8 @@ def _compile(folder: Path, sources: list[str]) -> None:
         )
 
 
-def test_ttpl_codegen_compiles_and_uses_stable_autotuned_loop(tmp_path: Path):
-    base = PFCControlLabConfig()
+def test_ttpl_codegen_compiles_and_passes_explicit_model_screen(tmp_path: Path):
+    base = illustrative_ttpl_config()
     cfg = replace(base, current_controller=PIControllerConfig(kp=0.00854059, ti_s=0.00064608, sample_time_s=20e-6, output_min=-2.0, output_max=0.98), frequency_points=220)
     analysis = build_pfc_control_lab_analysis(cfg)
     result = generate_ttpl_control_code(analysis, tmp_path / "ttpl")
@@ -42,7 +42,7 @@ def test_ttpl_codegen_compiles_and_uses_stable_autotuned_loop(tmp_path: Path):
 
 
 def test_vienna_codegen_compiles(tmp_path: Path):
-    cfg = replace(ViennaControlLabConfig(), frequency_points=220)
+    cfg = replace(illustrative_vienna_config(), frequency_points=220)
     analysis = build_vienna_control_lab_analysis(cfg)
     result = generate_vienna_control_code(analysis, tmp_path / "vienna")
     assert result.validation.passed

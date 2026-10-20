@@ -1,5 +1,43 @@
 # Power Stage Designer validation report
 
+## 2026-10-20 control-workspace fan-out follow-up
+
+DAB, Vienna and two-level dq workspaces now have topology-specific candidate,
+source/session and report/export consumers. This is ongoing staged development.
+The prior Guided a74 whole-suite run was interrupted at 66% and is INCOMPLETE;
+no earlier full result is reused as this new source qualification. See the
+[control fan-out matrix](CONTROL_FANOUT_MATRIX.md) and [independent stage
+validation](CONTROL_FANOUT_VALIDATION.md) for independently passed consumers, pending full/package
+qualification and genuinely unimplemented physical/timing domains. Native
+package results for earlier remote snapshots remain separate. Publication is
+still paused.
+
+## Guided System Design loop audit (2026-10-20)
+
+At integrated source `efe62bd4254376154565021fab78c7b71e5e724b`, independent
+state-space checks cover all 18 actual LLC MIMO paths (maximum relative error
+8.85e−14); actual TTPL GUI arrays match separate equations within 3.15e−12.
+Actual launcher workflows exercise Apply, parameter invalidation, saved replay,
+new-process recompute, ADC rejection and standalone Python research exports.
+LLC 1280×720 controls remain operable with the documented scrolling.
+
+Subsequent diagnostic-only phase-budget repair `28d6369` removes TTPL's duplicated
+inner factor and exposes Vienna's previously omitted voltage/balance command
+holds. Six real Qt cursor composition cases and sixteen ADC-frame cases pass.
+The combined whole-suite, affected PFC long test and actual installed/frozen
+qualification have not yet completed. Earlier red checks remain recorded:
+102/104 new targeted checks passed before two earlier-validator message
+expectations were corrected; a later 124/125 pass retained one outdated
+provenance-text expectation, corrected to the actual all-active-block bound.
+A separate owner regression was interrupted with
+no terminal exit and is INCOMPLETE, not a pass. No numerical threshold changed.
+See [complete scope and reproduction](GUIDED_LOOP_VALIDATION.md).
+
+
+The corrected combined focused run passes all 125 cases with no skip/error/failure.
+CJK font warnings in bare test rendering remain recorded; formal GUI captures
+initialize the application fonts. This does not replace full qualification.
+
 ## Native controller-export follow-up (2026-10-19)
 
 Actual native run `39338660357` passes all 100 complete controls at each of

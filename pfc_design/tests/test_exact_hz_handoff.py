@@ -20,14 +20,15 @@ from power_codegen import (
 
 
 def _analysis():
-    """Use the maintained stable current-loop baseline for export tests.
+    """Use the explicit nominal-range current-loop example for export tests.
 
     Exact-H(z) identity itself does not require a stable closed loop, but C99
-    generation deliberately has a stability gate.  The package/export test
+    generation deliberately has a finite-band model-evidence gate.  The package/export test
     must therefore exercise a configuration that is accepted by that gate
     rather than silently depending on the historical default PI values.
     """
-    base = PFCControlLabConfig()
+    from pfc_design.control import illustrative_ttpl_config
+    base = illustrative_ttpl_config()
     tuned = tune_pfc_current_loop(base)
     assert tuned.accepted
     config = replace(base, current_controller=tuned.controller)

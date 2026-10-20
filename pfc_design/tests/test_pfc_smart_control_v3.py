@@ -43,7 +43,7 @@ def test_smart_control_exposes_separation_ms_mt_and_2fline():
         assert abs(budget.residual_deg) <= budget.tolerance_deg
         assert budget.residual_deg == pytest.approx(0.0, abs=1e-9)
         expected_phase = np.interp(
-            np.log10(result.fc_hz), np.log10(smart.analysis.frequencies_hz),
+            np.log10(result.fc_hz), np.log10(loop.frequencies_hz),
             np.rad2deg(np.unwrap(np.angle(loop.responses[f"open_{result.name}"]))),
         )
         assert budget.open_loop_phase_deg == pytest.approx(expected_phase, abs=1e-9)

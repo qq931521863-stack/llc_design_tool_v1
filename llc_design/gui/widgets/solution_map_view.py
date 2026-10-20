@@ -85,12 +85,14 @@ class SolutionMapView(QWidget):
         self._corner_notice = ""
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(6, 6, 6, 6)
+        root.setContentsMargins(4, 4, 4, 4)
         header = QHBoxLayout()
         heading = QLabel(title)
         heading.setStyleSheet("font-size:15px;font-weight:650;")
         header.addWidget(heading)
         self.source_combo = QComboBox()
+        self.source_combo.setMinimumContentsLength(22)
+        self.source_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.source_combo.currentIndexChanged.connect(self._source_changed)
         header.addWidget(QLabel("Loop"))
         header.addWidget(self.source_combo)
@@ -117,8 +119,8 @@ class SolutionMapView(QWidget):
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.addWidget(self._build_controls())
         left_layout.addWidget(self._build_selected_point_panel())
+        left_layout.addWidget(self._build_controls())
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
         left_scroll.setWidget(left)
@@ -258,6 +260,10 @@ class SolutionMapView(QWidget):
                 widget.setMaximumWidth(240)
                 widget.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
                 widget.setToolTip("Synthesized preview only; Apply uses the full-precision candidate.")
+        self.comparison_summary = QLabel("Generate a candidate to compare with the current controller.")
+        self.comparison_summary.setWordWrap(True)
+        self.comparison_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addRow(self.comparison_summary)
         self.details = QPlainTextEdit()
         self.details.setReadOnly(True)
         self.details.setMaximumHeight(220)
@@ -268,8 +274,10 @@ class SolutionMapView(QWidget):
     def _build_map_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(4, 4, 4, 4)
         self.figure = Figure(figsize=(10, 6))
         self.canvas = FigureCanvasQTAgg(self.figure)
+        self.canvas.setMinimumSize(480, 300)
         self.canvas.mpl_connect("button_press_event", self._map_clicked)
         self.canvas.mpl_connect("motion_notify_event", self._map_hovered)
         layout.addWidget(self.canvas, 1)
@@ -281,12 +289,13 @@ class SolutionMapView(QWidget):
     def _build_preview_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        self.comparison_summary = QLabel("Generate a candidate to compare with the current controller.")
-        self.comparison_summary.setWordWrap(True)
-        self.comparison_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self.comparison_summary)
+        layout.setContentsMargins(4, 4, 4, 4)
         self.preview_figure = Figure(figsize=(10, 7))
         self.preview_canvas = FigureCanvasQTAgg(self.preview_figure)
+        # A zero-height Qt canvas also makes Matplotlib's figure transform
+        # singular during tight_layout. Keep both result tabs drawable even
+        # before they are selected; only the parameter sidebar may scroll.
+        self.preview_canvas.setMinimumSize(480, 300)
         layout.addWidget(self.preview_canvas, 1)
         return page
 
@@ -805,6 +814,10 @@ class SolutionMapView(QWidget):
         source = self._source()
         if source is None or point.kp is None or point.ti_s is None:
             return
+        # Lay out the visible canvas before computing subplot padding. The
+        # previous tab's hidden geometry can be much narrower than the result.
+        self.result_tabs.setCurrentIndex(1)
+        self.result_tabs.currentWidget().layout().activate()
         f = np.asarray(source.frequencies_hz, dtype=float)
         controller = PIControllerConfig(
             kp=float(point.kp), ti_s=float(point.ti_s), sample_time_s=1.0 / source.sample_rate_hz,

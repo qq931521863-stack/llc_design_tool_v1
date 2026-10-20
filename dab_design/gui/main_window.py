@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -295,10 +297,16 @@ class DABMainWindow(QMainWindow):
         self.statusBar().showMessage("正在计算 TPS 工况…")
         worker = FunctionWorker(analyze_dab, config)
         self._worker = worker
+
         def current():
             return isValid(self) and self._worker is worker
-        worker.signals.result.connect(lambda result: self.set_result(result) if current() else None)
-        worker.signals.error.connect(lambda error: self._error(error) if current() else None)
+
+        worker.signals.result.connect(
+            lambda result: self.set_result(result) if current() else None
+        )
+        worker.signals.error.connect(
+            lambda error: self._error(error) if current() else None
+        )
         worker.signals.finished.connect(lambda: self._finished(worker))
         worker.start(QThreadPool.globalInstance())
 
@@ -467,12 +475,19 @@ class DABMainWindow(QMainWindow):
 
     def save_project(self):
         try:
-            config = self.config_from_widgets()
+            self.config_from_widgets()
             name, _ = QFileDialog.getSaveFileName(
                 self, "保存 DAB 工程", "dab-tps.json", "JSON (*.json)"
             )
             if name:
-                save_config(config, name)
+                from dab_design.workspace import validate_session
+
+                payload = self.control_view.session_data()
+                validate_session(payload)
+                Path(name).write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False),
+                    encoding="utf-8",
+                )
         except (ValueError, TypeError, OSError) as exc:
             self._error(str(exc))
 
@@ -483,18 +498,82 @@ class DABMainWindow(QMainWindow):
         if not name:
             return
         try:
-            config = load_config(name)
-            for key, widget in self.inputs.items():
-                display = getattr(config, key) * PARAMETERS[key][1]
-                if not widget.minimum() <= display <= widget.maximum():
-                    raise ValueError(f"{key} exceeds the desktop input range")
-            for key, widget in self.inputs.items():
-                widget.setValue(getattr(config, key) * PARAMETERS[key][1])
-            self.voltages.setText(",".join(f"{v:g}" for v in config.vb_cases_v))
-            self.loads.setText(",".join(f"{100 * v:g}" for v in config.load_ratios))
-            self.samples.setValue(config.wave_samples)
+            self.restore_project_data(
+                json.loads(Path(name).read_text(encoding="utf-8")), legacy_path=name
+            )
         except (ValueError, TypeError, KeyError, OSError) as exc:
             self._error(str(exc))
+
+    def restore_project_data(self, payload, *, legacy_path=None):
+        """Validate all stage/control fields before changing either workspace."""
+        if self._worker is not None or self.control_view._worker is not None:
+            raise ValueError("Finish or cancel running work before loading a project")
+        from dab_design.workspace import SESSION_SCHEMA, validate_session
+
+        full = isinstance(payload, dict) and payload.get("schema") == SESSION_SCHEMA
+        if full:
+            config, *_ = validate_session(payload)
+            self.control_view.validate_session_widgets(payload)
+        elif legacy_path is not None and payload.get("schema") == "dab-tps-v1":
+            config = load_config(legacy_path)
+        else:
+            raise ValueError("Unsupported DAB project schema")
+        for key, widget in self.inputs.items():
+            display = getattr(config, key) * PARAMETERS[key][1]
+            if not widget.minimum() <= display <= widget.maximum():
+                raise ValueError(f"{key} exceeds the desktop input range")
+            if not math.isclose(
+                display, round(display, widget.decimals()), rel_tol=1e-12, abs_tol=1e-12
+            ):
+                raise ValueError(f"{key} exceeds the desktop input precision")
+        # Percentage text must round-trip the original binary load ratios, too.
+        # Values originally entered through this UI have a representable preimage.
+        percentage_values = []
+        for ratio in config.load_ratios:
+            center = 100 * ratio
+            candidates = [center]
+            lower = upper = center
+            for _ in range(4):
+                lower = float(np.nextafter(lower, -np.inf))
+                upper = float(np.nextafter(upper, np.inf))
+                candidates.extend((lower, upper))
+            percent = next(
+                (value for value in candidates if value / 100 == ratio), None
+            )
+            if percent is None:
+                raise ValueError(
+                    "Load ratio cannot be restored exactly as desktop percentage"
+                )
+            percentage_values.append(percent)
+        for key, widget in self.inputs.items():
+            reconstructed = (
+                round(getattr(config, key) * PARAMETERS[key][1], widget.decimals())
+                / PARAMETERS[key][1]
+            )
+            if reconstructed != getattr(config, key):
+                raise ValueError(
+                    f"{key} cannot be restored exactly at desktop precision"
+                )
+        for key, widget in self.inputs.items():
+            widget.blockSignals(True)
+            widget.setValue(getattr(config, key) * PARAMETERS[key][1])
+            widget.blockSignals(False)
+        for widget, text in (
+            (self.voltages, ",".join(f"{v:.17g}" for v in config.vb_cases_v)),
+            (self.loads, ",".join(f"{v:.17g}" for v in percentage_values)),
+        ):
+            widget.blockSignals(True)
+            widget.setText(text)
+            widget.blockSignals(False)
+        self.samples.blockSignals(True)
+        self.samples.setValue(config.wave_samples)
+        self.samples.blockSignals(False)
+        self._inputs_changed()
+        if full:
+            self.control_view.restore_session(payload)
+        self.statusBar().showMessage(
+            "Restored project settings. Saved analysis is historical; recompute for current evidence."
+        )
 
     def export_results(self):
         if self.result is None:
@@ -512,7 +591,8 @@ class DABMainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self._worker is not None or self.control_view._worker is not None:
-            self.statusBar().showMessage("计算进行中，请完成后关闭。")
+            self.control_view.cancel()
+            self.statusBar().showMessage("计算进行中；电压环已请求取消，请完成后关闭。")
             event.ignore()
         else:
             super().closeEvent(event)

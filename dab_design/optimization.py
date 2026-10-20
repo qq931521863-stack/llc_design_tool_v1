@@ -177,12 +177,16 @@ def evaluate_candidate(config, vb_v, target_w, phases, limits, method):
     return TPSCandidate(method, phases, quantized, metrics, not reasons, reasons)
 
 
-def lattice_candidate(config, vb_v, target_w, phases, limits, method, *, radius=1):
+def lattice_candidate(
+    config, vb_v, target_w, phases, limits, method, *, radius=1, cancelled=None
+):
     """Check a bounded PWM tick neighborhood around a continuous solution."""
     ticks = math.floor(config.tbclk_hz / config.switching_hz + 0.5) / 2
     nearest = np.floor(np.asarray(phases) * ticks + 0.5)
     candidates = []
     for offset in product(range(-radius, radius + 1), repeat=3):
+        if cancelled is not None and cancelled():
+            raise ValueError("DAB optimization cancelled")
         q = (nearest + offset) / ticks
         if not 0 <= q[0] <= 1 or not 0 <= q[1] <= q[2] <= 1:
             continue
@@ -229,6 +233,7 @@ def optimize_tps(
     *,
     grid_points: int = 9,
     initial_seeds=None,
+    cancelled=None,
 ) -> TPSOptimizationResult:
     limits = limits or TPSConstraints()
     config.validate()
@@ -269,6 +274,8 @@ def optimize_tps(
     best_merit = float("inf")
     best_seed = None
     for d1 in axis:
+        if cancelled is not None and cancelled():
+            raise ValueError("DAB optimization cancelled")
         for d2 in np.linspace(0, 1, grid_points):
             for d3 in np.linspace(
                 d2, min(1, d2 + 1 - limits.min_active_pu), grid_points
@@ -305,6 +312,8 @@ def optimize_tps(
         return exact_tps_metrics(config, vb_v, phases)
 
     def physical(x):
+        if cancelled is not None and cancelled():
+            raise ValueError("DAB optimization cancelled")
         # Objective, power and inequality callbacks often request the same x.
         # Cache exact float tuples within this one immutable operating point.
         return physical_at(
@@ -348,6 +357,7 @@ def optimize_tps(
                     result.x,
                     limits,
                     "multi-start SLSQP + PWM neighborhood",
+                    cancelled=cancelled,
                 )
             )
     feasible = [c for c in candidates if c.feasible]
@@ -366,6 +376,7 @@ def optimize_tps(
             limits,
             "expanded PWM neighborhood",
             radius=12,
+            cancelled=cancelled,
         )
         if fallback.feasible:
             feasible.append(fallback)

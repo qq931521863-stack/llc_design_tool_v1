@@ -512,6 +512,10 @@ def test_pfc_c99_modal_change_cancels_old_click_then_exports_current_coefficient
         assert issues == []
         assert not old_directory.exists()
 
+        # The legacy default bus divider exceeds 3.3 V. This fresh export
+        # uses an explicit in-range front end, rather than bypassing the gate.
+        view.vbus_sense["gain"].setValue(1600/(249000+1600))
+        view.vbus_sense["source_r"].setValue(249000*1600/(249000+1600))
         config = view._config()
         current = build_pfc_control_lab_analysis(config)
         view.result = (current, None, None)

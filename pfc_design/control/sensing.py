@@ -9,7 +9,8 @@ from typing import Sequence
 import numpy as np
 from numpy.typing import NDArray
 
-from .config import ExternalSenseConfig
+from .config import ExternalSenseConfig, PFCControlLabConfig
+from power_control_tools.adc_range import assess_adc_magnitude, boost_input_current_peak_bound
 
 
 FloatArray = NDArray[np.float64]
@@ -240,3 +241,25 @@ __all__ = [
     "sense_frequency_response",
     "summarize_sense_chain",
 ]
+
+
+def operating_adc_range_warnings(config: PFCControlLabConfig) -> tuple[str, ...]:
+    """Flag saturation omitted by the linear analysis, including legacy projects."""
+    stage = config.power_stage
+    current_peak = boost_input_current_peak_bound(
+        output_power_w=stage.output_power_w, efficiency=stage.efficiency,
+        minimum_vin_rms_v=stage.vin_rms_v, bus_voltage_v=stage.bus_voltage_v,
+        inductance_h=stage.boost_inductance_h,
+        switching_frequency_hz=stage.switching_frequency_hz,
+    )
+    warnings = []
+    for sensor, peak, basis in (
+        (config.current_sense, current_peak, "configured-line sine peak + conservative ideal CCM ripple"),
+        (config.vac_sense, math.sqrt(2)*stage.vin_rms_v, "configured-line sine peak"),
+        (config.vbus_sense, stage.bus_voltage_v, "nominal DC bus"),
+    ):
+        check = assess_adc_magnitude(sensor.name, peak, sensor.raw_dc_gain, sensor.adc_vref_v, basis)
+        if not check.within_range:
+            warnings.append(f"ADC RANGE EXCEEDED — {sensor.name}: {check.detail}. "
+                            "Linear Bode/waveform models omit ADC clipping; adjust the front end.")
+    return tuple(warnings)
