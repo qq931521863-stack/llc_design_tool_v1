@@ -4,6 +4,24 @@ This is a bounded software-model checkpoint, not a full-topology or hardware
 qualification. The native release remains paused. Independent checks below
 exercise actual product consumers, rather than a second copy of a product formula.
 
+## Native debounce-test follow-up: 2026-10-20
+
+Run `39401146616` on remote `5a131c3` passed Linux. macOS recorded 4,898
+passes, 43 skips and two xfails, with one desktop-workflow failure: after a
+fixed 180 ms sleep, the 120 ms Qt debounce had not dispatched yet. The previous
+dq arithmetic/export failures did not recur. Windows was still running when
+this correction was prepared; no native packaging success is inferred here.
+
+Test-only commit `4cabd36` waits for both debounce timers to stop, all jobs to
+finish, and the expected current result/status, using the existing 20 s worker
+test bound. All export, invalidation and numerical assertions remain intact.
+Production code is unchanged. The full affected desktop module passes all 109
+tests. Independent checks reproduce the old failure with a real 420 ms timer,
+then pass the corrected full export workflow at 429 ms while rejecting a stale
+result delivered at 250 ms. Stopped and stuck timer controls both fail at the
+20 s bound; nine independent focused Qt cases pass. Native macOS confirmation
+on the correction snapshot remains required; this is not a new full-suite pass.
+
 ## Native follow-up repairs: 2026-10-20
 
 Remote `f95370a` native CI exposed failures after the local checkpoint below.

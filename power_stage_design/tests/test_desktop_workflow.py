@@ -58,6 +58,24 @@ def _assert_plots_match_current_result(window, key):
     assert float(window.stress_table.item(0, 4).text()) == pytest.approx(window.result.stress[key]["current_rms_a"], rel=1e-7)
 
 
+def _wait_for_current_analysis(app, window, completed, timeout=20.):
+    """Pump Qt until debounce/jobs finish AND the expected current state exists."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while True:
+        app.processEvents()
+        if (not window._timer.isActive() and not window._loop_timer.isActive()
+                and not window._jobs and completed()):
+            return
+        assert time.monotonic() < deadline, (
+            "Current analysis did not complete: "
+            f"stage={window.status.text()!r}, loop={window.loop_status.text()!r}, "
+            f"jobs={tuple(window._jobs)}"
+        )
+        QTest.qWait(5)
+
+
 @pytest.mark.parametrize("topology", ["T01", "T02", "T09"])
 def test_real_schematic_click_selects_matching_waveform_and_stress(app, window, topology):
     from power_stage_design.schematic import layout
@@ -120,8 +138,11 @@ def test_rapid_edits_invalidate_immediately_and_only_latest_input_is_exported(ap
     for name in ("plant_response", "compensator_response", "amplifier_response", "loop_response"):
         np.testing.assert_array_equal(getattr(window.loop_result, name), getattr(fresh_loop, name))
     assert np.max(np.abs(window.loop_result.loop_response - initial_loop.loop_response)) > 0
-    QTest.qWait(180)
-    app.processEvents()
+    _wait_for_current_analysis(app, window, lambda: (
+        window.result is not None and window.result.inputs.vin_v == 13.25
+        and window.loop_result is not None
+        and window._loop_settings["plant"]["vin_v"] == 13.25
+    ))
     assert window.result.inputs.vin_v == 13.25
     assert window.result.design_id != initial_id
     report = tmp_path / "latest.html"
@@ -133,7 +154,9 @@ def test_rapid_edits_invalidate_immediately_and_only_latest_input_is_exported(ap
     assert window._loop_settings["plant"]["vin_v"] == 13.25
     assert "此报告没有当前工况的有效模拟环路结果" not in text
     window.input_widgets["vout_v"].setValue(20.)
-    QTest.qWait(180)
+    _wait_for_current_analysis(app, window, lambda: (
+        window.result is None and "未得到有效设计" in window.status.text()
+    ))
     assert window.result is None
     assert not window.report_action.isEnabled()
     assert not window.current_plot.listDataItems()
@@ -146,6 +169,49 @@ def test_rapid_edits_invalidate_immediately_and_only_latest_input_is_exported(ap
     with pytest.raises(ValueError):
         window.report_to(invalid)
     assert invalid.read_text(encoding="utf-8") == "existing report"
+
+
+@pytest.mark.parametrize("valid", [True, False], ids=["valid", "invalid"])
+def test_delayed_debounce_completes_without_accepting_old_result(app, window, valid):
+    import time
+
+    old_result = window.result
+    old_generation = window._generation
+    # Exercise the real timeout/calculate connection beyond the former 180 ms
+    # assumption. PreciseTimer prevents early delivery; no solver is replaced.
+    window._timer.setTimerType(Qt.TimerType.PreciseTimer)
+    window._timer.setInterval(300)
+    started = time.monotonic()
+    if valid:
+        window.input_widgets["vin_v"].setValue(13.25)
+    else:
+        window.input_widgets["vout_v"].setValue(20.)
+    pending_status = window.status.text()
+    window._on_stage_calculated((old_generation, old_result, None))
+    assert window.result is None
+    assert window.status.text() == pending_status
+    assert not window.report_action.isEnabled()
+    assert not window.current_plot.listDataItems()
+
+    def completed():
+        if valid:
+            return window.result is not None and window.result.inputs.vin_v == 13.25
+        return window.result is None and "未得到有效设计" in window.status.text()
+
+    _wait_for_current_analysis(app, window, completed)
+    assert time.monotonic() - started > .180
+    current_result, current_status = window.result, window.status.text()
+    window._on_stage_calculated((old_generation, old_result, None))
+    assert window.result is current_result
+    assert window.status.text() == current_status
+    if valid:
+        expected = calculate_stage(window.current_inputs())
+        assert window.result.design_id == expected.design_id
+        assert window.result.design_id != old_result.design_id
+        _assert_plots_match_current_result(window, window.component_combo.currentData())
+    else:
+        assert not window.report_action.isEnabled()
+        assert not window.current_plot.listDataItems()
 
 
 @pytest.mark.parametrize("topology", ["T01", "T02", "T09"])
@@ -450,7 +516,14 @@ def test_edit_or_cancel_discards_actual_inflight_synthesis(app, window, edit):
     else:
         window.cancel_synthesis()
     _drain_synthesis(app, window)
-    QTest.qWait(180)
+    _wait_for_current_analysis(app, window, lambda: (
+        window.loop_result is not None if edit == "compensator"
+        else window.loop_result is None and (
+            edit != "stage" or (
+                window.result is not None and window.result.inputs.vin_v == 13.
+            )
+        )
+    ))
     if edit == "compensator":
         # The old optimization must not apply. Fast current-R/C analysis now
         # refreshes automatically and must represent the user's 22 kΩ edit.
