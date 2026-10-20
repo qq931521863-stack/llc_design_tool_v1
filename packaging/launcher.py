@@ -121,6 +121,60 @@ def _require(condition, message):
         raise RuntimeError(f"Packaged completion self-test: {message}")
 
 
+def _frozen_origin_check(origin, bundle_root, executable, platform):
+    """Validate virtual PyInstaller origins without rejecting macOS data links.
+
+    Pure-module ``__file__`` paths need not exist. On macOS PyInstaller uses
+    Contents/Frameworks as _MEIPASS and links data-only package directories to
+    Contents/Resources. Require both lexical _MEIPASS ownership and a resolved
+    destination in the same canonical application bundle. A path merely sharing
+    a prefix, an external import, or an escaping package/Resources link fails.
+    """
+    raw_origin = Path(origin)
+    raw_root = Path(bundle_root)
+    resolved = raw_origin.resolve()
+    root = raw_root.resolve()
+    executable = Path(executable).resolve()
+    roots = [root]
+    if platform == "darwin":
+        contents = executable.parent.parent
+        is_app = (executable.parent.name == "MacOS" and contents.name == "Contents"
+                  and contents.parent.suffix == ".app")
+        if is_app:
+            # The canonical executable anchors the app; an alias to that whole
+            # app is valid, but Frameworks itself may not escape this Contents.
+            if root != contents / "Frameworks":
+                roots = []
+            else:
+                resource_dir = contents / "Resources"
+                if resource_dir.resolve() == resource_dir:
+                    roots.append(resource_dir)
+    # Never collapse '..' before resolve(): symlink/.. can traverse somewhere
+    # different from lexical normalization. Frozen virtual origins need neither.
+    lexical_ok = (raw_origin.is_absolute() and raw_root.is_absolute()
+                  and ".." not in raw_origin.parts and ".." not in raw_root.parts
+                  and raw_origin.is_relative_to(raw_root))
+    accepted = lexical_ok and any(resolved.is_relative_to(allowed) for allowed in roots)
+    return {"raw_origin": str(raw_origin), "resolved_origin": str(resolved),
+            "raw_meipass": str(raw_root), "resolved_meipass": str(root),
+            "executable": str(executable), "platform": platform,
+            "allowed_resolved_roots": [str(item) for item in roots],
+            "accepted": accepted}
+
+
+def _require_frozen_module_origins(modules):
+    if not getattr(sys, "frozen", False):
+        return
+    evidence = {name: _frozen_origin_check(module.__file__, sys._MEIPASS,
+                                          sys.executable, sys.platform)
+                for name, module in modules.items()}
+    # Printed before the gate so a failing native run has actionable raw and
+    # resolved path evidence, without weakening any actual model self-test.
+    print("FROZEN_MODULE_ORIGINS " + json.dumps(evidence, sort_keys=True), flush=True)
+    _require(all(item["accepted"] for item in evidence.values()),
+             "modules were imported outside the frozen bundle: " + json.dumps(evidence, sort_keys=True))
+
+
 def _wait_for_worker(predicate, seconds=300):
     """Run real Qt events while genuine solver workers own the GIL."""
     from PySide6.QtCore import QEventLoop, QTimer
@@ -717,9 +771,7 @@ def _exercise_integrated_comparison(host, app, spec_identity):
     from llc_design.core.config import waveform_spec_identity
 
     origin = Path(execution.__file__).resolve()
-    if getattr(sys, "frozen", False):
-        _require(origin.is_relative_to(Path(sys._MEIPASS).resolve()),
-                 "comparison execution controls were imported outside the frozen bundle")
+    _require_frozen_module_origins({execution.__name__: execution})
     view = host.model_comparison_view
     host.tabs.setCurrentWidget(view)
     _require(view.max_harmonic.value() == 7 and view.hb_samples.value() == 1024
@@ -830,10 +882,8 @@ def _exercise_integrated_magnetics(host, directory, app):
 
     modules = {module.__name__: str(Path(module.__file__).resolve())
                for module in (integrated_magnetics, leakage_geometry)}
-    if getattr(sys, "frozen", False):
-        bundle_root = Path(sys._MEIPASS).resolve()
-        _require(all(Path(path).is_relative_to(bundle_root) for path in modules.values()),
-                 "integrated magnetic modules were imported outside the frozen bundle")
+    _require_frozen_module_origins({module.__name__: module
+                                    for module in (integrated_magnetics, leakage_geometry)})
     golden = integrated_magnetics.IntegratedMagnetics(100e-6, 25e-6, 40e-6, 2.)
     golden_values = {"lr_h": golden.lr_h, "lm_h": golden.lm_h,
         "effective_turns_ratio": golden.effective_turns_ratio,
