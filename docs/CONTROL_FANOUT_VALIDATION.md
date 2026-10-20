@@ -4,6 +4,91 @@ This is a bounded software-model checkpoint, not a full-topology or hardware
 qualification. The native release remains paused. Independent checks below
 exercise actual product consumers, rather than a second copy of a product formula.
 
+## Native follow-up repairs: 2026-10-20
+
+Remote `f95370a` native CI exposed failures after the local checkpoint below.
+Those failures are retained, not counted as native acceptance:
+
+- Windows run `39386082035`, job `118506140263`: 4 failed, 4,887 passed,
+  42 skipped and two xfails. The origin tests created relative directory links
+  with literal POSIX separators, which Windows stores without normalizing;
+  the fixture now passes a native `Path` and verifies live link identity.
+  JSON evidence is decoded and compared exactly. The parent-traversal test
+  preserves unconditional rejection while checking the native OS's diagnostic
+  resolution. Production origin gates are unchanged; no new skips were added.
+  All 189 focused origin/artifact-contract tests pass locally, and independent
+  mutation controls reject weakened containment, traversal and corrupted proof.
+- macOS job `118506140457`: 2 failed, 4,888 passed, 43 skipped and two xfails;
+  packaging was not reached. dq float32 export verification rejected a maximum
+  error of `0.0001983642578125`. Forced-FMA GCC and an independent `libm.fmaf`
+  oracle reproduce that exact error: fused C expressions differ from the
+  separately rounded binary32 reference. Commit `685eddf` adds float-only
+  volatile intermediate rounding boundaries to the **delivered header**, not
+  merely compiler flags for verification. The forced-FMA error becomes zero;
+  double output and numerical tolerances are unchanged. All 46 focused source
+  tests pass, including real GUI delivery and corrupted-arithmetic rejection.
+  The GUI test now reports exporter warnings directly before checking files.
+  An offline-built wheel from exact source `685eddf` additionally passes all
+  67 affected dq tests with no skips: 665 installed product files match the
+  source and wheel, and all 163 observed product imports originate in the wheel.
+  Wheel SHA-256:
+  `c6851a20f4a87048acc1012d4a44d10cb2c9ea04d7b9245c20781a301073e220`.
+
+These are bounded follow-up checks, not a new full-source or frozen acceptance.
+Actual Windows origin cases and macOS arithmetic/export tests, followed by native
+packaging, still require successful CI on the repair snapshot. No target ABI,
+ISR timing, hardware or new frozen fan-out execution is established.
+
+## Completed local acceptance: 2026-10-20 07:34 UTC
+
+The bounded local acceptance is complete for product/test source
+`270b4665780ad86dd827547d72c84f49b091ef21`. Remote checkpoint
+[`f95370a`](https://github.com/yangshuai2022-star/power-design-toolkit/commit/f95370a56bbfe78fab42bc70f0459a20adffa596)
+contains that exact product/test content and three documentation-only updates.
+This completion note is prepared locally; native CI for that remote checkpoint
+remains separate. Formal release is still paused.
+
+- **Segmented exact-source coverage PASS, not a single-process pass:** all
+  4,935 original unique nodeids are accounted for: 4,931 passes, two original
+  long-test opt-in skips and two original backend xfails. The first process
+  recorded 4,148 passes, two skips and one environment-only failure: the fresh
+  test venv lacked product distribution metadata. A fresh 785-node tail passed
+  783 cases plus the two xfails after copying only six byte-exact dist-info
+  files from the verified wheel. Product/test bytes and all assertions were
+  unchanged. The failed version test is the single explicitly repeated node;
+  its original red record remains retained. Independent review verifies no
+  coverage gap or hidden duplicate and all 309 final imports originate from
+  the frozen source.
+- **Both original current-source long gates PASS:** PFC 1/1 in 860.04 s,
+  PSFB 1/1 in 646.10 s, no skips/errors/failures. Both original opt-in tests
+  therefore execute separately despite being skipped in the ordinary suite.
+  Native Qt top-level widgets, roots and plot objects finish at zero. PFC
+  actual GUI, device/capacitor exports and ownership evidence are retained.
+  The earlier externally SIGKILLed PFC attempt remains INCOMPLETE and is not
+  relabeled. The successful retry used fresh evidence and unchanged assertions
+  and timeouts, with more memory headroom.
+- **Installed/frozen acceptance PASS:** original production wheel self-test,
+  342 baseline tests, 523 changed-test cases and all 76 MCP cases, with no skips
+  or failures; actual Linux frozen production self-test and every original
+  repair/provenance gate. Coverage is 664 wheel files, 395 frozen modules and
+  exactly 17 resources. Artifact hashes are retained in the submission record
+  below. A prior MCP test-guard rejection is retained: the reviewed correction
+  propagates only sealed guard configuration into a copied clean child
+  environment, without changing MCP/product assertions or permitting network.
+- Independent actual LLC consumers and all five original integrated-magnetics
+  checks pass. Reviewed guard receipts account for normal exits and intentional
+  cancellation kills, with zero outbound attempts. The serial scheduler's
+  original records are preserved; parallel stage receipts are reconciled
+  explicitly rather than falsely marking that serial process as successful.
+
+**Remaining boundaries:** native Windows/macOS CI for the remote snapshot is
+pending here; no hardware qualification, MATLAB execution or full physical/model
+parity is claimed. New DAB/Vienna/dq candidate/session/export chains are exercised
+in the installed wheel, but are **NOT RUN inside the frozen executable**. The
+frozen result covers original six-workspace production flows and exact module/
+resource provenance. Inherited LLC clipping and the topology/model/timing gaps
+listed below remain actionable next-stage work, not waived parity.
+
 ## Submission checkpoint: 2026-10-20 07:07 UTC
 
 Submitted at the owner's explicit request before remaining source/long gates

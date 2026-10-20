@@ -1,5 +1,7 @@
 """Actual filesystem/symlink layouts; no native execution is inferred here."""
 import importlib.util
+import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,8 +20,15 @@ def mac_layout(tmp_path):
 
 
 def link(source,destination):
+    # Windows stores relative symlink targets verbatim: POSIX separators make
+    # a broken link, not the actual filesystem layout this suite must exercise.
+    destination=Path(destination)
     try:source.symlink_to(destination,target_is_directory=True)
     except OSError as exc:pytest.skip(f'Platform cannot create test directory symlinks: {exc}')
+    target=destination if destination.is_absolute() else source.parent/destination
+    if target.is_dir():
+        assert source.is_dir()
+        assert source.samefile(target)
 
 
 @pytest.mark.parametrize('package',['llc_design/core','llc_design/magnetics','llc_design/analysis'])
@@ -72,7 +81,12 @@ def test_gate_logs_exact_failed_origin_before_raising(tmp_path,monkeypatch,capsy
     with pytest.raises(RuntimeError,match='outside the frozen bundle'):
         MODULE._require_frozen_module_origins({'test.module':fake})
     output=capsys.readouterr().out
-    assert 'FROZEN_MODULE_ORIGINS' in output and str(origin) in output and '"accepted": false' in output
+    prefix='FROZEN_MODULE_ORIGINS '
+    assert output.startswith(prefix)
+    evidence=json.loads(output[len(prefix):])['test.module']
+    assert evidence['raw_origin']==str(origin)
+    assert evidence['resolved_origin']==str(origin.resolve())
+    assert evidence['accepted'] is False
 
 
 def test_frameworks_root_itself_cannot_escape_canonical_app(tmp_path):
@@ -82,12 +96,16 @@ def test_frameworks_root_itself_cannot_escape_canonical_app(tmp_path):
     assert not check['accepted'] and check['allowed_resolved_roots']==[]
 
 
-def test_symlink_parent_traversal_is_resolved_before_any_normalization(tmp_path):
+def test_symlink_parent_traversal_is_rejected_with_native_resolution_evidence(tmp_path):
     contents,exe=mac_layout(tmp_path);root=contents/'Frameworks'
     outside=tmp_path/'external';(outside/'deep').mkdir(parents=True)
     link(root/'pkg',outside/'deep');origin=root/'pkg/../evil.py'
     check=MODULE._frozen_origin_check(origin,root,exe,'darwin')
-    assert Path(check['resolved_origin'])==outside/'evil.py'
+    # Win32 canonicalization collapses '..' before following the symlink;
+    # POSIX follows it first. Neither diagnostic result may grant authority.
+    expected=(root if os.name=='nt' else outside)/'evil.py'
+    assert Path(check['resolved_origin'])==expected
+    assert check['raw_origin']==str(origin)
     assert not check['accepted']
 
 

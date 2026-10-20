@@ -1,6 +1,6 @@
 # Control-workspace fan-out
 
-> Submission checkpoint (2026-10-20): installed wheel and original Linux frozen gates pass; source coverage accounting and long/native checks are not complete. Release paused. See [validation status](CONTROL_FANOUT_VALIDATION.md#submission-checkpoint-2026-10-20-0707-utc).
+> Local acceptance (2026-10-20): segmented exact-source coverage, both current long tests, installed wheel and original Linux frozen gates pass. Native CI remains separate; new fanout frozen-runtime chains remain NOT_RUN. Release paused. See [validation status](CONTROL_FANOUT_VALIDATION.md#completed-local-acceptance-2026-10-20-0734-utc).
 
 ## Scope and baseline
 

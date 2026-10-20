@@ -29,6 +29,11 @@ def render_c99(config, *, scalar="double"):
         "#define DQ_EXACT_CONTROLLERS_H",
         "#include <stddef.h>",
     ]
+    if scalar == "float":
+        lines += [
+            "/* Float products and differences round separately to match the float32 recurrence. */",
+            "/* Volatile intermediates prevent FMA contraction across these rounding boundaries. */",
+        ]
     for loop in ("current", "voltage"):
         c = controller_for(config, loop)
         prefix = "DQ_" + loop.upper()
@@ -53,7 +58,17 @@ def render_c99(config, *, scalar="double"):
             "  s->z[0]=initial;" if n else "  (void)initial;",
             "}",
             f"static inline double {prefix}_Peek(const {prefix}_STATE *s, double x) {{",
-            f"  return ({fmt(c.b[0])})*x" + (" + s->z[0];" if n else ";"),
+        ]
+        if scalar == "float":
+            lines += [
+                f"  const volatile double product=({fmt(c.b[0])})*x;",
+                "  return product" + (" + s->z[0];" if n else ";"),
+            ]
+        else:
+            lines += [
+                f"  return ({fmt(c.b[0])})*x" + (" + s->z[0];" if n else ";"),
+            ]
+        lines += [
             "}",
             f"static inline double {prefix}_Advance({prefix}_STATE *s, double x, double correction, int enabled) {{",
             f"  const double y={prefix}_Peek(s,x);",
@@ -62,10 +77,21 @@ def render_c99(config, *, scalar="double"):
         for j in range(n):
             bj = c.b[j + 1] if j + 1 < len(c.b) else 0.0
             aj = c.a[j + 1] if j + 1 < len(c.a) else 0.0
-            lines.append(
-                f"    s->z[{j}]=({fmt(bj)})*x-({fmt(aj)})*y"
-                + (f"+s->z[{j + 1}];" if j + 1 < n else ";")
-            )
+            if scalar == "float":
+                lines += [
+                    "    {",
+                    f"      const volatile double bx=({fmt(bj)})*x;",
+                    f"      const volatile double ay=({fmt(aj)})*y;",
+                    "      const volatile double difference=bx-ay;",
+                    f"      s->z[{j}]=difference"
+                    + (f"+s->z[{j + 1}];" if j + 1 < n else ";"),
+                    "    }",
+                ]
+            else:
+                lines.append(
+                    f"    s->z[{j}]=({fmt(bj)})*x-({fmt(aj)})*y"
+                    + (f"+s->z[{j + 1}];" if j + 1 < n else ";")
+                )
         lines += [
             "    s->z[0]+=correction;" if n else "    (void)correction;",
             "  }",

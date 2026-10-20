@@ -91,6 +91,7 @@ def test_actual_candidate_apply_save_fresh_window_recompute_and_delivery(
         QFileDialog, "getExistingDirectory", lambda *args: str(tmp_path)
     )
     w2.loop_view.export_button.click()
+    assert not w._test_errors, w._test_errors
     outputs = [p for p in tmp_path.iterdir() if p.is_dir() and p.name.startswith("dq-")]
     assert len(outputs) == 1
     report = json.loads((outputs[0] / "report.json").read_text())
