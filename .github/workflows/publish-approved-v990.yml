@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   publish-approved-v990:
-    if: github.repository == 'yangshuai2022-star/power-design-toolkit' && github.event.before == '2bf8f6e823ad526d85b61518e25fc3e4a40520bf'
+    if: github.repository == 'yangshuai2022-star/power-design-toolkit' && github.event.before == '49247f3c2c3a23fbb7f1112c149d9f59d6c5801b'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
@@ -95,11 +95,11 @@ jobs:
                   for name in expected:
                       Path("release", name).write_bytes(z.read(name))
           PY
-      - name: Apply unchanged release archive and proof contracts
+      - name: Apply source-bound release archive and proof contracts
         shell: bash
         run: |
           python - <<'PY'
-          import os, textwrap
+          import os, textwrap, hashlib, zipfile
           from pathlib import Path
           workflow = Path(".github/workflows/build-release.yml").read_text(encoding="utf-8")
           def original_step(heading):
@@ -109,7 +109,23 @@ jobs:
               return textwrap.dedent(block)
           gate = original_step("Verify both archives and write checksums").split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
           os.environ["GITHUB_REF_NAME"] = "v9.9.0"
-          exec(compile(gate, "original-v990-archive-verifier", "exec"), {})
+          def archive_resource_sha256(package):
+              # Native Windows checkout has CRLF; bind raw proof hashes to actual
+              # ZIP bytes only after checking source-equivalent complete content.
+              hashes = {}
+              with zipfile.ZipFile(Path("release") / package) as bundle:
+                  for filename in ("csc_magnetic_catalog.json", "magnetic_supplemental_records.json"):
+                      entries = [n for n in bundle.namelist() if n.replace("\\", "/").endswith("/engineering_data/" + filename)]
+                      assert len(entries) == 1, "missing or duplicate magnetic resource"
+                      raw = bundle.read(entries[0])
+                      trusted = Path("engineering_data", filename).read_bytes()
+                      assert raw.replace(b"\r\n", b"\n") == trusted.replace(b"\r\n", b"\n"), "packaged magnetic data differs from pinned source"
+                      hashes[filename] = hashlib.sha256(raw).hexdigest()
+              return hashes
+          old_call = "expected_taxonomy_sha256=taxonomy_sha)"
+          assert gate.count(old_call) == 1
+          gate = gate.replace(old_call, "expected_taxonomy_sha256=taxonomy_sha, expected_magnetic_sha256=archive_resource_sha256(name))")
+          exec(compile(gate, "source-bound-v990-archive-verifier", "exec"), {"archive_resource_sha256": archive_resource_sha256})
           publisher = original_step("Stage and publish complete release")
           publisher = publisher.replace("Power Design Toolkit $tag — Smart Control", "Power Design Toolkit $tag — Power Stage Designer")
           Path(os.environ["RUNNER_TEMP"], "publish-v990.sh").write_text(publisher, encoding="utf-8")
