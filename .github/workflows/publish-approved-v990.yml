@@ -1,0 +1,139 @@
+name: publish-approved-v990
+
+# One release only: exact approved application source and already qualified artifacts.
+# The general release workflow remains paused. No future-version auto-publication.
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/publish-approved-v990.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  publish-approved-v990:
+    if: github.repository == 'yangshuai2022-star/power-design-toolkit' && github.event.before == '2bf8f6e823ad526d85b61518e25fc3e4a40520bf'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: publish-refs/tags/v9.9.0
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact qualified application source
+        uses: actions/checkout@v4
+        with:
+          ref: 2bf8f6e823ad526d85b61518e25fc3e4a40520bf
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify immutable source and all qualification gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 2bf8f6e823ad526d85b61518e25fc3e4a40520bf
+          test "$(git rev-parse HEAD^{tree})" = f1bea3ab752694e2f7e4e19e43b3bbfab10ca350
+          git diff --exit-code
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/39421045389" > source-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/39421045389/attempts/1/jobs?per_page=100" > source-jobs.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/12268620777" > artifact-Windows.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/12268732803" > artifact-macOS.json
+          python - <<'PY'
+          import json, tomllib
+          from pathlib import Path
+          source = "2bf8f6e823ad526d85b61518e25fc3e4a40520bf"
+          assert tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"] == "9.9.0"
+          import llc_design
+          assert llc_design.__version__ == "9.9.0"
+          run = json.loads(Path("source-run.json").read_text())
+          assert run["id"] == 39421045389 and run["run_attempt"] == 1
+          assert run["head_sha"] == source and run["head_branch"] == "main"
+          assert run["status"] == "completed" and run["conclusion"] == "success"
+          assert run["path"] == ".github/workflows/build-release.yml"
+          jobs = {j["id"]: j for j in json.loads(Path("source-jobs.json").read_text())["jobs"]}
+          for job_id in (118621759944, 118621760159, 118621760205):
+              job = jobs[job_id]
+              assert job["status"] == "completed" and job["conclusion"] == "success"
+              assert any(s["name"] == "Run tests" and s["conclusion"] == "success" for s in job["steps"])
+          for job_id in (118621760159, 118621760205):
+              passed = {s["name"] for s in jobs[job_id]["steps"] if s["conclusion"] == "success"}
+              assert {"Check native numerical and desktop regressions first", "Build with PyInstaller", "Verify frozen application and fresh evidence", "Upload verified package and evidence"} <= passed
+          expected = {
+              "Windows": (12268620777, "power-design-tool-windows-x64", "5e5f1b9aca20883132c9ee946103c6e04b7d81b1bd8e4d0c0d949ee999e0adee"),
+              "macOS": (12268732803, "power-design-tool-macos-arm64", "88f57bc2c1d6bf1896a0e3645570e6be17b47fbeee927af0ccb2943edb65ad44"),
+          }
+          for platform, (artifact_id, name, digest) in expected.items():
+              a = json.loads(Path(f"artifact-{platform}.json").read_text())
+              assert a["id"] == artifact_id and a["name"] == name and a["expired"] is False
+              assert a["workflow_run"]["id"] == run["id"] and a["workflow_run"]["head_sha"] == source
+              assert a["digest"] == "sha256:" + digest
+          print("Pinned source, versions, three-platform tests and original artifact identities verified.")
+          PY
+      - name: Download and hash original artifact bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/12268620777/zip" > artifact-Windows.zip
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/12268732803/zip" > artifact-macOS.zip
+          python - <<'PY'
+          import hashlib, json, zipfile
+          from pathlib import Path
+          Path("release").mkdir()
+          for platform, package in (("Windows", "PowerDesignTool-Windows-x64.zip"), ("macOS", "PowerDesignTool-macOS-arm64.zip")):
+              blob = Path(f"artifact-{platform}.zip").read_bytes()
+              metadata = json.loads(Path(f"artifact-{platform}.json").read_text())
+              assert "sha256:" + hashlib.sha256(blob).hexdigest() == metadata["digest"]
+              with zipfile.ZipFile(Path(f"artifact-{platform}.zip")) as z:
+                  expected = {package, f"bundle-proof-{platform}.json"}
+                  assert len(z.namelist()) == 2 and set(z.namelist()) == expected
+                  assert z.testzip() is None
+                  for name in expected:
+                      Path("release", name).write_bytes(z.read(name))
+          PY
+      - name: Apply unchanged release archive and proof contracts
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, textwrap
+          from pathlib import Path
+          workflow = Path(".github/workflows/build-release.yml").read_text(encoding="utf-8")
+          def original_step(heading):
+              marker = f"- name: {heading}\n"
+              assert workflow.count(marker) == 1
+              block = workflow.split(marker, 1)[1].split("run: |\n", 1)[1].split("\n      - name:", 1)[0]
+              return textwrap.dedent(block)
+          gate = original_step("Verify both archives and write checksums").split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+          os.environ["GITHUB_REF_NAME"] = "v9.9.0"
+          exec(compile(gate, "original-v990-archive-verifier", "exec"), {})
+          publisher = original_step("Stage and publish complete release")
+          publisher = publisher.replace("Power Design Toolkit $tag — Smart Control", "Power Design Toolkit $tag — Power Stage Designer")
+          Path(os.environ["RUNNER_TEMP"], "publish-v990.sh").write_text(publisher, encoding="utf-8")
+          Path("release-notes.md").write_text('# Power Design Toolkit v9.9.0\n\n发布日期：2026-10-22\n\n本次更新完善功率级设计、磁性器件选型和环路分析，把参数计算、波形查看、控制器设计与报告导出连接成完整流程。\n\n## 主要更新\n- 新增 Power Stage Designer 独立入口：19 类直接功率级模型，并连接原有 LLC 半桥/全桥工作区。支持原理图元件选择、V/I 波形、峰值及有效值查看。\n- 增加目标驱动参数建议、12 项工程计算工具、6 种严格 CCM 小信号模型与 5 类补偿网络；支持元件取整后重算及多工况/容差检查。\n- 完善磁芯数据库来源追踪、缺失/冲突提示；增加 LLC 变压器漏感参与谐振的集成磁性设计路径，保留独立谐振电感方案。\n- 完善 DAB、Vienna、三相两电平 PFC 的候选控制器比较、参数应用、会话保存恢复及报告/C99 导出；统一离散系数、采样时序和分析频段边界。\n- 修正原理图遮线、点击区域、小屏布局、取消/重新打开窗口及旧结果失效处理，减少界面、文件和报告工况不一致。\n\n## 下载\n- Windows x64：PowerDesignTool-Windows-x64.zip，解压后运行 PowerDesignTool.exe。\n- macOS Apple Silicon：PowerDesignTool-macOS-arm64.zip，解压后打开 PowerDesignTool.app。\n- SHA256SUMS.txt 提供安装包校验值；bundle-proof 文件记录冻结程序自测证据。\n\n## 验证与适用范围\n发布源代码和 v9.9.0 标签固定于 2bf8f6e823ad526d85b61518e25fc3e4a40520bf，使用该提交已通过三平台 CI 的原始 9.9.0 二进制包，没有重新标记旧版本。\nWindows、macOS、Linux 测试通过，保留原测试的跳过项与预期失败项；Windows/macOS 冻结程序验收通过。新控制器候选/会话/导出链的更广覆盖来自源码及安装包测试，不等同于冻结自测覆盖全部工作流。\n\nDAB 当前增强范围为功率指令电压环，不代表完整相移指令环或电流内环；Vienna 当前采用 ABC 控制。各拓扑保留其理想模型、纹波、频率和工况适用范围，T05/T11/T18 的完整 TI 可执行模型对等仍为 PARTIAL。缺失损耗项保留 UNKNOWN。仿真、模型及导出代码验证不能代替目标 DSP、实板和安全验证。\n\n[源提交与三平台验证](https://github.com/yangshuai2022-star/power-design-toolkit/actions/runs/39421045389)\n', encoding="utf-8")
+          PY
+      - name: Create exact release tag without moving any existing tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v9.9.0 --json isDraft > existing-v990.json 2>/dev/null; then
+            python -c 'import json; assert json.load(open("existing-v990.json"))["isDraft"], "v9.9.0 already published; refusing any overwrite"'
+          fi
+          if git rev-parse -q --verify refs/tags/v9.9.0 >/dev/null; then
+            test "$(git rev-parse 'refs/tags/v9.9.0^{}')" = 2bf8f6e823ad526d85b61518e25fc3e4a40520bf
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git tag -a v9.9.0 2bf8f6e823ad526d85b61518e25fc3e4a40520bf -m 'Power Design Toolkit v9.9.0'
+            git push origin refs/tags/v9.9.0
+          fi
+          test "$(git ls-remote origin 'refs/tags/v9.9.0^{}' | cut -f1)" = 2bf8f6e823ad526d85b61518e25fc3e4a40520bf
+      - name: Publish complete assets through original digest gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          GITHUB_REF_NAME=v9.9.0 bash "$RUNNER_TEMP/publish-v990.sh"
+          test "$(git ls-remote origin 'refs/tags/v9.9.0^{}' | cut -f1)" = 2bf8f6e823ad526d85b61518e25fc3e4a40520bf
